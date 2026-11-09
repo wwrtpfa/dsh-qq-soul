@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -55,7 +55,7 @@ def _write(path, rows):
 
 
 def _at(hour, minute, day_offset=0):
-    now = datetime.now()
+    now = datetime.now() + timedelta(days=day_offset)
     day = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     return int(day.timestamp() * 1000), day.strftime("%Y-%m-%d")
 

@@ -282,6 +282,10 @@ export function apply(ctx) {
     capabilitiesOf: (id) => (typeof mods.capabilitiesOf === 'function' ? mods.capabilitiesOf(id) : []),
     contextProviders: [(args) => mods.contextFor(args)],
     onActivity: (a) => mods.emit('activity', a),
+    // Token 统计在 ops 装配前就创建 hub，这里按调用时取 core.ops（此时一定已初始化）
+    onUsage: (entry) => {
+      try { core.ops?.recordUsage(entry) } catch (error) { logger.debug('Token 统计写入失败：', error.message) }
+    },
     // 群聊话题和她的记忆有多相关（插话判断用）
     memoryScore: (text) => use('memory')?.topicScore?.(text) ?? 0,
     dislikes: (qq) => use('memory')?.dislikes?.(qq) ?? false,
@@ -1324,12 +1328,25 @@ export function apply(ctx) {
     return { ok: true, list, off: [...off] }
   })
   route('/panel/ops/usage', async () => ({ ok: true, ...ops.usage.summary() }))
-  route('/panel/ops/timeline', async () => {
+  route('/panel/ops/timeline', async (req) => {
+    const q = query(req)
+    const opts = {
+      date: String(q.date || ''),
+      from: String(q.from || ''),
+      to: String(q.to || ''),
+      q: String(q.q || ''),
+      kinds: q.kind ? [String(q.kind)] : null,
+      limit: Math.min(2000, Math.max(1, Number(q.limit) || 500)),
+    }
     let memoryRows = [], songRows = []
     try { const m = use('memory'); memoryRows = typeof m?.timeline === 'function' ? m.timeline({}) : [] } catch {}
     try { const s = use('song'); songRows = s?.status?.()?.history || [] } catch {}
-    return { ok: true, keepDays: 7, list: ops.timeline.list(),
-             merged: ops.timeline.merge({ memory: memoryRows, song: songRows }) }
+    const list = ops.timeline.list(opts)
+    const merged = ops.timeline
+      .filter(ops.timeline.merge({ activity: list, memory: memoryRows, song: songRows }), opts)
+      .sort((a, b) => Number(b.at) - Number(a.at))
+      .slice(0, opts.limit)
+    return { ok: true, keepDays: 7, list, merged }
   })
   route('/setup/done', async (req) => {
     const body = await readBody(req)

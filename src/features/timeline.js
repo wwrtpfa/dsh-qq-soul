@@ -6,6 +6,42 @@ import { dirname } from 'node:path'
 import { createSerialQueue } from '../core/write-queue.js'
 
 const DAY_MS = 86400000
+const pad2 = (n) => String(n).padStart(2, '0')
+
+/** 本地日期 YYYY-MM-DD（用户说「今天」按本机时区算，不按 UTC）。 */
+export function localDay (at) {
+  const d = new Date(Number(at))
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+
+function minutesOf (at) {
+  const d = new Date(Number(at))
+  return d.getHours() * 60 + d.getMinutes()
+}
+
+function clockMinutes (value) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(value || '').trim())
+  if (!m) return null
+  const h = Number(m[1]); const min = Number(m[2])
+  return h >= 0 && h < 24 && min >= 0 && min < 60 ? h * 60 + min : null
+}
+
+/** 时间线筛选：日期 / 起止时间 / 关键字 / 类型可叠加。 */
+export function filterRows (rows, { date = '', from = '', to = '', q = '', kinds = null } = {}) {
+  const start = clockMinutes(from)
+  const end = clockMinutes(to)
+  const needle = String(q || '').trim().toLowerCase()
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const at = Number(row && row.at) || 0
+    if (date && localDay(at) !== String(date)) return false
+    const minute = minutesOf(at)
+    if (start !== null && minute < start) return false
+    if (end !== null && minute > end) return false
+    if (Array.isArray(kinds) && kinds.length && !kinds.includes(row.kind)) return false
+    if (needle && !String(row.text || '').toLowerCase().includes(needle)) return false
+    return true
+  })
+}
 
 function normalizeActivity(list) {
   return (Array.isArray(list) ? list : []).map((x) => ({
@@ -80,15 +116,15 @@ export function createTimeline({
     }
     return row
   }
-  function list({ limit = 200, kinds = null } = {}) {
-    let rows = readRows(path, fsImpl)
-    if (Array.isArray(kinds) && kinds.length) rows = rows.filter((r) => kinds.includes(r.kind))
+  function list({ limit = 200, kinds = null, date = '', from = '', to = '', q = '' } = {}) {
+    const rows = filterRows(readRows(path, fsImpl), { date, from, to, q, kinds })
     return rows.sort((a, b) => Number(b.at) - Number(a.at)).slice(0, limit)
   }
   return {
     append,
     appendAsync: (entry) => queue.push(() => append(entry)),
     list,
+    filter: (rows, opts) => filterRows(rows, opts),
     merge: (payload) => mergeSources(payload),
     prune() {
       const rows = readRows(path, fsImpl)
@@ -100,4 +136,4 @@ export function createTimeline({
   }
 }
 
-export default { mergeSources, createTimeline }
+export default { mergeSources, createTimeline, filterRows, localDay }

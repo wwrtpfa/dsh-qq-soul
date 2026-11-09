@@ -26,6 +26,7 @@ from .deps import check as check_deps
 from .gateway import GatewayMonitor
 from .installer import build_plan, component_states
 from .jobs import JobStore
+from . import ops_stats
 from . import selfcheck as selfcheck_mod
 from .registry import ModelRegistry
 from .song import cover_tools
@@ -294,6 +295,20 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                             "voiceName": str(ctx.cfg.song.get("voiceName") or "")},
                 })
                 return self._json(200, status)
+
+            # 运维大屏：只读宿主写的 Token / 时间线；数据不在 service 里，不造状态
+            if method == "GET" and path == "/usage":
+                days = int((query.get("days") or ["7"])[0] or 7)
+                return self._json(200, {"ok": True, **ops_stats.usage_summary(days=days)})
+
+            if method == "GET" and path == "/timeline":
+                first = lambda key, fallback="": (query.get(key) or [fallback])[0]
+                return self._json(200, ops_stats.timeline_rows(
+                    date=first("date"), q=first("q"),
+                    start=first("from"), end=first("to"),
+                    kind=first("kind"),
+                    limit=int(first("limit", "500") or 500),
+                ))
 
             # ------------------------------------------------ P6 五步自检 / 网关上报
             if path == "/selfcheck" and method in ("GET", "POST"):

@@ -78,9 +78,26 @@ export function assistantReplyText (message) {
   return message.content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').trim()
 }
 
-export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildTools, contextProviders, onActivity, memoryScore, onMemoryCommand, onCommand, isMuted, dislikes, random = Math.random, moodEffects, localApi, hooks, availableModels, toolsGeneration, capabilitiesOf }) {
+/** DSH 的 assistant/message 里带结构化 usage（inputTokens / outputTokens / totalTokens）。 */
+export function assistantUsage (data) {
+  const u = data && data.usage
+  if (!u || typeof u !== 'object') return null
+  const n = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : 0)
+  const prompt = n(u.inputTokens ?? u.prompt_tokens)
+  const completion = n(u.outputTokens ?? u.completion_tokens)
+  const total = n(u.totalTokens ?? u.total_tokens) || prompt + completion
+  if (total <= 0) return null
+  return { prompt, completion, total }
+}
+
+export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildTools, contextProviders, onActivity, onUsage, memoryScore, onMemoryCommand, onCommand, isMuted, dislikes, random = Math.random, moodEffects, localApi, hooks, availableModels, toolsGeneration, capabilitiesOf }) {
   // 心情对行为的影响（表情 / 语音概率、回复快慢、插话积极程度），没接就是 1
   const mood = () => (typeof moodEffects === 'function' ? moodEffects() : null) || { sticker: 1, voice: 1, delay: 1, chatty: 1 }
+  // Token 统计只是旁路：写失败不能影响这一轮聊天
+  const reportUsage = (entry) => {
+    if (!onUsage) return
+    try { onUsage(entry) } catch (error) { log.warn('Token 统计写入失败：', error.message) }
+  }
   const mapFile = () => dataDir('sessions.json')
   const map = () => readJson(mapFile(), () => ({ chats: {} }))
   const saveMap = (m) => writeJson(mapFile(), m)
@@ -1084,6 +1101,15 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     if (event.type === 'assistant/message') {
       const d = event.data || {}
       if (d.interrupted) return
+      // 一轮里可能有多步（工具调用前后各一条 assistant 消息），每步的 usage 都算这一轮的成本
+      const used = assistantUsage(d)
+      if (used) {
+        const sum = st.usage || { prompt: 0, completion: 0, total: 0 }
+        sum.prompt += used.prompt
+        sum.completion += used.completion
+        sum.total += used.total
+        st.usage = sum
+      }
       // 最后一条 assistant 消息才是本轮回复；总是覆盖（空也覆盖），
       // 否则最后一条是空的（或只有工具调用）时会拿上一条过程性文字补发，把思考发出去。
       st.lastTurn = d.turn
@@ -1101,6 +1127,16 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       const sys = st.system
       const wantVoice = Boolean(st.wantVoice)
       const autoReply = st.autoReply
+      // 先记账再清状态：失败 / 中断的轮次也消耗了 token；DSH 没给 usage 就按正文估算
+      const used = st.usage
+      st.usage = null
+      if (used && used.total > 0) {
+        reportUsage({ purpose: 'chat', result: { usage: {
+          prompt_tokens: used.prompt, completion_tokens: used.completion, total_tokens: used.total,
+        } } })
+      } else if (text) {
+        reportUsage({ purpose: 'chat', text: [st.lastText, text].filter(Boolean).join('\n') })
+      }
       st.autoReply = null
       st.text = ''
       // 上一轮还在跑时新消息已经排队给「下一轮」：这一轮 turn/end 不能把下一轮的说话人清掉（#90）
