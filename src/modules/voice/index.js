@@ -2,8 +2,10 @@
 // 面板里的试听、语音识别自检也在这里。
 // 导出 speak(text) → { file, engine }：聊天中枢发语音时找它。替换这个模块就能换成任何你想要的念法。
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { textToSpeech, edgeInstalled, installEdge, voiceConverters } from '../../voice/tts.js'
+import { createServiceClient } from '../../service/client.js'
 import { createSongVoice } from '../../voice/rvc.js'
 import { toMono16k } from '../../voice/wav.js'
 import { fileOf } from '../../local/local.js'
@@ -17,8 +19,65 @@ export default {
   files: ['voice/tts.js', 'voice/rvc.js'],
   setup(api) {
     const { hub, onebot, local, http } = api.core
+    const service = createServiceClient({ getConfig: api.config, log: api.log })
+    let voiceCache = { at: 0, id: '' }
+
+    // 音频服务是唯一配置源：它那边选中的 RVC 音色，语音条也照着变声。
+    // 服务没给（老版本）才退回插件里选的 voice.songVoice。
+    async function serviceVoiceModel() {
+      if (Date.now() - voiceCache.at < 30_000) return voiceCache.id
+      try {
+        const st = await service.status()
+        voiceCache = { at: Date.now(), id: String((st && st.rvc && st.rvc.model) || '').split(/[\\/]/).pop().replace(/\.pth$/i, '') }
+        return voiceCache.id
+      } catch (error) {
+        return voiceCache.id
+      }
+    }
+
+    async function convertSpeech(file, voice, pitch) {
+      if (!voice) return file
+      // service 开着就以它为准：音色路径只存在 service 的 config.json 里，
+      // 插件本地 models 目录可能是空的（音色在库外），不能拿它判断有没有音色。
+      if (api.config().service?.enabled) {
+        try {
+          const buf = await service.convertVoice(readFileSync(file), { pitch })
+          const dir = api.dataDir('voice-rvc')
+          mkdirSync(dir, { recursive: true })
+          const out = join(dir, 'speech-' + Date.now().toString(36) + '.wav')
+          writeFileSync(out, buf)
+          return out
+        } catch (error) {
+          api.log.warn('语音条变声失败，用原声：', error.message)
+          return file
+        }
+      }
+      const song = api.use('song')
+      if (!song || typeof song.convertSpeech !== 'function') return file
+      try {
+        return (await song.convertSpeech(file, { voice, pitch, outDir: api.dataDir('voice-rvc') })) || file
+      } catch (error) {
+        api.log.warn('语音条变声失败，用原声：', error.message)
+        return file
+      }
+    }
 
     async function speak(text) {
+      const cfg = api.config()
+      // 音频服务开着就以它为准：音色、语速、渠道都读它那一份，桌面和网页不会再打架。
+      if (cfg.service?.enabled) {
+        try {
+          const r = await service.speak({ text })
+          const file = r && r.file
+          if (file && existsSync(file)) {
+            const voice = (await serviceVoiceModel()) || cfg.voice.songVoice
+            const out = await convertSpeech(file, voice, cfg.voice.songPitch)
+            return { file: out, engine: 'service/' + (r.engine || '?') }
+          }
+        } catch (error) {
+          api.log.warn('音频服务合成失败，改用本机语音：', error.message)
+        }
+      }
       // 本地接口接管语音合成；出错退回内置
       if (local.active('tts')) {
         try {
@@ -26,12 +85,18 @@ export default {
           if (file && existsSync(file)) return { file, engine: 'local' }
         } catch (error) {}
       }
-      return textToSpeech(text, api.config().voice, api.log)
+      return textToSpeech(text, cfg.voice, api.log)
     }
 
     // 语音条变声：如果面板里选了「翻唱里导入的音色」，TTS 后再用 RVC 换成她的声音。
     // 挂在 tts.js 的 voiceConverters 上（卸载时摘掉）；变声失败会保留 TTS 原声。
-    const songVoice = createSongVoice({ getConfig: api.config, getSong: () => api.use('song'), dataDir: api.dataDir, log: api.log })
+    const songVoice = createSongVoice({
+      getConfig: api.config,
+      getSong: () => api.use('song'),
+      dataDir: api.dataDir,
+      convert: (file, opts) => convertSpeech(file, opts.voice, opts.pitch),
+      log: api.log,
+    })
     voiceConverters.push(songVoice)
     api.onDispose?.(() => {
       const i = voiceConverters.indexOf(songVoice)

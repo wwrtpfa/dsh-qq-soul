@@ -1,6 +1,7 @@
-// 生图：OpenAI 兼容、自定义接口，以及实验性 Codex 订阅接法。
+// 生图：OpenAI 兼容、自定义接口、本地 Codex 配置（api-image），以及实验性 Codex 订阅接法。
 //   ① openai —— 兼容 OpenAI /v1/images/generations 的服务（硅基流动、通义万相兼容层、本地 ComfyUI / SD WebUI 的 OpenAI 代理……）
 //   ② custom —— 自己填接口：GET / POST、URL 模板（{prompt} 占位）、自定义参数名、从返回 JSON 里按路径取图
+//   ③ apiimage —— 读 ~/.codex/config.toml（或 CODEX_HOME）当前 provider 的地址与 token，规则同 api-image skill
 // 地址和密钥由主人在面板里填；生成结果统一成 Buffer 交给 QQ 发出。
 
 import { lstatSync, readFileSync } from 'node:fs'
@@ -8,6 +9,7 @@ import { fetchImage } from '../core/net.js'
 import { paintingPath } from './paintings.js'
 import { createCodexAuth } from './codex-auth.js'
 import { createCodexImage } from './codex-image.js'
+import { createApiImage } from './api-image.js'
 import { mimeOf } from '../chat/inbound.js'
 import { imageToolBlock } from '../core/img.js'
 import { imageSizeFor } from './image-shape.js'
@@ -132,10 +134,11 @@ async function valueToBuffer (v) {
   throw new Error('生图接口返回的既不是图片地址也不是图片')
 }
 
-export function createImageGen({ getConfig, log, local, fetchImpl, codexAuth }) {
+export function createImageGen({ getConfig, log, local, fetchImpl, codexAuth, apiImage }) {
   const fetch = fetchImpl || ((...args) => globalThis.fetch(...args))
   const auth = codexAuth || createCodexAuth({ log, fetchImpl: fetch })
   const viaCodex = createCodexImage({ auth, fetchImpl: fetch, log })
+  const viaApiImage = apiImage || createApiImage({ fetchImpl: fetch, log })
   async function generate(prompt, { shape, image } = {}) {
     const config = getConfig().imageGen
     const c = { ...config, size: imageSizeFor(shape, config) }
@@ -152,7 +155,9 @@ export function createImageGen({ getConfig, log, local, fetchImpl, codexAuth }) 
     if (!c.enabled) throw new Error('生图还没开启')
     const full = [c.stylePrompt, prompt].filter(Boolean).join('，')
     const t = Date.now()
-    const buf = c.provider === 'codex' ? await viaCodex(c, full, { shape, image }) : c.provider === 'custom' ? await viaCustom(c, full, image) : await viaOpenAI(c, full, image)
+    const buf = c.provider === 'codex' ? await viaCodex(c, full, { shape, image })
+      : c.provider === 'apiimage' ? await viaApiImage.generate(c, full, { image })
+        : c.provider === 'custom' ? await viaCustom(c, full, image) : await viaOpenAI(c, full, image)
     if (!buf || !buf.length) throw new Error('生图接口没有返回图片')
     if (!String(mimeOf(buf)).startsWith('image/')) throw new Error('生图接口返回的不是图片')
     log.info(`画好了一张图（${Math.round(buf.length / 1024)}KB，${Math.round((Date.now() - t) / 1000)}s）：${prompt.slice(0, 40)}`)
@@ -223,10 +228,11 @@ export function createImageGen({ getConfig, log, local, fetchImpl, codexAuth }) 
     const c = getConfig().imageGen
     if (!c.enabled) return false
     if (c.provider === 'codex') return auth.status().loggedIn
+    if (c.provider === 'apiimage') return viaApiImage.status(c).ok
     return c.provider === 'custom' ? Boolean(c.custom && c.custom.url) : Boolean(c.baseUrl && c.model)
   }
 
-  return { generate, enabled, codexAuth: auth, dispose: () => auth.dispose?.() }
+  return { generate, enabled, codexAuth: auth, apiImage: viaApiImage, dispose: () => auth.dispose?.() }
 }
 
 /**

@@ -636,15 +636,17 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
   }
 
   // ---------- 汇总给插件其他部分用 ----------
-  function buildTools(where) {
+  function buildTools(where, { includeOff = false } = {}) {
     const out = []
     const names = new Set()
+    const off = includeOff ? new Set() : new Set(getConfig().ops?.toolsOff || [])
     for (const rec of live.values()) {
       for (const b of rec.tools) {
         let r
         try { r = typeof b === 'function' ? b(where) : b } catch (error) { note(rec.id, '生成工具', error); continue }
         for (const t of [].concat(r || [])) {
           if (!t || !t.name) continue
+          if (off.has(t.name)) continue
           if (names.has(t.name)) { log.debug(`工具 ${t.name} 重名，模块「${rec.id}」的没挂`); continue }
           names.add(t.name)
           out.push(t)
@@ -797,7 +799,7 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
         const spec = relFrom.startsWith('.') ? relFrom : './' + relFrom
         code = code.split(`'${spec}'`).join(`'./${n2}'`)
       }
-      writeFileSync(join(dir, name), `// 从 Aurabot v${version} 的内置模块「${b.name}」复制出来的，改了就替换内置的。\n// 原文件：src/${key}\n` + code, 'utf8')
+      writeFileSync(join(dir, name), `// 从 懂你的QQ大肥鱼 v${version} 的内置模块「${b.name}」复制出来的，改了就替换内置的。\n// 原文件：src/${key}\n` + code, 'utf8')
     }
     setConfig({ ...getConfig(), modules: { ...getConfig().modules, [id]: { ...modCfg(id), useBuiltin: false, forkedFrom: b.version || version } } })
     installDocs()
@@ -820,7 +822,7 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
 
   function promptFor(id) {
     const dir = id ? join(userDir(), id) : userDir()
-    return `帮我修改 Aurabot（大肥鱼 QQ 插件）的扩展模块：${dir}\n`
+    return `帮我修改 懂你的QQ大肥鱼（大肥鱼 QQ 插件）的扩展模块：${dir}\n`
       + `先完整读一遍「${join(userDir(), DOC)}」了解模块怎么写、能用哪些接口，再按我的要求改：\n`
       + '【这里写你想让她多会什么、改成什么样】\n'
       + `只改 ${userDir()} 里的文件，不要动插件本身的代码；改完保存会自动重新加载，到面板「已安装」页看有没有报错，再告诉我怎么试。`

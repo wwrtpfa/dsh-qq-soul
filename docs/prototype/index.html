@@ -1,0 +1,2402 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>懂你的QQ大肥鱼 · 面板原型</title>
+<style>
+:root{
+  --bg:#060912; --grid:rgba(126,232,245,.045); --panel:#0d1424; --panel2:#111b30;
+  --line:#1e2b47; --line2:#2a3a5c; --tx:#e8eefc; --mut:#8b9bbd; --dim:#5e6d8e;
+  --cyan:#7ee8f5; --blue:#8fa8ff; --purple:#e6a6ff; --green:#4fd1c5; --amber:#ffc97a; --pink:#ff9ec4; --red:#ff8b8b;
+  --shadow:0 18px 50px rgba(0,0,0,.42); --r:16px;
+}
+html[data-theme="light"]{
+  --bg:#f4f7fd; --grid:rgba(40,80,160,.045); --panel:#ffffff; --panel2:#f7f9ff;
+  --line:#dde5f5; --line2:#c8d5ef; --tx:#14203a; --mut:#5a6b90; --dim:#8b9ab8;
+  --cyan:#087f95; --blue:#2f52c8; --purple:#8a3fc0; --green:#0d8577; --amber:#a4660b; --pink:#b04a7d; --red:#c23c3c;
+  --shadow:0 12px 34px rgba(30,55,110,.12);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);
+  font-family:"PingFang SC","Microsoft YaHei","Segoe UI",system-ui,-apple-system,sans-serif;
+  font-size:14px;line-height:1.65;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:36px 36px;mask-image:linear-gradient(180deg,#000 0%,transparent 85%)}
+.app{position:relative;z-index:1;display:grid;grid-template-columns:236px 1fr;min-height:100vh;max-width:1560px;margin:0 auto}
+/* ---------- 侧栏 ---------- */
+.side{border-right:1px solid var(--line);background:linear-gradient(180deg,rgba(13,20,36,.92),rgba(6,9,18,.78));
+  backdrop-filter:blur(18px);padding:20px 14px;position:sticky;top:0;height:100vh;overflow:auto}
+html[data-theme="light"] .side{background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(244,247,253,.9))}
+.brand{display:flex;align-items:center;gap:10px;padding:0 8px 18px;border-bottom:1px solid var(--line);margin-bottom:16px}
+.brand svg{width:38px;height:38px;flex:0 0 auto}
+.brand b{font-size:15px;letter-spacing:.5px;display:block}
+.brand small{color:var(--mut);font-size:11px;letter-spacing:.4px}
+.navgrp{margin-bottom:14px}
+.navgrp h4{margin:0 0 6px;padding:0 10px;font-size:10.5px;font-weight:700;letter-spacing:2px;color:var(--dim);text-transform:uppercase}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav button{all:unset;cursor:pointer;padding:8px 10px;border-radius:9px;color:var(--mut);font-size:13px;
+  display:flex;align-items:center;gap:9px;transition:.16s}
+.nav button:hover{background:var(--panel2);color:var(--tx)}
+.nav button.on{background:linear-gradient(90deg,rgba(126,232,245,.14),rgba(143,168,255,.08));color:var(--tx);
+  box-shadow:inset 2px 0 0 var(--cyan)}
+.nav button i{width:6px;height:6px;border-radius:50%;background:var(--dim);flex:0 0 auto}
+.nav button.on i{background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+.nav button.new::after{content:"NEW";font-size:8.5px;letter-spacing:.5px;color:var(--bg);background:var(--green);
+  padding:1px 5px;border-radius:5px;font-weight:800;margin-left:auto}
+.sidefoot{border-top:1px solid var(--line);margin-top:18px;padding:14px 10px 0;font-size:11px;color:var(--dim);line-height:1.8}
+/* ---------- 主区 ---------- */
+.main{padding:30px 40px 72px;min-width:0}
+.topbar{display:flex;align-items:center;gap:12px;justify-content:flex-end;margin-bottom:18px}
+.chip{font-size:11px;padding:5px 11px;border-radius:20px;border:1px solid var(--line2);color:var(--mut);
+  display:inline-flex;align-items:center;gap:6px;background:var(--panel)}
+.chip b{color:var(--green);font-weight:700}
+.chip.demo b{color:var(--amber)}
+.ghost{all:unset;cursor:pointer;font-size:11.5px;padding:6px 12px;border:1px solid var(--line2);
+  border-radius:9px;color:var(--mut);transition:.16s}
+.ghost:hover{color:var(--tx);border-color:var(--cyan)}
+.btn{all:unset;cursor:pointer;font-size:12px;padding:7px 14px;border-radius:9px;font-weight:600;
+  background:linear-gradient(100deg,var(--cyan),var(--blue));color:#05101f;transition:.16s;white-space:nowrap}
+.btn:hover{filter:brightness(1.12);transform:translateY(-1px)}
+.btn.sec{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);font-weight:500}
+.btn.sec:hover{border-color:var(--cyan)}
+.btn.sm{padding:5px 10px;font-size:11px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+/* ---------- hero ---------- */
+.hero{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:22px;padding:28px 30px;
+  background:linear-gradient(115deg,rgba(16,26,51,.95),rgba(10,16,32,.9) 60%,rgba(24,43,82,.7));box-shadow:var(--shadow)}
+html[data-theme="light"] .hero{background:linear-gradient(115deg,#fff,#eef4ff 60%,#e8f0ff)}
+.hero .fish{position:absolute;right:18px;top:8px;width:230px;opacity:.92;pointer-events:none}
+.eyebrow{font-size:11px;letter-spacing:2.5px;color:var(--cyan);font-weight:700;margin-bottom:10px}
+.hero h1{margin:0 0 8px;font-size:30px;letter-spacing:.5px;line-height:1.25}
+.hero h1 .g{background:linear-gradient(95deg,var(--cyan),var(--blue) 45%,var(--purple));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{margin:0;color:var(--mut);max-width:620px;font-size:13.5px}
+.hero .pills{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+.pill{font-size:11px;padding:5px 11px;border-radius:20px;border:1px solid var(--line2);background:rgba(255,255,255,.03);color:var(--mut)}
+.pill.ok{color:var(--green);border-color:rgba(79,209,197,.45)}
+.pill.warn{color:var(--amber);border-color:rgba(255,201,122,.4)}
+.pill.info{color:var(--blue);border-color:rgba(143,168,255,.4)}
+/* ---------- 通用块 ---------- */
+.view{display:none;animation:fade .28s ease}
+.view.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+h2.sec{font-size:21px;margin:32px 0 8px;letter-spacing:.2px;font-weight:700}
+.sub{color:var(--mut);font-size:12.5px;margin:0 0 16px}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px;transition:.18s}
+.card:hover{border-color:var(--line2);transform:translateY(-2px)}
+.card h3{margin:0 0 10px;font-size:15px;letter-spacing:.2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.card p{margin:0;color:var(--mut);font-size:13px;line-height:1.7}
+.tag{font-size:10px;padding:2px 8px;border-radius:6px;font-weight:700;letter-spacing:.4px}
+.t-cyan{background:rgba(126,232,245,.13);color:var(--cyan)}
+.t-blue{background:rgba(143,168,255,.13);color:var(--blue)}
+.t-purple{background:rgba(230,166,255,.13);color:var(--purple)}
+.t-green{background:rgba(79,209,197,.13);color:var(--green)}
+.t-amber{background:rgba(255,201,122,.13);color:var(--amber)}
+.t-pink{background:rgba(255,158,196,.13);color:var(--pink)}
+.t-red{background:rgba(255,139,139,.13);color:var(--red)}
+.t-gray{background:rgba(139,155,189,.12);color:var(--mut)}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+.kv:last-child{border:0}
+.kv span:first-child{color:var(--mut)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;color:var(--dim);font-size:10.5px;letter-spacing:1.2px;font-weight:700;padding:9px 10px;border-bottom:1px solid var(--line)}
+td{padding:10px;border-bottom:1px solid var(--line);color:var(--mut);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+td b{color:var(--tx);font-weight:600}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:7px;vertical-align:middle}
+.d-ok{background:var(--green);box-shadow:0 0 7px rgba(79,209,197,.7)}
+.d-miss{background:var(--red);box-shadow:0 0 7px rgba(255,139,139,.5)}
+.d-warn{background:var(--amber)}
+.d-off{background:var(--dim)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border:0}
+.row .lab{font-size:13px}
+.row .lab small{display:block;color:var(--dim);font-size:11px;margin-top:2px}
+.sw{width:40px;height:22px;border-radius:20px;background:var(--line2);position:relative;cursor:pointer;flex:0 0 auto;transition:.18s}
+.sw::after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;background:#fff;top:3px;left:3px;transition:.18s}
+.sw.on{background:linear-gradient(90deg,var(--cyan),var(--blue))}
+.sw.on::after{left:21px}
+.sw[data-lock]{cursor:not-allowed;opacity:.5}
+select,input[type=text],input:not([type]),input[type=password],input[type=number],textarea{
+  background:var(--panel2);color:var(--tx);border:1px solid var(--line2);border-radius:9px;
+  padding:7px 10px;font-size:12.5px;font-family:inherit;outline:none;transition:.16s}
+select:focus,input:focus,textarea:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(126,232,245,.09)}
+input::placeholder,textarea::placeholder{color:var(--dim)}
+input[type=range]{accent-color:var(--cyan)}
+textarea{resize:vertical;line-height:1.6}
+select{appearance:none;-webkit-appearance:none;padding-right:26px;
+  background-image:linear-gradient(45deg,transparent 50%,var(--mut) 50%),linear-gradient(135deg,var(--mut) 50%,transparent 50%);
+  background-position:calc(100% - 14px) 52%,calc(100% - 9px) 52%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+.note{background:rgba(255,201,122,.07);border:1px solid rgba(255,201,122,.28);border-radius:11px;
+  padding:11px 14px;font-size:12px;color:var(--mut);margin:12px 0}
+.note b{color:var(--amber)}
+.note.ok{background:rgba(79,209,197,.07);border-color:rgba(79,209,197,.28)}
+.note.ok b{color:var(--green)}
+/* 进度 / 步骤 */
+.steps{display:flex;gap:6px;margin:16px 0 20px}
+.step{flex:1;padding:10px 8px;border-radius:10px;border:1px solid var(--line);background:var(--panel);font-size:11.5px;
+  color:var(--dim);text-align:center;cursor:pointer;transition:.18s}
+.step.on{border-color:var(--cyan);color:var(--tx);background:linear-gradient(180deg,rgba(126,232,245,.12),transparent)}
+.step.done{color:var(--green);border-color:rgba(79,209,197,.35)}
+.bar{height:7px;border-radius:10px;background:var(--line);overflow:hidden;margin:8px 0}
+.bar i{display:block;height:100%;border-radius:10px;background:linear-gradient(90deg,var(--cyan),var(--blue),var(--purple));transition:width .4s}
+/* 图表 */
+.chart{display:flex;align-items:flex-end;gap:9px;height:132px;padding:8px 4px 0;border-bottom:1px solid var(--line)}
+.chart .col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px;height:100%}
+.chart .col i{width:100%;max-width:34px;border-radius:6px 6px 2px 2px;
+  background:linear-gradient(180deg,var(--cyan),rgba(143,168,255,.35));display:block;transition:.3s}
+.chart .col:nth-child(odd) i{background:linear-gradient(180deg,var(--purple),rgba(143,168,255,.3))}
+.chart .col small{font-size:10px;color:var(--dim)}
+.chartx{display:flex;gap:9px;padding:7px 4px 0}
+.chartx span{flex:1;text-align:center;font-size:10px;color:var(--dim)}
+/* 时间线 */
+.tl{position:relative;padding-left:22px;margin-top:8px}
+.tl::before{content:"";position:absolute;left:6px;top:4px;bottom:4px;width:1px;background:var(--line2)}
+.ev{position:relative;padding:9px 0 12px}
+.ev::before{content:"";position:absolute;left:-19px;top:15px;width:9px;height:9px;border-radius:50%;
+  background:var(--blue);box-shadow:0 0 0 3px var(--bg),0 0 9px rgba(143,168,255,.6)}
+.ev.in::before{background:var(--cyan)}
+.ev.song::before{background:var(--purple)}
+.ev.err::before{background:var(--red)}
+.ev time{font-size:10.5px;color:var(--dim);letter-spacing:.6px}
+.ev .body{font-size:12.5px;margin-top:3px;color:var(--tx)}
+.ev .body em{font-style:normal;color:var(--mut);font-size:11.5px}
+/* 能量曲线 */
+.wave{width:100%;height:92px;display:block;margin:6px 0}
+.legend{display:flex;gap:14px;font-size:10.5px;color:var(--dim);flex-wrap:wrap}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
+/* 大屏模式 */
+body.bigscreen .side{display:none}
+body.bigscreen .app{grid-template-columns:1fr}
+body.bigscreen .main{padding:20px 28px 50px;max-width:1500px;margin:0 auto;width:100%}
+body.bigscreen .hero{padding:20px 26px}
+body.bigscreen .hero .fish{width:180px}
+body.bigscreen h2.sec{margin-top:20px}
+.dash{display:grid;grid-template-columns:1.35fr 1fr;gap:14px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translate(-50%,20px);opacity:0;pointer-events:none;
+  background:var(--panel2);border:1px solid var(--cyan);color:var(--tx);padding:10px 18px;border-radius:11px;
+  font-size:12.5px;box-shadow:var(--shadow);transition:.25s;z-index:99}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);color:var(--dim);font-size:11px;line-height:1.9}
+@media(max-width:1000px){.g4,.g3{grid-template-columns:repeat(2,1fr)}.dash{grid-template-columns:1fr}}
+@media(max-width:720px){.app{grid-template-columns:1fr}.side{position:relative;height:auto}
+  .g2,.g3,.g4{grid-template-columns:1fr}.main{padding:18px}.hero .fish{opacity:.25}
+  /* 窄窗（内置预览、小窗口）侧栏改横向条：不然一整屏全是导航，内容被挤到看不见的地方 */
+  .side{padding:10px 12px;gap:8px;display:flex;flex-wrap:wrap;align-items:center}
+  .side .brand{flex:0 0 100%;padding:0 4px 6px;gap:8px}
+  .side .brand svg{width:26px;height:26px}
+  .side .brand b{font-size:13px}
+  .side .brand small{display:none}
+  .side .navgrp{flex:0 0 auto;margin:0}
+  .side .navgrp h4{display:none}
+  .side .nav{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:4px;padding-bottom:2px;scrollbar-width:none}
+  .side .nav::-webkit-scrollbar{display:none}
+  .side .nav button{flex:0 0 auto;white-space:nowrap;padding:7px 11px;font-size:12px}
+  .side .sidefoot{display:none}}
+
+/* ---------- 本机启停 / 路径 ---------- */
+.stackrows{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.stackrow{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);font-size:12.5px;flex-wrap:wrap}
+.stackrow b{min-width:58px}
+.sport{color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
+.sname{color:var(--mut);flex:1;min-width:110px}
+.sstate{margin-left:auto;color:var(--mut);font-size:11.5px}
+.sdot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--dim)}
+.sdot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+.pcode{flex:1;min-width:180px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pathrow{padding:10px 12px}
+
+/* ---------- P10 紧凑行 / 选择器 / 日志 ---------- */
+.flow{display:flex;flex-direction:column;margin:6px 0 2px}
+.flowrow{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px}
+.flowrow:last-child{border-bottom:0}
+.flowrow .sdot{flex:0 0 auto}
+.flowrow .fl{flex:1;min-width:0}
+.flowrow .fl b{display:block;font-size:13px;font-weight:600;line-height:1.4}
+.flowrow .fl small{display:block;color:var(--mut);font-size:11.5px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.flowrow .fa{display:flex;gap:6px;flex:0 0 auto}
+.wizact{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.depwrap{display:flex;flex-direction:column}
+.deprow{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--line);font-size:12.5px}
+.deprow:last-child{border-bottom:0}
+.depname{flex:0 0 190px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.depdetail{flex:1;min-width:0;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.depact{display:flex;gap:6px;flex:0 0 auto}
+.pickrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+.pickrow:last-child{border-bottom:0}
+.pickrow .pt{flex:1;min-width:0;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pickrow .fa{display:flex;gap:6px;flex:0 0 auto;align-items:center}
+.loghead{display:flex;align-items:center;gap:8px;margin:16px 0 8px;flex-wrap:wrap}
+.loghead b{font-size:12.5px;margin-right:auto}
+.logbox{margin:0;background:linear-gradient(180deg,rgba(6,9,18,.9),rgba(10,16,32,.9));border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.75;
+  max-height:220px;overflow:auto;white-space:pre-wrap;color:var(--mut)}
+html[data-theme="light"] .logbox{background:#f7f9ff}
+.logbox .t{color:var(--dim)}
+
+/* ---------- P11 试听 / 模型库 / 音色 ---------- */
+.inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.inline .grow{flex:1;min-width:180px}
+audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
+.audiolist{display:flex;flex-direction:column;margin-top:6px}
+.audiorow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+.audiorow:last-child{border-bottom:0}
+.audiorow .ai{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,rgba(126,232,245,.16),rgba(143,168,255,.1));
+  color:var(--cyan);display:flex;align-items:center;justify-content:center;font-size:13px;flex:0 0 auto}
+.audiorow .an{flex:1;min-width:0}
+.audiorow .an b{display:block;font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.audiorow .an small{display:block;color:var(--dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.audiorow .fa{display:flex;gap:6px;flex:0 0 auto}
+.modrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px dashed var(--line);font-size:12.5px;flex-wrap:wrap}
+.modrow:last-child{border-bottom:0}
+.modrow .mt{flex:1;min-width:0}
+.modrow .mt b{display:block;font-size:12.5px}
+.modrow .mt small{display:block;color:var(--dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{font-size:10px;padding:1px 7px;border-radius:6px;font-weight:700;letter-spacing:.3px}
+.b-ok{background:rgba(79,209,197,.14);color:var(--green)}
+.b-warn{background:rgba(255,201,122,.14);color:var(--amber)}
+.b-off{background:rgba(139,155,189,.13);color:var(--mut)}
+.b-blue{background:rgba(143,168,255,.14);color:var(--blue)}
+.outpath{margin-top:10px;padding:10px 12px;border:1px dashed var(--line2);border-radius:10px;background:var(--panel2)}
+.outpath .op{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:var(--tx);
+  word-break:break-all;line-height:1.6;margin:4px 0 8px}
+.progwrap{margin-top:12px}
+.progwrap .pl{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);margin-bottom:4px}
+.grouphead{display:flex;align-items:center;gap:8px;margin:22px 0 10px}
+.grouphead h3{margin:0;font-size:14px;letter-spacing:.3px}
+.grouphead small{color:var(--dim);font-size:11.5px}
+.grouphead .sp{flex:1}
+@media (max-width:860px){
+  .depname{flex:0 0 120px}
+  .deprow{flex-wrap:wrap}
+  .depdetail{flex:1 0 100%;order:3}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ================= 侧栏 ================= -->
+  <aside class="side">
+    <div class="brand">
+      <svg viewBox="0 0 64 64" aria-label="飞鱼">
+        <defs><linearGradient id="bf" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8fe3ff"/><stop offset=".55" stop-color="#5f9df0"/><stop offset="1" stop-color="#a17ae8"/></linearGradient></defs>
+        <rect width="64" height="64" rx="16" fill="#0d1424"/>
+        <path d="M12 36c7-10 22-13 34-7 5 3 8 7 9 11-5-1-9 0-12 3 4 2 8 6 11 10-10 3-23 2-32-3-6-4-9-9-10-14z" fill="url(#bf)"/>
+        <path d="M25 29c-2-9 3-15 12-14-4 5-5 10-3 15z" fill="#b7a4ff"/>
+        <circle cx="20" cy="35" r="2.2" fill="#06101f"/>
+      </svg>
+      <div><b>懂你的QQ大肥鱼</b><small>dsh-qq-soul · v1.2.0</small></div>
+    </div>
+
+    <div class="navgrp"><h4>概览</h4><div class="nav">
+      <button data-v="overview" class="on"><i></i>总览</button>
+      <button data-v="wizard"><i></i>安装向导</button>
+      <button data-v="deps"><i></i>依赖体检</button>
+    </div></div>
+    <div class="navgrp"><h4>人设与表达</h4><div class="nav">
+      <button data-v="voice"><i></i>语音渠道</button>
+      <button data-v="memory"><i></i>记忆管理</button>
+      <button data-v="skills"><i></i>工具 / 技能</button>
+    </div></div>
+    <div class="navgrp"><h4>能力与模型</h4><div class="nav">
+      <button data-v="models"><i></i>模型管理</button>
+      <button data-v="song"><i></i>翻唱</button>
+      <button data-v="resident"><i></i>内存里的模型</button>
+    </div></div>
+    <div class="navgrp"><h4>系统</h4><div class="nav">
+      <button data-v="logs"><i></i>日志与时间线</button>
+      <button data-v="paths"><i></i>目录与路径</button>
+      <button data-v="dashboard" class="new"><i></i>运维大屏</button>
+      <button data-v="about"><i></i>关于</button>
+    </div></div>
+
+    <div class="sidefoot">
+      原型演示 · 数据均为 <b style="color:var(--amber)">DEMO</b><br>
+      service 端口 9876 · 单端口 supervisor<br>
+      大屏 <a href="/panel" style="color:var(--cyan)">127.0.0.1:9876/panel</a><br>
+      macOS / Windows 双平台
+    </div>
+  </aside>
+
+  <!-- ================= 主区 ================= -->
+  <main class="main">
+    <div class="topbar">
+      <span class="chip demo" id="modeChip"><b>●</b> 演示模式 · 未连接 service</span>
+      <span class="chip" id="gwChip"><b>●</b> QQ 网关未检查</span>
+      <button class="ghost" id="connBtn">连接 service</button>
+      <button class="ghost" id="themeBtn">切换亮色</button>
+      <button class="ghost" id="panelUrlBtn" title="点击复制大屏地址">大屏 · 127.0.0.1:9876/panel</button>
+      <button class="ghost" id="bigBtn">进入大屏</button>
+    </div>
+
+    <!-- P4：同一份 HTML 既能双击打开看演示，也能连上 127.0.0.1:9876 读真实状态 -->
+    <div class="card" id="connBox" style="display:none;margin-bottom:16px">
+      <h3>连接真实音频服务 <span class="tag t-green">LIVE</span></h3>
+      <div class="row"><div class="lab">服务地址<small>先跑 python3 -m services --serve</small></div>
+        <input id="connUrl" style="flex:1" value="http://127.0.0.1:9876"></div>
+      <div class="row"><div class="lab">Token<small>没设 QQSOUL_SERVICE_TOKEN 就留空</small></div>
+        <input id="connToken" style="flex:1" placeholder="可留空"></div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn" id="connGo">连接并读取真实状态</button>
+        <button class="btn sec" id="connStop">回到演示模式</button>
+        <button class="btn sec" id="connRefresh">重新拉取</button>
+      </div>
+      <div class="note" id="connNote" style="margin-top:10px">双击打开也能直连：service 已允许 <code>null</code> origin 的 CORS。连上之后所有表格只消费 <code>/status</code>、<code>/deps/check</code>、<code>/models/catalog</code>、<code>/song/jobs</code> 与 SSE，网页不替服务端造状态。</div>
+    </div>
+
+    <!-- 演示态说清楚「为什么是 DEMO、怎么出去」：不让用户对着编出来的数字猜 -->
+    <div class="card" id="demoHint" style="margin-bottom:16px;border-left:3px solid var(--amber)">
+      <h3>你现在看的是「静态演示页」 <span class="tag t-amber">DEMO</span></h3>
+      <p style="font-size:12.5px">同一份 HTML 有两种打开方式：<b>双击文件</b> = 纯演示（下面的数字全是编的，按钮只回一句提示）；<b>由 service 托管</b> = 实时（打开就自动连上，这块会自己消失）。要真数据，在插件目录跑：</p>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <code style="flex:1;min-width:240px">python3 -m services --serve</code>
+        <button class="btn sec sm" onclick="copyText('python3 -m services --serve')">复制命令</button>
+        <button class="btn sm" onclick="openLivePanel()">打开实时面板</button>
+      </div>
+      <p style="font-size:11.5px;color:var(--dim);margin:8px 0 0">服务已经在跑？点右上角「连接 service」→「连接并读取真实状态」。实时地址是 <code>http://127.0.0.1:9876/panel</code>。</p>
+    </div>
+
+    <!-- ---------- 总览 ---------- -->
+    <section class="view on" id="v-overview">
+      <div class="hero">
+        <svg class="fish" viewBox="0 0 380 260" aria-label="飞鱼插画">
+          <defs>
+            <linearGradient id="hf" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8fe3ff"/><stop offset=".55" stop-color="#5f9df0"/><stop offset="1" stop-color="#a17ae8"/></linearGradient>
+            <radialGradient id="hg"><stop offset="0" stop-color="#4fd1c5" stop-opacity=".35"/><stop offset="1" stop-color="#4fd1c5" stop-opacity="0"/></radialGradient>
+          </defs>
+          <circle cx="230" cy="120" r="120" fill="url(#hg)"/>
+          <g opacity=".5" fill="#7ee8f5"><circle cx="60" cy="40" r="2"/><circle cx="330" cy="30" r="2"/><circle cx="350" cy="200" r="2.5"/><circle cx="40" cy="180" r="1.8"/></g>
+          <path d="M60 148C96 96 174 80 238 110c30 14 48 36 54 56-28-5-50-2-68 12 22 12 44 30 60 52-50 14-130 10-178-18-30-18-48-40-46-64z" fill="url(#hf)" opacity=".96"/>
+          <path d="M150 110c-10-46 26-78 76-74-22 26-26 54-12 78z" fill="#b7a4ff" opacity=".9"/>
+          <path d="M96 188c-38 6-70 32-82 62 42-8 70-22 94-38z" fill="#7ee8f5" opacity=".7"/>
+          <path d="M284 168c34-18 62-18 84-8-18 14-36 24-60 28z" fill="#e6a6ff" opacity=".8"/>
+          <circle cx="112" cy="146" r="9" fill="#06101f"/><circle cx="114" cy="143" r="3" fill="#fff"/>
+          <path d="M96 176q16 10 32 0" stroke="#0b1a30" stroke-width="3" fill="none" stroke-linecap="round" opacity=".6"/>
+        </svg>
+        <div class="eyebrow">QQ SOUL · 在 QQ 里养一个活的角色</div>
+        <h1>让大肥鱼<span class="g">会说话、会唱歌、记得你</span></h1>
+        <p>说话和唱歌两条音频链路都跑在本机 service 里。模型自己下、自己加载，装的时候不带任何权重。</p>
+        <div class="pills" id="heroPills">
+          <span class="pill">● 未连接 service</span>
+        </div>
+      </div>
+
+      <h2 class="sec">现在就做这三件</h2>
+      <div class="grid g3">
+        <div class="card">
+          <h3><span class="tag t-cyan">1</span> 接上 QQ</h3>
+          <p>QQ 本体、NapCat 网关、桥，三件一起起。面板里一个按钮，起完刷新就是绿的。</p>
+          <button class="btn sm" style="margin-top:12px" onclick="go('wizard')">去安装向导</button>
+        </div>
+        <div class="card">
+          <h3><span class="tag t-purple">2</span> 让她说话</h3>
+          <p>选渠道、选音色，点一下真的合成一句给你听，不是演示动画。</p>
+          <button class="btn sec sm" style="margin-top:12px" onclick="go('voice')">去语音渠道</button>
+        </div>
+        <div class="card">
+          <h3><span class="tag t-amber">3</span> 让她唱歌</h3>
+          <p>选好你的音色，搜一首点下去；做好直接在这里试听。</p>
+          <button class="btn sec sm" style="margin-top:12px" onclick="go('song')">去翻唱</button>
+        </div>
+      </div>
+
+      <h2 class="sec">东西存在哪</h2>
+      <div class="grid g2">
+        <div class="card">
+          <h3>插件数据（配置 / 人格 / 记忆）</h3>
+          <div class="kv"><span>目录</span><span><code>~/.dsh/plugins-data/aurabot/</code></span></div>
+          <div class="kv"><span>长期记忆</span><span><code>memory.sqlite</code> + <code>recall-log.json</code></span></div>
+          <div class="kv"><span>人格</span><span><code>personas/*.md</code></span></div>
+          <div class="kv"><span>时间线 / 用量</span><span><code>ops/</code>（保留 7 天）</span></div>
+          <p style="font-size:12px;color:var(--dim)">DSH 插件进程写的；换电脑用「系统 → 备份」整包带走。</p>
+        </div>
+        <div class="card">
+          <h3>音频服务数据（模型 / 试听 / 曲库）</h3>
+          <div class="kv"><span>目录</span><span id="ovDataDir" title=""><code>连接后显示</code></span></div>
+          <div class="kv"><span>模型</span><span><code>models/</code> · qwen / gptsovits / rvc / htdemucs</span></div>
+          <div class="kv"><span>试听 / 成品</span><span><code>audio/</code> · <code>music/covers/</code></span></div>
+          <p style="font-size:12px;color:var(--dim)">GPT-SoVITS 整包如果在 <code>~/tools/GPT-SoVITS</code>，模型页会自动认出来，不用再下一份。</p>
+        </div>
+      </div>
+
+      <h2 class="sec">谁管什么</h2>
+      <div class="grid g2">
+        <div class="card">
+          <h3>链路</h3>
+          <div class="kv"><span>QQ 协议端</span><span><b>NapCat</b> · 你自己装、自己启动</span></div>
+          <div class="kv"><span>连接方向</span><span>插件主动连网关 <b>ws://127.0.0.1:6700</b></span></div>
+          <div class="kv"><span>大脑</span><span>DSH 宿主的模型</span></div>
+          <div class="kv"><span>声音</span><span>service 9876 · 说话 / 翻唱</span></div>
+          <div class="note"><b>一个 QQ 号只能有一个消费者：</b>NapCat 里那条反向连 6700 的旧桥要关掉，否则她一次回两条。</div>
+        </div>
+        <div class="card">
+          <h3>这一版做了什么</h3>
+          <div class="kv"><span>安装向导</span><span>四步，每步一个按钮</span></div>
+          <div class="kv"><span>说话</span><span>渠道 / 音色 / 语速 / 音量 · 试听 + 日志</span></div>
+          <div class="kv"><span>唱歌</span><span>搜歌 / 分离 / 换声 / 混音 · 成品试听</span></div>
+          <div class="kv"><span>路径</span><span>全部在插件目录下，系统框选择</span></div>
+          <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn" onclick="go('wizard')">跑一遍安装向导</button>
+            <button class="btn sec" onclick="go('dashboard')">看运维大屏</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 安装向导 ---------- -->
+    <section class="view" id="v-wizard">
+      <div class="hero" style="padding:22px 26px">
+        <div class="eyebrow">FIRST RUN · 4 步上线</div>
+        <h1 style="font-size:23px">照这四步走，<span class="g">她就能在 QQ 里说话</span></h1>
+        <p>这里只讲流程，每步一个按钮直达对应页面。具体参数在各自页面里调，改坏了随时回来重走这一步。</p>
+      </div>
+      <div class="steps" id="steps">
+        <div class="step on" data-s="0">1 · 接上 QQ</div>
+        <div class="step" data-s="1">2 · 会说话</div>
+        <div class="step" data-s="2">3 · 会唱歌</div>
+        <div class="step" data-s="3">4 · 确认上线</div>
+      </div>
+      <div class="card" id="wizBody"></div>
+      <div style="display:flex;justify-content:space-between;margin-top:14px;gap:10px;flex-wrap:wrap">
+        <button class="btn sec" id="wizPrev">上一步</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn sec" onclick="refreshAll().then(()=>toast('状态已刷新'))">刷新状态</button>
+          <button class="btn" id="wizNext">下一步</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 依赖体检 ---------- -->
+    <section class="view" id="v-deps">
+      <h2 class="sec">依赖体检</h2>
+      <p class="sub">每一行告诉你缺什么、点一下就能修。路径类的都走系统选择框，选完立刻生效，不用手打。</p>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div id="depsBody" class="depwrap"><div class="deprow"><span class="depname">正在读…</span></div></div>
+      </div>
+      <div class="grid g3" style="margin-top:14px">
+        <div class="card"><h3>零下载默认</h3><p>edge-tts（微软在线）/ Breeze（远程，只填 Token）。装完就能用。</p></div>
+        <div class="card"><h3>按需轻量</h3><p>ffmpeg、分离权重。缺了会红，点「选择」指到文件上就行。</p></div>
+        <div class="card"><h3>自己下载</h3><p>GPT-SoVITS、千问 MLX、RVC 音色。<b>点下载页复制链接</b>，下好到模型管理选目录。</p></div>
+      </div>
+    </section>
+
+    <!-- ---------- 语音渠道 ---------- -->
+    <section class="view" id="v-voice">
+      <h2 class="sec">语音渠道</h2>
+      <p class="sub">选一个渠道、一个音色，点「合成并播放」真的出声。合成出来的文件路径就在下面，能直接复制、能在 Finder 里打开。</p>
+      <div class="card">
+        <div class="row"><div class="lab">渠道<small>在线零下载 / 远程只填 Token / 本地选模型</small></div>
+          <select id="engine">
+            <optgroup label="在线（零下载）"><option value="edge">微软 edge-tts</option></optgroup>
+            <optgroup label="远程（只填 Token）"><option value="breeze">Breeze TTS</option><option value="http">本机 Bridge / 任意 HTTP TTS</option></optgroup>
+            <optgroup label="本地（自己下载模型）"><option value="gptsovits">GPT-SoVITS</option><option value="qwen">千问 3-TTS · MLX</option></optgroup>
+          </select></div>
+        <div id="engineCfg"></div>
+        <div class="note" id="engineNote"></div>
+        <div class="inline">
+          <button class="btn" id="ttsSave">保存（下一句生效）</button>
+          <button class="btn sec" id="ttsReload">重新读取</button>
+          <button class="btn sec" id="adoptBtn" title="从本机旧配置搬说话渠道、参考音频、千问模型、Breeze 和 RVC 音色">读取本机原配置</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h3>合成并播放 <span class="tag t-gray" id="ttsTryTag">未连接</span></h3>
+        <div class="inline">
+          <input type="text" id="ttsText" class="grow" value="主人，今天想听我说话，还是唱首歌给你听呀？">
+          <button class="btn" id="ttsGo">合成并播放</button>
+        </div>
+        <div class="progwrap">
+          <div class="pl"><span id="ttsStage">还没开始</span><span id="ttsElapsed">—</span></div>
+          <div class="bar"><i id="ttsBar" style="width:0%"></i></div>
+        </div>
+        <p style="font-size:12px;color:var(--mut);margin-top:8px" id="ttsOut">还没试过。</p>
+        <div class="outpath" id="ttsFileBox" style="display:none">
+          <div style="font-size:11.5px;color:var(--dim)">这次生成的文件</div>
+          <div class="op" id="ttsFilePath"></div>
+          <div class="inline" style="margin-top:0">
+            <button class="btn sm" onclick="playFile(state.lastTtsUrl,$('#ttsAudio'))">再听一次</button>
+            <button class="btn sec sm" onclick="copyText(state.lastTtsPath)">复制路径</button>
+            <button class="btn sec sm" onclick="revealPath(state.lastTtsPath)">在 Finder 里打开</button>
+            <button class="btn sec sm" onclick="revealPath(state.audioDir)">打开试听目录</button>
+          </div>
+        </div>
+        <audio id="ttsAudio" controls style="display:none"></audio>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h3>试听目录 <span class="tag t-gray" id="audioTag">读状态…</span></h3>
+        <p style="font-size:12px;margin-bottom:4px">每次合成都会在这里留一份。听过的、不要的可以一键清掉，不碰曲库和发出去的语音条。</p>
+        <div class="audiolist" id="audioList"></div>
+        <div class="inline">
+          <button class="btn sec sm" onclick="refreshAudioList()">刷新</button>
+          <button class="btn sec sm" onclick="revealPath(state.audioDir)">打开目录</button>
+          <button class="btn sec sm" onclick="clearAudio()">清空试听</button>
+          <span style="color:var(--dim);font-size:11.5px" id="audioDirText"></span>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h3>生成日志 <span class="tag t-gray">每次合成一行</span></h3>
+        <div class="loghead">
+          <b>服务端原始记录</b>
+          <button class="btn sec sm" onclick="loadLog('tts','#ttsLog','error')">只看失败</button>
+          <button class="btn sec sm" onclick="loadLog('tts','#ttsLog')">全部</button>
+          <button class="btn sec sm" onclick="copyLog('tts')">复制</button>
+          <button class="btn sec sm" onclick="revealPath(state.dirs.logs||'')">打开目录</button>
+        </div>
+        <pre class="logbox" id="ttsLog">连上 service 后显示每次合成的结果。</pre>
+      </div>
+    </section>
+
+    <!-- ---------- 模型管理 ---------- -->
+    <section class="view" id="v-models">
+      <h2 class="sec">模型管理</h2>
+      <p class="sub">模型分三类管：<b>说话（TTS）</b>、<b>唱歌音色（RVC）</b>、<b>人声分离</b>。每个都放在自己的目录里，导入就是把文件收进来，删掉就是真的从磁盘删掉。</p>
+
+      <div class="grouphead"><h3>TTS 模型</h3><small>说话渠道选「本地」时用的权重</small><div class="sp"></div>
+        <button class="btn sec sm" onclick="adoptLocal()">读取本机原配置</button></div>
+      <div class="grid g2" id="ttsModelBody"><div class="card"><h3>正在读…</h3></div></div>
+
+      <div class="grouphead"><h3>RVC 音色</h3><small>一个 .pth + 一个 .index；翻唱页下拉选的就是这里</small><div class="sp"></div>
+        <button class="btn sm" onclick="rvcImport()">导入音色（.pth / .zip）</button></div>
+      <div class="card" id="rvcBody"><p>连上 service 后显示本机音色。</p></div>
+
+      <div class="grouphead"><h3>人声分离</h3><small>翻唱第一步：把人声和伴奏拆开</small></div>
+      <div class="card" id="sepBody"><p>连上 service 后显示。</p></div>
+
+      <div class="note" id="pathNote">连上 service 后显示真实模型目录。</div>
+    </section>
+
+    <!-- ---------- 翻唱策略 ---------- -->
+    <section class="view" id="v-song">
+      <h2 class="sec">翻唱</h2>
+      <p class="sub">三步：搜到歌 → 用你的音色换声 → 做好直接试听。</p>
+
+      <div class="card" id="latestCard">
+        <h3>最近一首 <span class="tag t-gray" id="latestTag">读状态…</span></h3>
+        <div id="latestBody" class="pickrow"><span class="pt">连上 service 后显示最近做好的那首。</span></div>
+      </div>
+
+      <div class="card" id="coversCard" style="margin-top:14px">
+        <h3>已翻唱 <span class="tag t-gray" id="coversTag">读状态…</span></h3>
+        <p style="font-size:12px;color:var(--mut);margin-bottom:8px">同一首歌、同一音色、同一清唱 / 伴奏设置已经有成品时，会直接复用，不再重跑。文件按「歌名-歌手-音色-清唱/伴奏-日期」命名。</p>
+        <div id="coversBody"><span class="pt">连上 service 后显示曲库。</span></div>
+      </div>
+
+      <h2 class="sec">先搞懂三个词</h2>
+      <div class="grid g3">
+        <div class="card"><h3><span class="tag t-amber">人声分离</span></h3><p>把一首歌拆成<b>人声</b>和<b>伴奏</b>两轨。默认用 <b>htdemucs</b>，模型很小，装好就有；拆得越干净，换声越不糊。</p></div>
+        <div class="card"><h3><span class="tag t-purple">RVC 换声</span></h3><p>用<b>你的音色模型</b>（.pth + .index）把原唱的人声换成你的嗓子。RVC 的配置就在下面「我的音色」里，不用去别处找。</p></div>
+        <div class="card"><h3><span class="tag t-cyan">翻唱策略</span></h3><p>决定<b>裁多少前奏、唱多长、混多响</b>。改完保存，下一首立即生效，不用重装。</p></div>
+      </div>
+
+      <h2 class="sec">我的音色（RVC）</h2>
+      <div class="card">
+        <div class="pickrow"><b style="min-width:84px">音色库</b>
+          <span class="pt"><select id="rvcSel" style="width:100%" onchange="rvcSelect(this.value)"></select></span>
+          <span class="fa"><button class="btn sec sm" onclick="rvcImport()">导入音色</button>
+            <button class="btn sec sm" onclick="pickModel('rvc')">选 .pth</button></span></div>
+        <div class="pickrow"><span class="sdot" id="rvcDot"></span><b style="min-width:84px">权重文件</b>
+          <span class="pt" id="rvcPth">还没选 .pth</span>
+          <span class="fa"><button class="btn sec sm" onclick="revealPath(state.rvcDir||'')">打开目录</button></span></div>
+        <div class="pickrow"><b style="min-width:84px">索引文件</b>
+          <span class="pt" id="rvcIndex">还没选 .index（有就选，没有也能跑）</span>
+          <span class="fa"><button class="btn sec sm" onclick="pickIndex()">选择 .index</button></span></div>
+        <div class="pickrow"><b style="min-width:84px">音色名</b>
+          <span class="pt">改名字会同时改目录和文件名；只改显示名不会动文件</span>
+          <span class="fa"><input id="voiceName" style="width:130px;text-align:center" placeholder="大肥鱼">
+            <button class="btn sec sm" onclick="saveVoiceName()">保存</button>
+            <button class="btn sec sm" onclick="rvcRename()">改名（连文件）</button></span></div>
+        <div class="note" id="rvcNote">选好 .pth 就等于选好了「她唱歌时的嗓子」。换音色不用重新下歌。</div>
+      </div>
+
+      <h2 class="sec">怎么唱</h2>
+      <div class="grid g2">
+        <div class="card">
+          <h3>四个旋钮 <span class="tag t-cyan">保存即生效</span></h3>
+          <div class="row"><div class="lab">人声分离<small>htdemucs 默认；BS-RoFormer 更干净但慢 4–6 倍</small></div>
+            <select id="sepSel"><option value="htdemucs">demucs htdemucs（默认）</option><option value="bs-roformer">BS-RoFormer（高质量）</option></select></div>
+          <div class="row"><div class="lab">演唱模式<small>清唱只发人声；伴奏保留原曲前奏；伴奏 · 去前奏从人声第一句开始</small></div>
+            <select id="modeSel"><option value="acapella">清唱（只发人声）</option><option value="accompaniment-trim">伴奏 · 去前奏空白</option><option value="accompaniment">伴奏 · 保留前奏</option></select></div>
+          <div class="row"><div class="lab">前奏处理<small>在人声轨上找真正的起唱点，把前面的静音裁掉</small></div>
+            <select id="trimSel"><option value="auto">自动裁剪（默认）</option><option value="fixed">固定裁 N 秒</option><option value="off">保留不裁</option></select></div>
+          <div class="row"><div class="lab">唱多长<small>整首，或者固定起点 + 固定时长</small></div>
+            <select id="windowSel"><option value="full">整首</option><option value="offset">固定起点 + 时长</option></select></div>
+          <div class="row" id="startRow"><div class="lab">从哪里开始唱<small>自动裁掉前奏后，再往后数 N 秒</small></div>
+            <span style="display:flex;gap:8px;align-items:center"><input id="startSec" type="number" min="0" max="3600" step="1" value="0" style="width:82px;text-align:center"><b style="font-size:11px;color:var(--dim)">秒</b></span></div>
+          <div class="row"><div class="lab">伴奏<small>清唱 = 只发人声；切回带伴奏会恢复上一次的伴奏音量</small></div>
+            <span style="display:flex;gap:8px;align-items:center"><div class="sw" id="acapellaSw"></div><b id="acapellaOut" style="font-size:11px;color:var(--dim)">带伴奏</b></span></div>
+          <div class="note" id="singLenNote" style="margin-top:2px">连上 service 后显示这一首会唱多长。</div>
+          <div class="row"><div class="lab">人声音量 / 伴奏音量<small>伴奏拉到 0 = 清唱；拉满 200% 会限幅</small></div>
+            <span style="display:flex;gap:8px;align-items:center">
+              <input id="vocalGain" type="range" min="0" max="2" step="0.05" value="1" style="width:104px">
+              <input id="instGain" type="range" min="0" max="2" step="0.05" value="1" style="width:104px">
+              <b id="gainOut" style="font-size:11px;color:var(--dim);white-space:nowrap">人声 100% / 伴奏 100%</b>
+            </span></div>
+          <div class="row"><div class="lab">轻混响 / 高频修正<small>混响 0–0.6；高频 −12…+6 dB</small></div>
+            <span style="display:flex;gap:8px;align-items:center">
+              <input id="reverb" type="range" min="0" max="0.6" step="0.01" value="0" style="width:92px">
+              <input id="treble" type="range" min="-12" max="6" step="0.5" value="0" style="width:92px">
+              <b id="mixOut" style="font-size:11px;color:var(--dim);white-space:nowrap">混响 0 / 高频 0 dB</b>
+            </span></div>
+          <div class="row"><div class="lab">index_rate<small>.index 的参考强度，0–1</small></div>
+            <input id="idxRate" type="number" min="0" max="1" step="0.05" value="0.55" style="width:82px;text-align:center"></div>
+          <div class="row"><div class="lab">起唱留白 / 窗口长度<small>auto 用留白秒数；窗口模式用时长秒数</small></div>
+            <span style="display:flex;gap:8px"><input id="padSec" type="number" min="0" max="5" step="0.1" value="0.4" style="width:82px;text-align:center"><input id="durSec" type="number" min="1" max="3600" step="10" value="120" style="width:92px;text-align:center"></span></div>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button class="btn" id="strategySave">保存策略（下一首生效）</button>
+            <button class="btn sec" id="strategyLoad">重新读取</button>
+            <button class="btn sec" id="gainSave">保存音量</button>
+          </div>
+          <div class="note" id="strategyNote">连上 service 后读取真实策略。</div>
+        </div>
+        <div class="card">
+          <h3>起唱点检测 <span class="tag t-purple">人声轨</span></h3>
+          <p style="margin-bottom:6px">前奏没声音就自动裁掉，不额外下模型。点开一首作业能看到真实曲线。</p>
+          <svg class="wave" id="energyDemo" viewBox="0 0 460 92" preserveAspectRatio="none">
+            <defs><linearGradient id="wg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#4a5b7d"/><stop offset=".32" stop-color="#4a5b7d"/><stop offset=".34" stop-color="#7ee8f5"/><stop offset="1" stop-color="#e6a6ff"/></linearGradient></defs>
+            <line x1="0" y1="60" x2="460" y2="60" stroke="#2a3a5c" stroke-dasharray="4 4"/>
+            <path d="M0 60 L14 59 L28 60 L42 58 L56 60 L70 59 L84 60 L98 59 L112 60 L126 58 L140 60 L154 59 L168 22 L182 14 L196 34 L210 18 L224 40 L238 16 L252 30 L266 12 L280 38 L294 20 L308 34 L322 14 L336 36 L350 22 L364 40 L378 18 L392 32 L406 16 L420 34 L434 22 L448 38 L460 26 L460 60 Z" fill="url(#wg)" opacity=".55"/>
+            <line x1="160" y1="4" x2="160" y2="88" stroke="#ffc97a" stroke-width="2" stroke-dasharray="5 3"/>
+            <text x="166" y="14" fill="#ffc97a" font-size="10">trimStart = 24.6s</text>
+          </svg>
+          <div id="energyLive" style="display:none"></div>
+          <div class="legend"><span><i style="background:#7ee8f5"></i>人声能量</span><span><i style="background:#ffc97a"></i>起唱点</span></div>
+          <div class="note"><b>关键：</b>裁剪必须同时作用于人声、伴奏和最终混音，否则会错位。只裁前奏，不默认挖掉间奏。</div>
+        </div>
+      </div>
+
+      <h2 class="sec">试一次</h2>
+      <div class="card">
+        <h3>① 先确认搜得到</h3>
+        <p style="font-size:12.5px">只检索，不下载、不出作业，两秒就知道这个话题有没有。</p>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <select id="searchSource" title="搜哪个音乐源" style="min-width:110px"></select>
+          <input id="searchQuery" style="flex:1;min-width:200px" value="小幸运 田馥甄">
+          <button class="btn sec" id="searchGo">搜一下</button>
+          <button class="btn" id="searchSing">搜到就用这首点歌</button>
+        </div>
+        <div id="searchOut" class="note" style="margin-top:10px">连上 service 后可真实检索。</div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3>② 点一首，做好直接听</h3>
+        <div class="inline">
+          <input id="songQuery" class="grow" value="小幸运 田馥甄">
+          <select id="singMode" title="这一首怎么唱" style="min-width:132px">
+            <option value="">跟随后台策略</option>
+            <option value="acapella">清唱</option>
+            <option value="accompaniment-trim">伴奏 · 去前奏</option>
+            <option value="accompaniment">伴奏 · 保留前奏</option>
+          </select>
+          <button class="btn" id="songGo">开始做</button>
+        </div>
+        <div class="progwrap">
+          <div class="pl"><span id="jobStage">还没开始</span><span id="jobElapsed">—</span></div>
+          <div class="bar"><i id="jobBar" style="width:0%"></i></div>
+        </div>
+        <p style="font-size:12px;color:var(--mut);margin-top:8px" id="jobMsg">连上 service 后可真点一首。</p>
+        <div class="outpath" id="songOutBox" style="display:none">
+          <div style="font-size:11.5px;color:var(--dim)">成品文件</div>
+          <div class="op" id="songFilePath"></div>
+          <div class="inline" style="margin-top:0">
+            <button class="btn sm" onclick="playFile(state.lastSongUrl,$('#songAudio'))">试听</button>
+            <button class="btn sec sm" onclick="copyText(apiUrl(state.lastSongUrl))">复制链接</button>
+            <button class="btn sec sm" onclick="copyText(state.lastSongPath)">复制路径</button>
+            <button class="btn sec sm" onclick="revealPath(state.lastSongPath)">打开目录</button>
+          </div>
+        </div>
+        <audio id="songAudio" controls style="display:none"></audio>
+        <div class="loghead">
+          <b>翻唱日志</b>
+          <button class="btn sec sm" onclick="loadLog('song','#songLog','error')">只看失败</button>
+          <button class="btn sec sm" onclick="loadLog('song','#songLog')">全部</button>
+          <button class="btn sec sm" onclick="copyLog('song')">复制</button>
+          <button class="btn sec sm" onclick="revealPath(state.dirs.logs||'')">打开目录</button>
+        </div>
+        <pre class="logbox" id="songLog">连上 service 后显示每次搜歌与作业结果。</pre>
+      </div>
+
+      <h2 class="sec">作业记录</h2>
+      <div class="card" style="padding:0;overflow:hidden">
+        <table><thead><tr><th>曲目</th><th>阶段</th><th>耗时</th><th>状态</th><th>听</th></tr></thead><tbody id="jobBody"></tbody></table>
+      </div>
+      <div class="card" id="jobDetail" style="margin-top:14px;display:none"></div>
+    </section>
+
+    <!-- ---------- 当前驻留 ---------- -->
+    <section class="view" id="v-resident">
+      <h2 class="sec">内存里正在跑的模型</h2>
+      <p class="sub">为了不把内存吃满，<b>说话引擎同一时间只驻留一个</b>。切换 = 关掉旧的、起新的，再合成一句探针音——你听到的就是新引擎的声音。</p>
+      <div class="card">
+        <h3>说话引擎 <span class="tag t-cyan">二选一</span></h3>
+        <div class="pickrow">
+          <b style="min-width:130px">千问 3-TTS · MLX</b>
+          <span class="pt" id="qwenState">读状态…</span>
+          <span class="fa"><button class="btn sec sm" onclick="pickModel('qwen')">选目录</button><button class="btn sm" onclick="switchTo('qwen')">切到千问</button></span>
+        </div>
+        <div class="pickrow">
+          <b style="min-width:130px">GPT-SoVITS</b>
+          <span class="pt" id="gsvState">读状态…</span>
+          <span class="fa"><button class="btn sec sm" onclick="pickModel('gptsovits')">选目录</button><button class="btn sm" onclick="switchTo('gptsovits')">切到 GPT-SoVITS</button></span>
+        </div>
+        <div class="note"><b>为什么只有一个在跑：</b>两个引擎互斥。同时开会抢内存，切换时旧进程被直接终止，靠系统回收，不靠垃圾回收。</div>
+      </div>
+      <div class="bar" style="margin-top:14px"><i id="switchBar" style="width:0%"></i></div>
+      <p style="font-size:12px;color:var(--mut);margin-top:6px" id="switchMsg">点上面任意一个「切到…」开始。</p>
+      <div class="grid g3" id="residentBody" style="margin-top:14px"></div>
+    </section>
+
+    <!-- ---------- 记忆管理 ---------- -->
+    <section class="view" id="v-memory">
+      <h2 class="sec">记忆管理</h2>
+      <p class="sub">记忆归<b style="color:var(--green)">肥鱼</b>，不归 DSH 全局：跟身份绑定、换模型还在、只被她的会话读写。</p>
+      <div class="grid g2">
+        <div class="card">
+          <h3>开关与预算</h3>
+          <div class="row"><div class="lab">启用长期记忆<small>memory.enabled</small></div><div class="sw on" data-sw></div></div>
+          <div class="row"><div class="lab">检索式注入<small>每轮只召回相关记忆，拼一条 hint，不全文常驻</small></div><div class="sw on" data-sw></div></div>
+          <div class="row"><div class="lab">后台低峰整理<small>每日 04:00 / 16:00，带预算上限</small></div><div class="sw on" data-sw></div></div>
+          <div class="row"><div class="lab">会话记录保留<small>时间线含消息正文</small></div>
+            <select><option>7 天</option><option>14 天</option><option>30 天</option></select></div>
+          <div class="row"><div class="lab">可选向量检索<small>本地 JSON + 中文二元倒排 + BM25</small></div><div class="sw" data-sw></div></div>
+        </div>
+        <div class="card">
+          <h3>这一轮召回了什么 <span class="tag t-gray">DEMO</span></h3>
+          <div class="kv"><span>本轮输入</span><span>「上次说的那首歌…」</span></div>
+          <div class="kv"><span>BM25 命中</span><span><b>3 条</b> · top 8 里取 3</span></div>
+          <div class="kv"><span>压缩后注入</span><span><b>187 字符</b></span></div>
+          <div class="kv"><span>常驻人物档案</span><span>小档案 1 份</span></div>
+          <div class="kv"><span>后台提炼预算</span><span>未触发（低峰期）</span></div>
+          <div class="note ok" style="margin-bottom:0"><b>省 token 的方式：</b>检索式注入 + 后台预算，不是「少调模型」；底层仍然调 <code>dsh.llm</code>。</div>
+        </div>
+      </div>
+      <h2 class="sec">人物档案与时间线</h2>
+      <div class="grid g2">
+        <div class="card"><h3>常驻人物档案</h3>
+          <div class="kv"><span>主人</span><span><b>橙子</b> · 偏好深夜聊歌</span></div>
+          <div class="kv"><span>关系</span><span>认识 143 天</span></div>
+          <div class="kv"><span>最近话题</span><span>翻唱 / 晴天 / Mac 配置</span></div>
+          <button class="btn sec sm" style="margin-top:12px" onclick="toast('打开人物记忆编辑（原型）')">编辑 / 重建档案</button></div>
+        <div class="card"><h3>记忆时间线</h3>
+          <div class="tl">
+            <div class="ev"><time>D-1 · 23:41</time><div class="body">记住：主人喜欢听<b style="color:var(--purple)">晴天</b>的翻唱 <em>·  salient 0.82</em></div></div>
+            <div class="ev"><time>D-3 · 04:00</time><div class="body">每日整理：合并 6 条碎片、淘汰 2 条</div></div>
+            <div class="ev"><time>D-7 · 20:12</time><div class="body">建立人物档案「橙子」</div></div>
+          </div>
+          <button class="btn sec sm" onclick="toast('导入 / 导出记忆（原型）')">导入 / 导出</button></div>
+      </div>
+    </section>
+
+    <!-- ---------- 工具 / 技能 ---------- -->
+    <section class="view" id="v-skills">
+      <h2 class="sec">工具与技能</h2>
+      <p class="sub">两类各有开关，前台一个统一管理平台。<b style="color:var(--cyan)">按确定性分类</b>，不是按文件格式：代码工具是自动机器，Markdown Skill 是菜谱。</p>
+      <div class="grid g2">
+        <div class="card">
+          <h3><span class="tag t-cyan">代码工具</span> 固定流程</h3>
+          <p style="margin-bottom:10px">只常驻一行 description；结果回来才进上下文；零额外 token。</p>
+          <div class="row"><div class="lab">qq_song_cover <small>翻唱 · 先回一句「等我一下」</small></div><div class="sw on" data-sw></div></div>
+          <div class="row"><div class="lab">qq_draw_image <small>生图 · ownerOnly · 唯一配置入口在真实面板「表达 &gt; 生图」</small></div><div class="sw" data-sw data-lock data-toast="去真实面板「表达 > 生图」配置生图"></div></div>
+          <div class="row" style="align-items:flex-start"><div class="lab">可接的接口格式 <small>与真实面板一致</small></div><div style="display:flex;flex-wrap:wrap;gap:6px"><span class="tag t-cyan">OpenAI 格式</span><span class="tag t-cyan">自定义接口</span><span class="tag t-cyan">Codex 订阅</span><span class="tag t-cyan">本地 api-image</span></div></div>
+          <div class="row"><div class="lab">qq_generate_video <small>生视频 · 走 local 脚本接缝</small></div><div class="sw" data-sw></div></div>
+          <div class="row"><div class="lab">remember_memory / recall_memory</div><div class="sw on" data-sw></div></div>
+          <div class="note ok" style="margin-bottom:0"><b>作用域：</b>只挂肥鱼自己的会话，不注册成 DSH 全局技能。</div>
+        </div>
+        <div class="card">
+          <h3><span class="tag t-purple">知识技能</span> Markdown / SOP</h3>
+          <p style="margin-bottom:10px">索引常驻、命中才加载正文；需要模型读说明再决策，走偏与多轮风险由加载器兜。</p>
+          <div class="row"><div class="lab">人格补充设定 <small>Markdown Skill 加载器 · P2 之后</small></div><div class="sw" data-sw></div></div>
+          <div class="row"><div class="lab">长流程 SOP</div><div class="sw" data-sw></div></div>
+          <div class="row"><div class="lab">用户模块（zip / .mjs）<small>sha256 + 能力声明前置</small></div><div class="sw on" data-sw></div></div>
+          <div class="row"><div class="lab">safeMode：只跑内置</div><div class="sw" data-sw></div></div>
+          <div class="note" style="margin-bottom:0"><b>注意：</b>Skill 费的不是「Markdown 这种形式」，而是全文常驻 prompt；技能多了涨的是<b>工具清单膨胀</b>。</div>
+        </div>
+      </div>
+      <h2 class="sec">意图 / 执行 / 可观测</h2>
+      <div class="card">
+        <div class="kv"><span>LLM 只管</span><span><b>意图</b>：要不要做、做什么</span></div>
+        <div class="kv"><span>service 负责</span><span><b>执行与重试</b>：可枚举 code + 一句人话，模型只转述不诊断</span></div>
+        <div class="kv"><span>面板负责</span><span><b>状态</b>：SSE / 确定性通道，不让模型用自然语言轮询烧 token</span></div>
+        <div class="note ok" style="margin-bottom:0"><b>产品差别：</b>「模型自己瞎猜哪里错了」vs「面板显示第 3 步失败、点这里加载模型」——这是两款产品。</div>
+      </div>
+    </section>
+
+    <!-- ---------- 日志 / 时间线 ---------- -->
+    <section class="view" id="v-logs">
+      <h2 class="sec">日志与时间线</h2>
+      <p class="sub">合并 activity 事件 / 记忆梗概 / 翻唱 history 三套数据；保留 <b style="color:var(--amber)">7 天</b>、含消息正文、按类型筛选。</p>
+      <div class="card" style="margin-bottom:14px">
+        <h3>总日志 <span class="tag t-gray">三份分开</span></h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
+          <button class="btn sec sm" onclick="showLog('service')">服务</button>
+          <button class="btn sec sm" onclick="showLog('tts')">说话</button>
+          <button class="btn sec sm" onclick="showLog('song')">翻唱</button>
+          <button class="btn sec sm" onclick="showLog(state.logSource||'service','error')">只看失败</button>
+          <button class="btn sec sm" onclick="copyLog(state.logSource||'service')">复制</button>
+          <span style="color:var(--dim);font-size:11.5px" id="logPath">连上 service 后显示日志文件位置</span>
+        </div>
+        <pre class="logbox" id="anyLog">点上面三个按钮看对应的日志。</pre>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+        <button class="btn sec sm f on" data-f="all">全部</button>
+        <button class="btn sec sm f" data-f="in">收到消息</button>
+        <button class="btn sec sm f" data-f="out">发出消息</button>
+        <button class="btn sec sm f" data-f="song">翻唱作业</button>
+        <button class="btn sec sm f" data-f="err">错误</button>
+        <button class="btn sec sm" onclick="toast('已清除 7 天前记录（原型）')">清除旧记录</button>
+        <button class="btn sec sm" onclick="toast('已导出 JSONL（原型）')">导出</button>
+      </div>
+      <div class="card"><div class="tl" id="tlBody"></div></div>
+    </section>
+
+    <!-- ---------- 运维大屏 ---------- -->
+    <section class="view" id="v-paths">
+      <div class="hero" style="padding:22px 26px">
+        <div class="eyebrow">PATHS · 一处收口</div>
+        <h1 style="font-size:24px">所有文件到底<span class="g">放在哪</span></h1>
+        <p>输入输出都在数据根目录下面，不再散落在桌面和下载里。路径可以直接复制，也可以在 Finder 里打开。</p>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h3>目录 <span class="tag t-gray" id="pathsTag">读状态…</span></h3>
+        <div id="pathRows"><div class="stackrow"><span>连上 service 后显示真实路径</span></div></div>
+        <div class="note" style="margin-top:10px">QQ 只允许读 Downloads 目录，所以发出去的语音条都会落到那里；曲库和成品留在数据目录里，不跟着 Downloads 一起被清。</div>
+      </div>
+    </section>
+
+    <section class="view" id="v-dashboard">
+      <div class="hero" style="padding:22px 26px">
+        <div class="eyebrow">OPS DASHBOARD · 报告风格独立大屏</div>
+        <h1 style="font-size:24px">今天，她<span class="g">说了多少、唱了什么、烧了多少 token</span></h1>
+        <p>设置页保持宿主主题一致性；这一页可全屏、可分享给朋友看。数据源全部来自 service 9876，演示模式除外。</p>
+      </div>
+      <div class="dash" style="margin-top:16px">
+        <div class="card">
+          <h3>每日 Token 消耗 <span class="tag t-amber">估算</span></h3>
+          <p style="font-size:11.5px;margin-bottom:4px">先探 <code>dsh.llm</code> 是否返回 usage；拿不到就按字符数估算并标注，绝不从模型输出里解析。</p>
+          <div class="chart" id="tokChart"></div>
+          <div class="chartx"><span>周一</span><span>周二</span><span>周三</span><span>周四</span><span>周五</span><span>周六</span><span>今天</span></div>
+          <div class="kv" style="margin-top:12px"><span>今日合计</span><span id="tokToday"></span></div>
+          <div class="kv"><span>按用途</span><span id="tokByUse"></span></div>
+        </div>
+        <div class="card" id="dashStatus">
+          <h3>服务状态</h3>
+          <div class="kv"><span>service 9876</span><span><span class="dot d-ok"></span><b>运行中</b></span></div>
+          <div class="kv"><span>网关 NapCat</span><span><span class="dot d-ok"></span>正向 WS 已连</span></div>
+          <div class="kv"><span>DSH 宿主</span><span><span class="dot d-ok"></span>desktop profile</span></div>
+          <div class="kv"><span>驻留 worker</span><span>2 个 · 约 1.6 GB</span></div>
+          <div class="kv"><span>翻唱作业</span><span>1 进行中 / 1 失败</span></div>
+          <div class="kv"><span>磁盘</span><span>模型目录 10.8 GB（用户自管）</span></div>
+          <div class="note" style="margin-bottom:0"><b>目标：</b>把包给一个没装过的人，照面板 <b>10 分钟内</b>跑通（对照现状 1 小时+）。</div>
+        </div>
+      </div>
+      <!-- P6：五步自检，live 时只读 /selfcheck；演示模式不造任何自检状态 -->
+      <div class="card" style="margin-top:14px" id="selfcheckCard">
+        <h3>五步自检 <span class="tag t-gray" id="scTag">P6</span></h3>
+        <p>service / 依赖体检 / QQ 网关正向 WS / 读一句 / 唱一首。每步都由服务端返回可枚举 code 和一句人话，网页不替服务端判断。</p>
+        <div class="grid g3" id="scBody"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+          <button class="btn sm" onclick="runSelfcheck(false)">跑一遍自检</button>
+          <button class="btn sec sm" onclick="runSelfcheck(true)">深度自检（真唱一首）</button>
+          <span class="note" id="scSummary" style="margin:0;flex:1">连上 service 后点「跑一遍自检」。</span>
+        </div>
+      </div>
+      <div class="dash" style="margin-top:14px">
+        <div class="card">
+          <h3>统一时间线 <span class="tag t-gray">7 天 · 含正文</span></h3>
+          <div class="tl" id="dashTl"></div>
+        </div>
+        <div class="card">
+          <h3>翻唱作业进度</h3>
+          <p style="margin-bottom:8px">起风了 · RVC 换声</p>
+          <div class="bar"><i style="width:68%"></i></div>
+          <div class="kv"><span>下载</span><span><span class="dot d-ok"></span>0.3s</span></div>
+          <div class="kv"><span>分离 htdemucs</span><span><span class="dot d-ok"></span>42s</span></div>
+          <div class="kv"><span>起唱点检测</span><span><span class="dot d-ok"></span>trimStart 24.6s</span></div>
+          <div class="kv"><span>裁剪 / 取窗</span><span><span class="dot d-ok"></span>120s 窗口</span></div>
+          <div class="kv"><span>RVC 换声</span><span><span class="dot d-warn"></span>68% · 常驻 worker</span></div>
+          <div class="kv"><span>混音 → 发送</span><span><span class="dot d-off"></span>等待</span></div>
+          <div class="note" style="margin-bottom:0"><b>失败可行动：</b>「夜空中最亮的星」→ 第 3 步失败：<b>缺 ffmpeg</b>，给一键安装 / 复制链接。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 关于 ---------- -->
+    <section class="view" id="v-about">
+      <h2 class="sec">关于</h2>
+      <div class="grid g2">
+        <div class="card"><h3>懂你的QQ大肥鱼</h3>
+          <p>基于 Aurabot v1.2.0（MIT）二开的 DeepSeek Harness 插件。人格、心情、长期记忆、QQ 接入、语音回复编排都在本仓库；上游只是代码来源与 merge 源头，<b>不是运行时依赖</b>。</p>
+          <div class="kv" style="margin-top:12px"><span>版本</span><span>v1.2.0</span></div>
+          <div class="kv"><span>许可</span><span>MIT · 版权声明原样保留</span></div>
+          <div class="kv"><span>平台</span><span>macOS（优先）/ Windows</span></div>
+          <div class="kv"><span>service 端口</span><span>9876</span></div>
+        </div>
+        <div class="card"><h3>去品牌边界</h3>
+          <div class="kv"><span>必须保留</span><span>LICENSE / 第三方署名 / NOTICE.md</span></div>
+          <div class="kv"><span>必须换掉</span><span>美术、面板文案、README、上游群二维码</span></div>
+          <div class="kv"><span>必须断开</span><span>模块市场 REGISTRY_URL / 更新检查回连</span></div>
+          <div class="kv"><span>内部 ID 保留</span><span><code>aurabot</code> 挂载 ID / 数据目录 / 接口前缀</span></div>
+          <div class="note" style="margin-bottom:0"><b>不能同时装上游插件：</b>挂载 ID、数据目录、preset ID 三者相同 → 双份回复。</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="foot">
+      原型文件：<code>docs/prototype/index.html</code> · 单文件、无外部依赖、可双击打开。<br>
+      所有数据由 <code>state.live = false</code> 的演示分支生成；正式版只消费 service 9876 的推送，网页不替服务端造状态。<br>
+      决策台账 <code>docs/DECISIONS.md</code> · 实施方案 <code>docs/IMPLEMENTATION-PLAN.md</code> · 面板设计输入 <code>docs/PANEL-DESIGN-INPUT.md</code>
+    </div>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================================
+// 面板脚本：只消费 service 的真实状态。没连上就明说「未连接」，不造数字。
+// ============================================================================
+const LS_KEY = 'qqsoul-panel-conn';
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const state = {
+  live: false, base: 'http://127.0.0.1:9876', token: '', step: 0, big: false, filter: 'all',
+  status: null, deps: [], depsOptional: new Set(), models: null, stack: null, latest: null,
+  jobs: [], voices: [], refs: null, selfcheck: null, search: null, currentJob: null,
+  ttsLast: '', logDirs: {}, paths: null,
+  dirs: {}, audioDir: '', audioList: [], rvc: null, rvcDir: '', lib: {},
+  lastTtsPath: '', lastTtsUrl: '', lastSongPath: '', lastSongUrl: '',
+  covers: [], lastAccGain: null
+};
+const ENGINE_LABEL = { edge: '微软在线 edge-tts', breeze: 'Breeze 远程', http: '本机 Bridge / 任意 HTTP TTS',
+  gptsovits: 'GPT-SoVITS 本地', qwen: '千问 3-TTS MLX' };
+/** 路径 → 好认的名字：HF 快照目录只显示模型名，别把一长串哈希糊在脸上。 */
+function prettyName(p) {
+  const s = String(p || '');
+  const m = s.match(/models--([^/]+?)(?:--([^/]+))?\/snapshots\//);
+  if (m) return m[2] || m[1];
+  const parts = s.split('/').filter(Boolean);
+  return parts[parts.length - 1] || s;
+}
+
+// ------------------------------------------------------------------ 基础
+function toast(msg) {
+  const t = $('#toast'); if (!t) return;
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2600);
+}
+function copyText(text) {
+  const value = String(text == null ? '' : text);
+  if (!value) { toast('没有可复制的内容'); return; }
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(value).then(() => toast('已复制'), () => fallbackCopy(value));
+  } else fallbackCopy(value);
+}
+function fallbackCopy(value) {
+  const ta = document.createElement('textarea');
+  ta.value = value; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); toast('已复制'); } catch (e) { toast(value); }
+  ta.remove();
+}
+function needLive(what) {
+  if (state.live) return true;
+  toast('先连上 service 才能' + what + '（右上角「连接 service」）');
+  return false;
+}
+function fmtMs(ms) {
+  const n = Number(ms || 0);
+  return n >= 60000 ? (n / 60000).toFixed(1) + ' min' : (n / 1000).toFixed(1) + 's';
+}
+function fmtBytes(n) {
+  n = Number(n || 0); if (!n) return '空';
+  const u = ['B', 'KB', 'MB', 'GB']; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(i ? 1 : 0) + u[i];
+}
+function go(v) {
+  $$('.view').forEach(x => x.classList.toggle('on', x.id === 'v-' + v));
+  $$('.nav button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (state.live) {
+    if (v === 'models') refreshModelsLive().catch(() => {});
+    if (v === 'song') { refreshLatest().catch(() => {}); refreshJobsLive().catch(() => {});
+      refreshSourcesLive().catch(() => {}); refreshCoversLive().catch(() => {}); refreshStrategyLive().catch(() => {}); }
+    if (v === 'voice') { loadVoices().catch(() => {}); refreshAudioList().catch(() => {}); loadLog('tts', '#ttsLog').catch(() => {}); }
+    if (v === 'paths') refreshPaths().catch(() => {});
+    if (v === 'logs') showLog(state.logSource || 'service').catch(() => {});
+  }
+}
+// NapCat 自带的管理页：扫码登录、看机器人是否在线。旧项目那个 9890 控制台已经不在这套栈里。
+function openConsole() { window.open('http://127.0.0.1:6099/', '_blank', 'noopener'); }
+function openLivePanel() {
+  const url = (/^https?:$/.test(location.protocol) ? location.origin : state.base) + '/panel';
+  window.open(url, '_blank', 'noopener');
+}
+
+// ------------------------------------------------------------------ 接口
+function apiUrl(p) { return state.base.replace(/\/+$/, '') + p; }
+function auth() { return state.token ? { Authorization: 'Bearer ' + state.token } : {}; }
+async function api(path, opts) {
+  const res = await fetch(apiUrl(path), Object.assign({ headers: Object.assign({}, auth(), (opts && opts.headers) || {}) }, opts || {}));
+  const text = await res.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch (e) { data = { raw: text }; }
+  if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+  return data;
+}
+function post(path, body) { return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }); }
+function del(path) { return api(path, { method: 'DELETE' }); }
+
+/** <audio> 不能带 Authorization 头，token 走 query——否则开了鉴权的 service 放不出声。 */
+function fileUrl(relative) {
+  if (!relative) return '';
+  if (relative.startsWith('http')) return relative;
+  const url = apiUrl(relative);
+  if (!state.token) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(state.token);
+}
+async function playFile(relative, el) {
+  if (!relative) return;
+  if (!el) return;
+  const url = fileUrl(relative);
+  el.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+  el.style.display = 'block';
+  try { await el.play(); } catch (e) { /* 浏览器拦自动播放时保留控件 */ }
+}
+
+// ------------------------------------------------------------------ 连接
+function setMode() {
+  const c = $('#modeChip');
+  if (c) {
+    c.className = 'chip' + (state.live ? '' : ' demo');
+    c.innerHTML = '<b>●</b> ' + (state.live ? ('实时 · ' + esc(state.base)) : '未连接 service');
+  }
+  const btn = $('#connBtn'); if (btn) btn.textContent = state.live ? '连接设置' : '连接 service';
+  const foot = $('.sidefoot');
+  if (foot && state.live) foot.innerHTML = 'service <b style="color:var(--green)">在线</b> · ' + esc(state.base) + '<br>大屏 <a href="/panel" style="color:var(--cyan)">127.0.0.1:9876/panel</a>';
+  const hint = $('#demoHint'); if (hint) hint.style.display = state.live ? 'none' : 'block';
+}
+async function finishConnect(h, opts) {
+  state.live = true; setMode();
+  try { localStorage.setItem(LS_KEY, JSON.stringify({ url: state.base, token: state.token })); } catch (e) {}
+  const note = $('#connNote');
+  if (note) note.innerHTML = '已连上 <b>' + esc(h.service || 'qqsoul') + ' v' + esc(h.version || '') +
+    '</b> · 端口 ' + esc(h.port) + ' · 已运行 ' + fmtMs((h.uptimeSeconds || 0) * 1000);
+  const box = $('#connBox'); if (box) box.style.display = 'none';
+  if (!opts || !opts.silent) toast('已连上，正在读真实状态');
+  // 刷新里任何一处读失败都不该把「已连上」翻回未连接：连接状态只看 healthz
+  try { await refreshAll(); } catch (e) { console.warn('refreshAll', e && e.message); }
+}
+async function connect() {
+  state.base = ($('#connUrl').value || '').trim() || 'http://127.0.0.1:9876';
+  state.token = ($('#connToken').value || '').trim();
+  const note = $('#connNote');
+  if (note) note.innerHTML = '正在连 <code>' + esc(state.base) + '</code> …';
+  try {
+    const h = await api('/healthz');
+    const box = $('#connBox'); if (box) box.style.display = 'none';
+    await finishConnect(h);
+  } catch (e) {
+    state.live = false; setMode();
+    if (note) note.innerHTML = '<b style="color:var(--red)">连不上：</b>' + esc(e.message) +
+      '。先跑 <code>python3 -m services --serve</code>，或检查 Token。';
+  }
+}
+async function autoConnect() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) {}
+  if (saved && saved.url) { state.base = saved.url; state.token = saved.token || ''; }
+  else if (/^https?:$/.test(location.protocol)) { state.base = location.origin; }
+  const u = $('#connUrl'); if (u) u.value = state.base;
+  const t = $('#connToken'); if (t) t.value = state.token;
+  try { await finishConnect(await api('/healthz'), { silent: true }); return true; }
+  catch (e) { state.live = false; setMode(); return false; }
+}
+
+// ------------------------------------------------------------------ 向导
+const WIZ = [
+  { t: '1 · 接上 QQ', d: 'QQ 能不能收到消息，只看这五件在不在跑。API / GAIN 只在用 GPT-SoVITS 时需要，千问渠道不启动它们是正常的。点「按当前引擎启动」，等一分钟再刷新。' },
+  { t: '2 · 会说话', d: '选一个渠道、一个音色，点一下试听——真的出声，不是动画。' },
+  { t: '3 · 会唱歌', d: '选好你的音色，点一首歌，做好直接在这里试听。' },
+  { t: '4 · 确认上线', d: '自检会把服务、依赖、网关、说话、唱歌各跑一遍，全绿就能上线。' }
+];
+function flowRows(rows) {
+  return '<div class="flow">' + rows.map(r =>
+    '<div class="flowrow"><span class="sdot ' + (r.ok ? 'on' : 'off') + '"></span>' +
+    '<div class="fl"><b>' + esc(r.name) + '</b><small title="' + esc(r.detail || '') + '">' + esc(r.detail || '') + '</small></div>' +
+    (r.btns ? '<div class="fa">' + r.btns + '</div>' : '') + '</div>').join('') + '</div>';
+}
+function renderWiz() {
+  if (!$('#wizBody')) return;
+  const step = state.step, w = WIZ[step] || WIZ[0];
+  let rows = [], note = '', actions = '';
+
+  if (step === 0) {
+    const sr = (state.stack && state.stack.rows) || [];
+    rows = sr.length ? sr.map(r => ({ name: r.name + (r.optional ? '（按需）' : ''), ok: r.on,
+        detail: ':' + r.port + ' · ' + (r.needs || r.service) + (r.peers ? (' · ' + r.peers + ' 条连接') : '') }))
+      : [{ name: '本机组件', ok: false, detail: state.live ? '读不到启停状态，点「刷新状态」' : '还没连上 service' }];
+    const st = state.stack || {};
+    const plan = (st.startWillStart || []).join(' + ');
+    note = (st.message ? esc(st.message) : '连上 service 后这里显示五件的真实状态。') +
+      (st.engineNote ? '<br><b>依赖关系：</b>' + esc(st.engineNote) : '') +
+      (plan ? '<br>「按当前引擎启动」这次会起：<b>' + esc(plan) + '</b>' : '') +
+      '<br>没有谁必须等谁：QQ 和桥负责收消息，语音服务按渠道二选一；已经跑着的不会被重复启动。';
+    actions = '<button class="btn" onclick="stackAction(\'start\')">按当前引擎启动</button>' +
+      '<button class="btn sec" onclick="stackAction(\'restart-bridge\')">只重启桥</button>' +
+      '<button class="btn sec" onclick="openConsole()">NapCat 扫码登录</button>' +
+      '<button class="btn sec" onclick="copyInstallPrompt()">复制安装提示词</button>';
+  } else if (step === 1) {
+    const eng = (state.status && state.status.ttsEngine) || 'edge';
+    const tts = (state.status && state.status.tts) || {};
+    const voice = tts.voice || tts.edgeVoice || '';
+    const local = eng === 'gptsovits' || eng === 'qwen';
+    rows = [
+      { name: '渠道', ok: !!eng, detail: ENGINE_LABEL[eng] || eng },
+      { name: '音色 / 参考音频', ok: local ? !!tts.refAudio : true,
+        detail: local ? (tts.refAudio || '还没选参考音频') : (voice || '默认音色') },
+      { name: '最近一次试听', ok: !!state.ttsLast, detail: state.ttsLast || '还没试过，去语音渠道点一下' }
+    ];
+    note = '推荐先用微软在线（零下载）跑通，再换成本地模型。';
+    actions = '<button class="btn" onclick="go(\'voice\')">去试听</button>' +
+      '<button class="btn sec" onclick="go(\'models\')">模型管理</button>';
+  } else if (step === 2) {
+    const list = (state.models && state.models.rows) || [];
+    const rvc = list.find(r => r.engine === 'rvc') || {};
+    const sep = list.find(r => r.engine === 'htdemucs') || {};
+    const latest = state.latest;
+    rows = [
+      { name: '我的音色（RVC）', ok: !!rvc.exists, detail: rvc.exists ? rvc.configured : '还没选 .pth，右边去选' },
+      { name: '人声分离 htdemucs', ok: true, detail: sep.exists ? '已就绪' : '用默认即可；第一次跑会自动准备' },
+      { name: '最近做好的歌', ok: !!(latest && latest.ok), detail: (latest && latest.ok) ? latest.title : '还没做过' }
+    ];
+    note = '翻唱 = 分离人声 → 用你的音色换声 → 混音。过程有日志，失败会告诉你缺什么。';
+    actions = '<button class="btn" onclick="go(\'song\')">去点一首</button>' +
+      '<button class="btn sec" onclick="go(\'song\')">选 RVC 音色</button>';
+  } else {
+    const sc = state.selfcheck && state.selfcheck.steps;
+    rows = sc ? sc.map(x => ({ name: x.label || x.id, ok: !!x.ok,
+        detail: (x.message || '') + (x.ms ? ' · ' + fmtMs(x.ms) : '') }))
+      : [
+        { name: '音频服务', ok: state.live, detail: state.live ? ('v' + ((state.status || {}).version || '')) : '未连接' },
+        { name: 'QQ 网关', ok: !!(state.stack && state.stack.onCount >= 2), detail: state.stack ? (state.stack.message || '') : '未读取' },
+        { name: '说话渠道', ok: !!((state.status || {}).ttsEngine), detail: (state.status || {}).ttsEngine || '未读取' }
+      ];
+    note = '全绿之后就不用管面板了，直接在 QQ 里跟她说话。';
+    actions = '<button class="btn" onclick="runSelfcheck(false)">跑一遍自检</button>' +
+      '<button class="btn sec" onclick="runSelfcheck(true)">深度自检（真唱一首）</button>' +
+      '<button class="btn sec" onclick="copyInstallPrompt()">复制安装提示词</button>';
+  }
+
+  $('#wizBody').innerHTML = '<h3>' + w.t + '</h3><p style="margin-bottom:6px">' + w.d + '</p>' +
+    flowRows(rows) + (note ? '<div class="note" style="margin-top:12px">' + note + '</div>' : '') +
+    '<div class="wizact">' + actions + '</div>';
+  $$('#steps .step').forEach((s, i) => { s.classList.toggle('on', i === step); s.classList.toggle('done', i < step); });
+  $('#wizPrev').disabled = step === 0;
+  $('#wizNext').textContent = step === WIZ.length - 1 ? '完成' : '下一步';
+}
+function bindWizard() {
+  $('#wizNext').onclick = () => {
+    if (state.step < WIZ.length - 1) { state.step++; renderWiz(); }
+    else { toast('向导走完了。以后直接在 QQ 里跟她说话。'); go('overview'); }
+  };
+  $('#wizPrev').onclick = () => { if (state.step > 0) { state.step--; renderWiz(); } };
+  $$('#steps .step').forEach(s => s.onclick = () => { state.step = +s.dataset.s; renderWiz(); });
+}
+
+// 安装提示词：唯一权威版在 docs/INSTALL-WITH-AI.md
+const INSTALL_PROMPT_OFFLINE = '我要在我的电脑上装一个叫「懂你的QQ大肥鱼」的 DSH 插件。\n' +
+  '我不懂技术，请你一步一步带我装，每次只让我做一件事，做完等我说「好了」再继续。\n' +
+  '请按这个顺序：1) 用本地目录安装（不要 github 地址），装完重启 DSH；' +
+  '2) 在左侧栏打开「懂你的QQ大肥鱼」；3) 装 NapCat 并开正向 WebSocket（默认 6700）；' +
+  '4) 在面板「安装向导」点「按当前引擎启动」，5) 跑自检，告诉我哪一步红了、怎么修。\n' +
+  '每一步做完用一句话说明「做了什么、现在什么状态、下一步干嘛」。';
+async function copyInstallPrompt() {
+  let text = INSTALL_PROMPT_OFFLINE, live = false;
+  if (state.live) {
+    try { const r = await api('/install/prompt'); if (r.prompt) { text = r.prompt; live = true; } } catch (e) {}
+  }
+  copyText(text);
+  toast(live ? '已复制完整版（' + text.length + ' 字）' : '已复制离线短版');
+}
+
+// ------------------------------------------------------------------ 依赖体检
+const DEP_LINKS = {
+  ffmpeg: 'https://ffmpeg.org/download.html',
+  applio: 'https://github.com/IAHispano/Applio',
+  demucs: 'https://github.com/facebookresearch/demucs',
+  'rvc-voice': 'https://huggingface.co/lj1995/VoiceConversionWebUI',
+  'rvc-weights': 'https://huggingface.co/lj1995/VoiceConversionWebUI/tree/main/pretrained_v2',
+  qwen: 'https://huggingface.co/models?search=qwen3-tts'
+};
+const DEP_PICK = {
+  applio: { kind: 'dir', key: 'applio', title: '选 Applio 目录（里面有 core.py）' },
+  'engine-python': { kind: 'file', key: 'python', title: '选 Applio 的 python（.venv/bin/python）' },
+  ffmpeg: { kind: 'file', key: 'ffmpeg', title: '选 ffmpeg 可执行文件' },
+  'edge-tts': { kind: 'file', key: 'edgeTts', title: '选 edge-tts 可执行文件（可以跳过）' },
+  qwen: { kind: 'dir', key: 'qwenModel', title: '选千问 3-TTS 模型目录' },
+  'rvc-voice': { kind: 'file', key: 'rvcModel', title: '选 RVC 音色 .pth' },
+  'reference-audio': { kind: 'file', ref: true, title: '选一段 3–10 秒的干净人声' },
+  'breeze-key': { key: 'breezeKey' }
+};
+function depActions(row) {
+  const id = row.id || '';
+  const out = [];
+  const pick = DEP_PICK[id];
+  if (pick && pick.ref) out.push('<button class="btn sec sm" onclick="pickDep(\'' + id + '\')">选择音频</button>');
+  else if (pick && pick.key === 'breezeKey') out.push('<button class="btn sec sm" onclick="depFillKey()">填 Token</button>');
+  else if (pick) out.push('<button class="btn sec sm" onclick="pickDep(\'' + id + '\')">选择</button>');
+  if (DEP_LINKS[id]) out.push('<button class="btn sec sm" onclick="copyLink(\'' + DEP_LINKS[id] + '\')">下载页</button>');
+  if (!row.ok && row.fix && row.fix !== '—' && row.fix !== '无需处理' && out.length === 0) {
+    out.push('<button class="btn sec sm" onclick="copyText(\'' + String(row.fix).replace(/'/g, '') + '\')">复制怎么修</button>');
+  }
+  return out.length ? out.join(' ') : '<span style="color:var(--dim)">—</span>';
+}
+function copyLink(url) { copyText(url); }
+async function pickDep(id) {
+  if (!needLive('选路径')) return;
+  const meta = DEP_PICK[id];
+  if (!meta) { toast('这一项不是路径型'); return; }
+  try {
+    const r = await post('/pick', { kind: meta.kind || 'dir', title: meta.title || ('选 ' + id) });
+    if (!r.ok) { if (!r.cancelled) toast(r.message || '没选成'); return; }
+    if (meta.ref) await post('/refs', { path: r.path });
+    else await post('/install/paths', { paths: { [meta.key]: r.path } });
+    toast('记住了：' + r.path);
+    await refreshAll();
+  } catch (e) { toast('没存上：' + e.message); }
+}
+async function depFillKey() {
+  if (!needLive('保存 Token')) return;
+  const value = prompt('粘贴 Breeze 的 Token（只写进本机配置）', '');
+  if (!value) return;
+  try { await post('/tts/config', { breezeToken: value, breezeKey: value }); toast('Token 已保存'); await refreshAll(); }
+  catch (e) { toast('保存失败：' + e.message); }
+}
+function renderDepsOffline() {
+  $('#depsBody').innerHTML = '<div class="deprow"><span class="sdot off"></span>' +
+    '<span class="depname">未连接 service</span>' +
+    '<span class="depdetail">先在插件目录运行 python3 -m services --serve，再回来刷新</span>' +
+    '<span class="depact"><button class="btn sec sm" onclick="copyText(\'python3 -m services --serve\')">复制命令</button></span></div>';
+}
+async function refreshDepsLive() {
+  if (!state.live) { renderDepsOffline(); return; }
+  const r = await api('/deps/check');
+  state.deps = r.items || [];
+  state.depsOptional = new Set(r.optional || ['breeze-key', 'qwen']);
+  $('#depsBody').innerHTML = state.deps.map(row => {
+    const optional = state.depsOptional.has(row.id);
+    const st = row.ok ? 'ok' : (optional ? 'warn' : 'miss');
+    return '<div class="deprow"><span class="sdot ' + st + '"></span>' +
+      '<span class="depname" title="' + esc(row.label) + '">' + esc(row.label) + '</span>' +
+      '<span class="depdetail" title="' + esc(row.detail || row.fix || '') + '">' +
+      esc(row.detail || (row.ok ? '已就绪' : (row.fix || '缺'))) + '</span>' +
+      '<span class="depact">' + depActions(row) + '</span></div>';
+  }).join('') || '<div class="deprow"><span class="depdetail">没有检测项</span></div>';
+}
+
+// ------------------------------------------------------------------ 语音渠道
+function selectHtml(id, items, current) {
+  return '<select id="' + id + '">' + items.map(i =>
+    '<option value="' + esc(i.id) + '"' + (String(i.id) === String(current) ? ' selected' : '') + '>' +
+    esc(i.label) + '</option>').join('') + '</select>';
+}
+function renderEngine() {
+  const eng = $('#engine').value;
+  const tts = (state.status && state.status.tts) || {};
+  let html = '', note = '';
+  if (eng === 'edge') {
+    const items = state.voices.length ? state.voices : [{ id: 'zh-CN-XiaoxiaoNeural', label: '晓晓 · 女声 · 亲和' }];
+    html = '<div class="row"><div class="lab">音色<small>声线，不是音量</small></div>' +
+      selectHtml('ttsVoice', items, tts.voice || tts.edgeVoice || 'zh-CN-XiaoxiaoNeural') + '</div>' +
+      '<div class="row"><div class="lab">语速<small>±20% 之间最自然</small></div>' +
+      '<select id="ttsRate">' + ['-20%', '-10%', '+0%', '+10%', '+20%'].map(v =>
+        '<option value="' + v + '"' + (String(tts.rate || '+0%') === v ? ' selected' : '') + '>' +
+        ({ '-20%': '慢一点（-20%）', '-10%': '稍慢（-10%）', '+0%': '正常', '+10%': '稍快（+10%）', '+20%': '快一点（+20%）' }[v]) + '</option>').join('') +
+      '</select></div>' +
+      '<div class="row"><div class="lab">音量<small>1.0 = 原声</small></div>' +
+      '<input id="ttsVolume" type="range" min="0.2" max="2" step="0.05" value="' + Number(tts.volume || 1) + '" style="flex:1">' +
+      '<b id="ttsVolumeOut" style="width:56px;text-align:right">' + Math.round(Number(tts.volume || 1) * 100) + '%</b></div>';
+    note = '<b>微软在线：</b>零下载，装好就能用。改完点保存，下一句生效。';
+  } else if (eng === 'breeze') {
+    const items = state.voices.length ? state.voices : [{ id: 'default', label: '默认' }];
+    html = '<div class="row"><div class="lab">服务地址<small>留空用官方地址</small></div>' +
+      '<input id="breezeEndpoint" type="text" style="flex:1" value="' + esc(tts.breezeUrl || tts.breezeEndpoint || '') + '" placeholder="https://api.breezeblue.ai/v1/text-to-speech"></div>' +
+      '<div class="row"><div class="lab">Bridge TTS Token<small>只写本机配置；填了就能不装任何本地模型</small></div>' +
+      '<input id="breezeToken" type="password" style="flex:1" value="' + esc(tts.breezeToken || tts.breezeKey || '') + '" placeholder="粘贴 Token"></div>' +
+      '<div class="row"><div class="lab">音色<small>Breeze 后台给你的 voice id</small></div>' +
+      '<input id="breezeVoice" type="text" style="flex:1" value="' + esc(tts.breezeVoice || '') + '" placeholder="voc_xxxxxxxx"></div>';
+    note = '<b>Breeze：</b>纯远程，本机不装模型。填好 Token 和 voice id 就能试听。';
+  } else if (eng === 'http') {
+    html = '<div class="row"><div class="lab">TTS 地址<small>POST JSON，响应体就是音频</small></div>' +
+      '<input id="httpUrl" type="text" style="flex:1" value="' + esc(tts.httpUrl || '') + '" placeholder="http://127.0.0.1:9883/synth"></div>' +
+      '<div class="row"><div class="lab">Token<small>可选，加 Bearer</small></div>' +
+      '<input id="httpToken" type="password" style="flex:1" value="' + esc(tts.httpToken || '') + '"></div>';
+    note = '<b>任意 HTTP：</b>你自己起一个 TTS 服务，把地址给我就行。';
+  } else {
+    const list = (state.models && state.models.rows) || [];
+    const row = list.find(r => r.engine === eng) || {};
+    const lib = (state.models && state.models.library && state.models.library[eng]) || [];
+    const refs = (state.refs && state.refs.items) || [];
+    const refItems = refs.map(f => ({ id: f.path, label: f.name }));
+    const current = row.configured || '';
+    const inLib = lib.some(i => i.path === current);
+    const opts = lib.map(i => '<option value="' + esc(i.path) + '"' + (i.path === current ? ' selected' : '') + '>' +
+      esc(i.name) + ' · ' + fmtBytes(i.bytes) + '</option>').join('');
+    const extra = current && !inLib ? '<option value="' + esc(current) + '" selected>' + esc(prettyName(current)) + '（外部目录）</option>' : '';
+    html = '<div class="pickrow"><b style="min-width:84px">模型</b>' +
+      '<span class="pt"><select id="ttsModelSel" style="width:100%" onchange="chooseTtsModel(\'' + eng + '\', this.value)">' +
+      (opts ? '<option value="">选一个模型…</option>' + opts : '<option value="">模型库里还没有模型</option>') + extra + '</select></span>' +
+      '<span class="fa"><button class="btn sec sm" onclick="importModel(\'' + eng + '\')">导入模型</button>' +
+      '<button class="btn sec sm" onclick="pickModel(\'' + eng + '\')">选择目录</button></span></div>' +
+      '<div class="pickrow"><b style="min-width:84px">模型目录</b>' +
+      '<span class="pt" title="' + esc(current) + '">' + esc(current || '还没选；导入或选择目录后会显示在这里') + '</span>' +
+      '<span class="fa">' + (current ? '<button class="btn sec sm" onclick="copyText(state.models&&state.models.rows.find(r=>r.engine===\'' + eng + '\').configured||\'\')">复制</button>' +
+        '<button class="btn sec sm" onclick="revealPath(\'' + esc(current) + '\')">打开</button>' : '') + '</span></div>' +
+      '<div class="pickrow"><b style="min-width:84px">参考音频</b>' +
+      '<span class="pt">' + (refItems.length ? selectHtml('refSel', refItems, tts.refAudio || '') : '还没有参考音频') + '</span>' +
+      '<span class="fa"><button class="btn sec sm" onclick="pickRefAudio()">导入音频</button>' +
+      '<button class="btn sec sm" onclick="revealPath((state.dirs||{}).refs||\'\')">打开目录</button></span></div>' +
+      '<div class="row" style="align-items:flex-start"><div class="lab" style="padding-top:7px">这段音频说的是<small>逐字稿，越准越像</small></div>' +
+      '<textarea id="refText" rows="2" style="flex:1" placeholder="例：今天也要好好吃饭哦">' + esc(tts.refText || '') + '</textarea></div>';
+    note = '<b>' + (ENGINE_LABEL[eng] || eng) + '：</b>本地模型要「模型目录 + 参考音频 + 逐字稿」三样齐了才出效果。' +
+      (eng === 'qwen' && tts.qwenUrl ? ' 现在接的是本机已有服务 ' + esc(tts.qwenUrl) + '。' : '');
+  }
+  $('#engineCfg').innerHTML = html;
+  $('#engineNote').innerHTML = note;
+  const vol = $('#ttsVolume');
+  if (vol) vol.oninput = () => { $('#ttsVolumeOut').textContent = Math.round(Number(vol.value) * 100) + '%'; };
+}
+async function loadVoices() {
+  if (!state.live) return;
+  const eng = $('#engine').value;
+  const r = await api('/tts/voices?engine=' + encodeURIComponent(eng));
+  if (eng === 'edge' || eng === 'breeze') state.voices = r.items || [];
+  if (eng === 'gptsovits' || eng === 'qwen') {
+    state.refs = await api('/refs');
+    if (!state.models) state.models = await api('/models/local');
+  }
+  renderEngine();
+  const note = $('#engineNote');
+  if (note && r.hint) note.innerHTML += '<br><span style="color:var(--dim)">' + esc(r.hint) + '</span>';
+}
+function ttsBody() {
+  const body = { engine: $('#engine').value };
+  const put = (id, key, num) => { const el = $('#' + id); if (el && el.value !== undefined && el.value !== '') body[key || id] = num ? Number(el.value) : el.value; };
+  put('ttsVoice', 'voice'); put('ttsRate', 'rate'); put('ttsVolume', 'volume', true);
+  put('breezeEndpoint', 'breezeUrl'); put('breezeToken', 'breezeToken'); put('breezeVoice', 'breezeVoice');
+  put('httpUrl', 'httpUrl'); put('httpToken', 'httpToken'); put('refText', 'refText');
+  const ref = $('#refSel'); if (ref && ref.value) body.refAudio = ref.value;
+  return body;
+}
+async function refreshTtsCfgLive() {
+  if (!state.live) return;
+  const r = await api('/tts/config');
+  state.status = Object.assign({}, state.status || {}, { ttsEngine: r.engine, tts: r.tts || {} });
+  if (r.engine && Array.from($('#engine').options).some(o => o.value === r.engine)) $('#engine').value = r.engine;
+  if (!state.voices.length && (r.engine === 'edge' || r.engine === 'breeze')) {
+    const v = await api('/tts/voices?engine=' + encodeURIComponent(r.engine));
+    state.voices = v.items || [];
+  }
+  if (!state.refs) state.refs = await api('/refs');
+  renderEngine();
+  const tag = $('#ttsTryTag'); if (tag) { tag.textContent = 'LIVE'; tag.className = 'tag t-green'; }
+}
+async function ttsLive() {
+  const text = ($('#ttsText').value || '').trim();
+  if (!text) { toast('先写一句话'); return; }
+  const o = $('#ttsOut'), b = $('#ttsBar'), stage = $('#ttsStage'), el = $('#ttsElapsed');
+  o.textContent = '合成中…'; b.style.width = '18%';
+  if (stage) stage.textContent = '分句 → 合成 → 拼起来';
+  const started = Date.now();
+  const tick = setInterval(() => { if (el) el.textContent = fmtMs(Date.now() - started); }, 200);
+  try {
+    const r = await post('/tts/speak', { text: text, voice: ($('#ttsVoice') || {}).value || '' });
+    b.style.width = '100%';
+    if (stage) stage.textContent = '完成';
+    o.innerHTML = '<b style="color:var(--green)">好了</b> · ' + (r.chunks || 1) + ' 句 · ' +
+      esc(r.engine || '') + ' · ' + fmtMs(r.durationMs || (Date.now() - started)) +
+      (r.stub ? ' · 自检模式' : '');
+    state.ttsLast = new Date().toTimeString().slice(0, 5) + ' · ' + (r.engine || '') + ' · ' + (r.chunks || 1) + ' 句';
+    state.lastTtsPath = r.file || '';
+    state.lastTtsUrl = r.fileUrl || '';
+    const box = $('#ttsFileBox');
+    if (box) {
+      box.style.display = r.file ? 'block' : 'none';
+      if ($('#ttsFilePath')) $('#ttsFilePath').textContent = r.file || '';
+    }
+    if (r.fileUrl) await playFile(r.fileUrl, $('#ttsAudio'));
+    if ($('#ttsAudio') && r.fileUrl) $('#ttsAudio').style.display = 'block';
+    await refreshAudioList();
+    await loadLog('tts', '#ttsLog');
+    renderWiz();
+  } catch (e) {
+    b.style.width = '0%';
+    if (stage) stage.textContent = '失败';
+    o.innerHTML = '<b style="color:var(--red)">没合成出来：</b>' + esc(e.message);
+    await loadLog('tts', '#ttsLog');
+  } finally {
+    clearInterval(tick);
+    if (el) el.textContent = fmtMs(Date.now() - started);
+  }
+}
+
+// ------------------------------------------------------------------ 试听目录
+function renderAudioList() {
+  const box = $('#audioList'); if (!box) return;
+  const items = state.audioList || [];
+  if ($('#audioTag')) {
+    $('#audioTag').textContent = items.length ? (items.length + ' 个') : '空的';
+    $('#audioTag').className = 'tag ' + (items.length ? 't-green' : 't-gray');
+  }
+  if ($('#audioDirText')) $('#audioDirText').textContent = state.audioDir || '';
+  if (!items.length) {
+    box.innerHTML = '<div class="audiorow"><span class="ai">♪</span><div class="an"><b>还没有试听文件</b>' +
+      '<small>点上面「合成并播放」，出来的那条会留在这里</small></div></div>';
+    return;
+  }
+  const shown = items.slice(0, 10);
+  box.innerHTML = shown.map((f, i) => '<div class="audiorow"><span class="ai">♪</span>' +
+    '<div class="an"><b title="' + esc(f.name) + '">' + esc(f.name) + '</b>' +
+    '<small>' + new Date(f.mtime * 1000).toLocaleString('zh-CN', { hour12: false }) + ' · ' + fmtBytes(f.bytes) + '</small></div>' +
+    '<span class="fa"><button class="btn sm" onclick="playFile(\'' + esc(f.url) + '\',$(\'#ttsAudio\'))">听</button>' +
+    '<button class="btn sec sm" onclick="copyText(this.dataset.p)" data-p="' + esc(f.path) + '">复制路径</button>' +
+    '<button class="btn sec sm" onclick="revealPath(this.dataset.p)" data-p="' + esc(f.path) + '">打开</button></span></div>').join('') +
+    (items.length > shown.length ? '<div class="audiorow"><div class="an"><small>还有 ' +
+      (items.length - shown.length) + ' 个更早的，点「打开目录」看全部</small></div></div>' : '');
+}
+async function refreshAudioList() {
+  if (!state.live) { renderAudioList(); return; }
+  try {
+    const r = await api('/audio');
+    state.audioList = r.items || []; state.audioDir = r.dir || state.audioDir;
+    renderAudioList();
+  } catch (e) { /* 读不到就保持原样 */ }
+}
+async function clearAudio() {
+  if (!needLive('清空试听')) return;
+  if (!confirm('清空试听目录里的音频？只动「试听」这一份，曲库成品和 QQ 语音条不碰；清掉的会先移到 audio/_trash，能找回。')) return;
+  try {
+    const r = await post('/audio', {});
+    state.audioList = (r.audio && r.audio.items) || [];
+    renderAudioList();
+    toast(r.message || '已清空');
+  } catch (e) { toast('清空失败：' + e.message); }
+}
+
+// ------------------------------------------------------------------ 模型管理
+async function pickModel(engine) {
+  if (!needLive('选模型目录')) return;
+  const rvc = engine === 'rvc';
+  try {
+    const r = await post('/pick', { kind: rvc ? 'file' : 'dir',
+      start: (state.dirs || {})[engine] || '',
+      title: rvc ? '选 RVC 音色 .pth' : ('选「' + (ENGINE_LABEL[engine] || engine) + '」的模型目录') });
+    if (!r.ok) { if (!r.cancelled) toast(r.message || '没选成'); return; }
+    const out = await post('/models/local', { engine: engine, path: r.path });
+    toast(out.message || '路径已记住');
+    await refreshModelsLive();
+    await refreshTtsCfgLive();
+  } catch (e) { toast('没存上：' + e.message); }
+}
+async function pickIndex() {
+  if (!needLive('选索引文件')) return;
+  try {
+    const r = await post('/pick', { kind: 'file', title: '选 RVC 的 .index（没有可以跳过）' });
+    if (!r.ok) { if (!r.cancelled) toast(r.message || '没选成'); return; }
+    await post('/models/local', { engine: 'rvc', index: r.path });
+    toast('索引已保存');
+    await refreshAll();
+  } catch (e) { toast('没存上：' + e.message); }
+}
+async function saveVoiceName() {
+  if (!needLive('保存音色名')) return;
+  const name = ($('#voiceName').value || '').trim();
+  try { await post('/models/local', { engine: 'rvc', voiceName: name }); toast('音色名已保存'); await refreshStatusLive(); }
+  catch (e) { toast('没存上：' + e.message); }
+}
+async function loadModelLive(id) { return pickModel(id); }
+async function pickRefAudio() {
+  if (!needLive('导入参考音频')) return;
+  try {
+    const r = await post('/pick', { kind: 'file', title: '选一段 3–10 秒的干净人声（wav / mp3）',
+      start: (state.dirs || {}).refs || '' });
+    if (!r.ok) { if (!r.cancelled) toast(r.message || '没选成'); return; }
+    const out = await post('/refs', { path: r.path });
+    toast(out.message || '参考音频已放进参考目录');
+    state.refs = out.refs;
+    await refreshTtsCfgLive();
+  } catch (e) { toast('没存上：' + e.message); }
+}
+async function chooseTtsModel(engine, path) {
+  if (!path) return;
+  if (!needLive('切换模型')) return;
+  try {
+    const r = await post('/models/local', { engine: engine, path: path });
+    toast(r.message || '已切换');
+    await refreshModelsLive();
+    await refreshTtsCfgLive();
+  } catch (e) { toast('切换失败：' + e.message); }
+}
+async function importModel(engine) {
+  if (!needLive('导入模型')) return;
+  try {
+    const r = await post('/pick', { kind: 'dir', title: '选下载好的「' + (ENGINE_LABEL[engine] || engine) + '」模型目录',
+      start: (state.dirs || {}).ttsQwen || '' });
+    if (!r.ok) { if (!r.cancelled) toast(r.message || '没选成'); return; }
+    const out = await post('/models/import', { engine: engine, path: r.path });
+    toast(out.message || '已导入');
+    await refreshModelsLive();
+    await refreshTtsCfgLive();
+  } catch (e) { toast('导入失败：' + e.message); }
+}
+async function deleteTtsModel(engine, name) {
+  if (!needLive('删除模型')) return;
+  if (!confirm('删除模型「' + name + '」？磁盘上那个目录会真的被删掉。')) return;
+  try {
+    const r = await post('/models/delete', { engine: engine, name: name });
+    toast(r.message || '已删除');
+    await refreshModelsLive();
+    await refreshTtsCfgLive();
+  } catch (e) { toast('删不了：' + e.message); }
+}
+function ttsModelCard(row, cat) {
+  const lib = (state.models && state.models.library && state.models.library[row.engine]) || [];
+  const current = row.configured || '';
+  const ok = row.exists;
+  const rows = lib.length ? lib.map(it => '<div class="modrow"><span class="sdot ' + (it.path === current ? 'on' : 'off') + '"></span>' +
+    '<div class="mt"><b>' + esc(it.name) + '</b><small title="' + esc(it.path) + '">' + esc(it.path) + '</small></div>' +
+    '<span class="badge b-off">' + fmtBytes(it.bytes) + '</span>' +
+    '<span class="fa" style="display:flex;gap:6px">' +
+    (it.path === current ? '<span class="badge b-ok">在用</span>'
+      : '<button class="btn sec sm" onclick="chooseTtsModel(\'' + row.engine + '\',\'' + esc(it.path).replace(/'/g, '') + '\')">选用</button>') +
+    '<button class="btn sec sm" onclick="revealPath(\'' + esc(it.path).replace(/'/g, '') + '\')">打开</button>' +
+    '<button class="btn sec sm" onclick="deleteTtsModel(\'' + row.engine + '\',\'' + esc(it.name).replace(/'/g, '') + '\')">删除</button>' +
+    '</span></div>').join('') : '<div class="modrow"><div class="mt"><b>模型库是空的</b><small>点下面「导入模型」，把下载好的目录收进来</small></div></div>';
+  return '<div class="card" style="padding:18px">' +
+    '<h3><span class="sdot ' + (ok ? 'on' : 'off') + '"></span>' + esc(row.label) +
+    ' <span class="badge b-blue">TTS</span></h3>' +
+    '<div class="pickrow"><b style="min-width:66px">现在用</b>' +
+    '<span class="pt" title="' + esc(current) + '">' + esc(current || '还没选模型') + '</span></div>' +
+    rows +
+    '<div class="inline"><button class="btn sm" onclick="importModel(\'' + row.engine + '\')">导入模型</button>' +
+    '<button class="btn sec sm" onclick="pickModel(\'' + row.engine + '\')">选择目录</button>' +
+    '<button class="btn sec sm" onclick="revealPath(\'' + esc(row.dir) + '\')">打开模型库</button>' +
+    (cat && cat.officialUrl ? '<button class="btn sec sm" onclick="copyLink(\'' + esc(cat.officialUrl) + '\')">下载页</button>' : '') +
+    '</div></div>';
+}
+function renderRvc() {
+  const box = $('#rvcBody'); if (!box) return;
+  const lib = state.rvc || {};
+  const rows = lib.items || [];
+  const cur = lib.current || '';
+  if (!rows.length) {
+    box.innerHTML = '<p>还没有音色。点「导入音色」，选一个 .pth（或打好的 .zip 包）。</p>';
+    return;
+  }
+  box.innerHTML = rows.map(v => {
+    const on = v.pth === cur;
+    const tag = v.valid ? '<span class="badge b-ok">.pth + .index</span>' : '<span class="badge b-warn">缺 .index</span>';
+    return '<div class="modrow"><span class="sdot ' + (on ? 'on' : 'off') + '"></span>' +
+      '<div class="mt"><b>' + esc(v.name) + ' ' + tag + (v.managed ? '' : ' <span class="badge b-off">本机原有</span>') + '</b>' +
+      '<small title="' + esc(v.pth) + '">' + esc(v.pth) + '</small>' +
+      '<small title="' + esc(v.index || '') + '">索引：' + esc(v.index || '没有') + ' · ' + fmtBytes(v.bytes) + '</small></div>' +
+      '<span class="fa" style="display:flex;gap:6px">' +
+      (on ? '<span class="badge b-ok">在用</span>'
+        : '<button class="btn sec sm" onclick="rvcSelect(\'' + esc(v.name).replace(/'/g, '') + '\')">选用</button>') +
+      '<button class="btn sec sm" onclick="revealPath(\'' + esc(v.dir).replace(/'/g, '') + '\')">打开</button>' +
+      (v.managed ? '<button class="btn sec sm" onclick="rvcRename(\'' + esc(v.name).replace(/'/g, '') + '\')">改名</button>' +
+        '<button class="btn sec sm" onclick="rvcDelete(\'' + esc(v.name).replace(/'/g, '') + '\')">删除</button>' : '') +
+      '</span></div>';
+  }).join('');
+  if ($('#rvcSel')) renderRvcSelect();
+}
+function renderRvcSelect() {
+  const sel = $('#rvcSel'); if (!sel) return;
+  const lib = state.rvc || {};
+  const rows = lib.items || [];
+  const cur = lib.current || '';
+  sel.innerHTML = rows.length ? rows.map(v =>
+    '<option value="' + esc(v.name) + '"' + (v.pth === cur ? ' selected' : '') + '>' +
+    esc(v.name) + (v.valid ? '' : '（缺 index）') + (v.managed ? '' : ' · 本机') + '</option>').join('')
+    : '<option value="">还没有音色，点右边「导入音色」</option>';
+}
+async function loadRvc() {
+  if (!state.live) { state.rvc = null; return; }
+  try { state.rvc = await api('/models/rvc'); } catch (e) { state.rvc = null; }
+  state.rvcDir = (state.rvc && state.rvc.dir) || '';
+  renderRvc();
+}
+async function rvcSelect(name) {
+  if (!name) return;
+  if (!needLive('切换音色')) { renderRvcSelect(); return; }
+  try {
+    const r = await post('/models/rvc', { action: 'select', name: name });
+    state.rvc = r.voices;
+    const saved = r.rvc || {};
+    if ($('#rvcPth')) $('#rvcPth').textContent = saved.model || '';
+    if ($('#rvcIndex')) $('#rvcIndex').textContent = saved.index || '还没选 .index';
+    if ($('#voiceName')) $('#voiceName').value = saved.voiceName || '';
+    if ($('#rvcDot')) $('#rvcDot').className = 'sdot ' + (saved.model ? 'on' : 'off');
+    renderRvc();
+    toast(r.message || '已切换音色');
+  } catch (e) { toast('切不了：' + e.message); }
+}
+async function rvcImport() {
+  if (!needLive('导入音色')) return;
+  try {
+    const r = await post('/pick', { kind: 'file', title: '选 RVC 音色：.pth 或打好的 .zip 包',
+      start: (state.dirs || {}).rvc || '' });
+    if (!r.ok) { if (!r.cancelled) toast(r.message || '没选成'); return; }
+    const out = await post('/models/rvc', { action: 'import', path: r.path });
+    state.rvc = out.voices;
+    renderRvc(); renderRvcSelect();
+    toast(out.message || '已导入');
+    await refreshModelsLive();
+  } catch (e) { toast('导入失败：' + e.message); }
+}
+async function rvcRename(name) {
+  if (!needLive('改音色名')) return;
+  const next = prompt('新的音色名（会同时改目录和文件名）', name);
+  if (!next || next === name) return;
+  try {
+    const r = await post('/models/rvc', { action: 'rename', name: name, newName: next.trim() });
+    state.rvc = r.voices; renderRvc(); renderRvcSelect();
+    if ($('#voiceName')) $('#voiceName').value = next.trim();
+    toast(r.message || '改好了');
+  } catch (e) { toast('改不了：' + e.message); }
+}
+async function rvcDelete(name) {
+  if (!needLive('删除音色')) return;
+  if (!confirm('删除音色「' + name + '」？模型库里那两个文件会真的被删掉。')) return;
+  try {
+    const r = await post('/models/rvc', { action: 'delete', name: name });
+    state.rvc = r.voices; renderRvc(); renderRvcSelect();
+    toast(r.message || '已删除');
+    await refreshStatusLive();
+  } catch (e) { toast('删不了：' + e.message); }
+}
+async function adoptLocal() {
+  if (!needLive('读取本机配置')) return;
+  try {
+    const r = await post('/adopt', {});
+    toast(r.message || '已读取');
+    if (r.report && r.report.length) console.log('adopt', r.report);
+    state.refs = r.refs || state.refs;
+    await refreshAll();
+  } catch (e) { toast('读取失败：' + e.message); }
+}
+async function refreshModelsLive() {
+  if (!state.live) {
+    $('#ttsModelBody').innerHTML = ['千问 3-TTS · MLX', 'GPT-SoVITS 整包'].map(n =>
+      '<div class="card"><h3><span class="sdot off"></span>' + n + '</h3><p>连上 service 后显示本机真实模型。</p></div>').join('');
+    $('#rvcBody').innerHTML = '<p>连上 service 后显示本机音色。</p>';
+    $('#sepBody').innerHTML = '<p>连上 service 后显示。</p>';
+    return;
+  }
+  const [local, cat] = await Promise.all([api('/models/local'), api('/models/catalog')]);
+  state.models = local;
+  state.dirs = local.modules || state.dirs;
+  const byId = {};
+  (cat.items || []).forEach(i => { byId[i.id] = i; });
+  const rows = (local.rows || []);
+  $('#ttsModelBody').innerHTML = rows.filter(r => r.kind === 'tts')
+    .map(r => ttsModelCard(r, byId[r.engine])).join('');
+  await loadRvc();
+  const sep = rows.find(r => r.engine === 'htdemucs') || {};
+  $('#sepBody').innerHTML = '<div class="modrow"><span class="sdot ' + (sep.exists ? 'on' : 'off') + '"></span>' +
+    '<div class="mt"><b>demucs htdemucs</b><small title="' + esc(sep.configured || sep.dir || '') + '">' +
+    esc(sep.configured || '默认：引擎 venv 自带；第一次跑会自动准备') + '</small></div>' +
+    '<span class="fa" style="display:flex;gap:6px"><button class="btn sec sm" onclick="pickModel(\'htdemucs\')">选择目录</button>' +
+    '<button class="btn sec sm" onclick="revealPath(\'' + esc(sep.dir || '') + '\')">打开</button></span></div>' +
+    '<p style="font-size:12px;margin-top:8px">人声分离不是「下载一个模型文件」，是引擎里跑的 demucs。<b>htdemucs 是默认档</b>，' +
+    '权重跟着引擎装；BS-RoFormer 更干净但慢 4–6 倍，在翻唱策略里切。</p>';
+  const note = $('#pathNote');
+  if (note) note.innerHTML = '<b>模型目录：</b><code>' + esc(local.modelsDir) + '</code> ' +
+    '<button class="btn sec sm" onclick="copyText(\'' + esc(local.modelsDir) + '\')">复制</button>' +
+    '<button class="btn sec sm" onclick="revealPath(\'' + esc(local.modelsDir) + '\')">打开</button><br>' +
+    '参考音频在 <code>' + esc((local.modules || {}).refs || '') + '</code>，试听在 <code>' +
+    esc((local.modules || {}).audio || '') + '</code>，全部目录见「目录与路径」。';
+  // 翻唱页的音色行也顺手更新
+  const rvc = state.rvc || {};
+  if ($('#rvcPth')) $('#rvcPth').textContent = rvc.current || '还没选 .pth';
+  if ($('#rvcDot')) $('#rvcDot').className = 'sdot ' + (rvc.current ? 'on' : 'off');
+  if ($('#rvcIndex')) $('#rvcIndex').textContent = rvc.currentIndex || '还没选 .index（有就选，没有也能跑）';
+  if ($('#voiceName') && !$('#voiceName').value) $('#voiceName').value = rvc.voiceName || '';
+  renderRvcSelect();
+  // 驻留页
+  const qwen = rows.find(r => r.engine === 'qwen');
+  const gsv = rows.find(r => r.engine === 'gptsovits');
+  if ($('#qwenState')) $('#qwenState').textContent = qwen && qwen.exists ? ('已选：' + qwen.configured) : '还没选模型目录';
+  if ($('#gsvState')) $('#gsvState').textContent = gsv && gsv.exists ? ('已选：' + gsv.configured) : '还没选模型目录';
+}
+
+// ------------------------------------------------------------------ 最近成品 / 作业
+async function refreshLatest() {
+  if (!state.live) {
+    if ($('#latestTag')) $('#latestTag').textContent = '未连接';
+    return;
+  }
+  const r = await api('/song/latest');
+  state.latest = r;
+  if ($('#latestTag')) { $('#latestTag').textContent = r.ok ? 'LIVE' : '还没有'; $('#latestTag').className = 'tag ' + (r.ok ? 't-green' : 't-gray'); }
+  const body = $('#latestBody');
+  if (!body) return;
+  if (!r.ok) {
+    body.innerHTML = '<span class="pt">' + esc(r.message || '还没有成品') + '</span>' +
+      '<span class="fa"><button class="btn sec sm" onclick="revealPath(\'' + esc(r.dir || '') + '\')">打开曲库</button></span>';
+    return;
+  }
+  const it = r.latest;
+  const mode = it.accompaniment === false ? '清唱' : it.accompaniment ? '带伴奏' : '';
+  body.innerHTML = '<b style="min-width:110px">' + esc(it.title) + '</b>' +
+    '<span class="pt">' + [it.artist ? esc(it.artist) : '', it.voice ? esc(it.voice) : '', mode,
+      fmtMs(it.durationMs || 0) + ' 成品', it.cached ? '曲库复用' : ''].filter(Boolean).join(' · ') + '</span>' +
+    '<span class="fa"><button class="btn sm" onclick="playFile(\'' + esc(it.fileUrl) + '\',$(\'#songAudio\'))">试听</button>' +
+    '<button class="btn sec sm" onclick="copyText(fileUrl(\'' + esc(it.fileUrl) + '\'))">复制链接</button>' +
+    '<button class="btn sec sm" onclick="revealPath(\'' + esc(r.dir || '') + '\')">打开目录</button></span>';
+}
+async function refreshCoversLive() {
+  if (!state.live) { if ($('#coversTag')) $('#coversTag').textContent = '未连接'; return; }
+  const tag = $('#coversTag'), body = $('#coversBody');
+  if (!body) return;
+  try {
+    const r = await api('/song/covers');
+    state.covers = r.items || [];
+    if (tag) { tag.textContent = state.covers.length ? state.covers.length + ' 首' : '还没有';
+      tag.className = 'tag ' + (state.covers.length ? 't-green' : 't-gray'); }
+    if (!state.covers.length) {
+      body.innerHTML = '<span class="pt">' + esc(r.message || '还没有做好的翻唱。') + '</span>';
+      return;
+    }
+    body.innerHTML = state.covers.map((it) => {
+      const src = fileUrl(it.fileUrl || '');
+      const mode = it.accompanimentLabel || (it.accompaniment ? '带伴奏' : '清唱');
+      const len = fmtMs(Number(it.clipDuration || it.duration || 0) * 1000);
+      const when = it.created_at ? new Date(it.created_at * 1000).toLocaleString('zh-CN') : '';
+      return '<div class="pickrow" style="align-items:flex-start;margin-top:6px"><span class="sdot ' + (it.cached ? 'on' : 'off') + '" style="margin-top:4px"></span>' +
+        '<span class="pt"><b>' + esc(it.title || '未命名') + '</b>' + (it.artist ? ' · ' + esc(it.artist) : '') +
+        '<div style="font-size:11px;color:var(--dim);margin-top:3px">' + [esc(it.voice || '默认音色'), esc(mode),
+          '唱 ' + len, esc(when)].filter(Boolean).join(' · ') + '</div>' +
+        (src ? '<audio controls preload="none" src="' + esc(src) + '" style="width:320px;max-width:100%;height:32px;margin-top:6px"></audio>' : '') + '</span>' +
+        '<span class="fa"><button class="btn sec sm" onclick="deleteCover(\'' + esc(it.slug) + '\')">从曲库删除</button></span></div>';
+    }).join('');
+  } catch (e) {
+    body.innerHTML = '<span class="pt">曲库读不了：' + esc(e.message) + '</span>';
+  }
+}
+async function deleteCover(slug) {
+  if (!slug || !confirm('从曲库删掉这首成品？只删成品文件，原曲缓存会保留。')) return;
+  try {
+    const r = await post('/song/covers/delete', { slug });
+    toast(r.message || '已删除');
+    await refreshCoversLive();
+    await refreshLatest();
+  } catch (e) { toast('删除失败：' + e.message); }
+}
+async function refreshJobsLive() {
+  if (!state.live) return;
+  const r = await api('/song/jobs');
+  state.jobs = r.items || [];
+  $('#jobBody').innerHTML = state.jobs.length ? state.jobs.map(j => {
+    const tag = j.ok ? 't-green' : (j.done ? 't-red' : 't-blue');
+    const label = j.ok ? '已完成' : (j.done ? '失败' : '进行中');
+    const mode = j.accompaniment === false ? '清唱' : j.accompaniment ? '带伴奏' : '';
+    const len = j.durationSec ? '唱 ' + fmtMs(Number(j.durationSec) * 1000) : '';
+    const meta = [j.artist ? esc(j.artist) : '', j.voice ? esc(j.voice) : '', mode, len].filter(Boolean).join(' · ');
+    return '<tr style="cursor:pointer" onclick="showJob(\'' + esc(j.id) + '\')">' +
+      '<td><b>' + esc(j.title || j.query || j.id) + '</b>' + (meta ? '<div style="font-size:11px;color:var(--dim);margin-top:2px">' + meta + '</div>' : '') + '</td>' +
+      '<td>' + esc(j.lastStage || '—') + '</td><td>' + fmtMs(j.elapsedMs) + '</td>' +
+      '<td><span class="tag ' + tag + '">' + label + '</span></td>' +
+      '<td><button class="btn sec sm" onclick="event.stopPropagation();showJob(\'' + esc(j.id) + '\')">听</button></td></tr>';
+  }).join('') : '<tr><td colspan="5" style="color:var(--dim)">还没有作业。上面点一首试试。</td></tr>';
+}
+async function showJob(id) {
+  if (!state.live) { toast('没连上 service，没有真实作业'); return; }
+  state.currentJob = id;
+  const [snap, en] = await Promise.all([api('/song/jobs/' + encodeURIComponent(id)),
+    api('/song/jobs/' + encodeURIComponent(id) + '/energy')]);
+  state.jobSnap = snap; state.jobEnergy = en; state.jobFull = false;
+  drawEnergy(en);
+  renderJobDetail();
+  const url = (snap.result || {}).fileUrl || ((snap.events || []).slice().reverse().find(e => e.fileUrl) || {}).fileUrl;
+  if (url) await playFile(url, $('#songAudio'));
+}
+/** 日志默认只留「每个阶段第一条 + 所有失败」，几百条进度不糊在脸上。 */
+function compactEvents(events) {
+  const out = []; let last = '';
+  events.forEach(e => {
+    if (e.stage !== last || e.level === 'error') { out.push(e); last = e.stage; }
+  });
+  const tail = events[events.length - 1];
+  if (tail && out[out.length - 1] !== tail) out.push(tail);
+  return out;
+}
+function renderJobDetail() {
+  const snap = state.jobSnap || {}; const en = state.jobEnergy || {};
+  const all = snap.events || [];
+  const shown = state.jobFull ? all : compactEvents(all);
+  const errs = all.filter(e => e.level === 'error').length;
+  const rows = shown.map(e => '<tr' + (e.level === 'error' ? ' style="color:var(--red)"' : '') + '><td>' + esc(e.stage) +
+    '</td><td>' + esc(e.text || '') + '</td><td>' + fmtMs(e.sincePrevMs) + '</td><td>' + fmtMs(e.elapsedMs) + '</td></tr>').join('');
+  const url = (snap.result || {}).fileUrl || (all.slice().reverse().find(e => e.fileUrl) || {}).fileUrl || '';
+  state.jobUrl = url;
+  const title = snap.title || (snap.result || {}).title || snap.query || snap.id || state.currentJob;
+  const mode = snap.accompaniment === false ? '清唱' : snap.accompaniment ? '带伴奏' : '';
+  const meta = [snap.artist, snap.voice, mode, snap.durationSec ? '唱 ' + fmtMs(Number(snap.durationSec) * 1000) : '',
+    snap.cached ? '曲库复用' : ''].filter(Boolean).join(' · ');
+  $('#jobDetail').style.display = 'block';
+  $('#jobDetail').innerHTML = '<h3>' + esc(title) + (meta ? ' <span style="font-weight:400;font-size:12px;color:var(--dim)">' + esc(meta) + '</span>' : '') + '</h3>' +
+    '<div class="card" style="padding:0;overflow:hidden"><table><thead><tr><th>阶段</th><th>说明</th><th>本阶段</th><th>累计</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+    '<div class="note" style="margin-top:10px">起唱点 <b>' + (en.trimStart || 0) + 's</b> · 取窗 <b>' + (en.durationSec || 0) + 's</b> · ' +
+    '共 ' + all.length + ' 条记录' + (errs ? ('，其中 <b style="color:var(--red)">' + errs + ' 条失败/警告</b>（上面已单独标红）') : '，没有失败') + '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">' +
+    (url ? '<button class="btn sm" onclick="playFile(state.jobUrl,$(\'#songAudio\'))">试听成品</button>' +
+      '<button class="btn sec sm" onclick="copyText(fileUrl(state.jobUrl))">复制链接</button>' : '') +
+    '<button class="btn sec sm" onclick="revealPath(((state.latest||{}).dirs||{}).covers||\'\')">打开成品目录</button>' +
+    '<button class="btn sec sm" onclick="state.jobFull=!state.jobFull;renderJobDetail()">' + (state.jobFull ? '收起（只看阶段）' : '展开全部 ' + all.length + ' 条') + '</button></div>';
+}
+function playJobFile() { if (state.currentJob) showJob(state.currentJob); }
+function drawEnergy(en) {
+  const pts = en.points || [];
+  if (!en.available || !pts.length) { $('#energyDemo').style.display = 'block'; $('#energyLive').style.display = 'none'; return; }
+  $('#energyDemo').style.display = 'none'; $('#energyLive').style.display = 'block';
+  const W = 460, H = 92, total = Math.max(1, ...pts.map(p => Number(p.t) || 0));
+  const line = pts.map((p, i) => (i ? 'L' : 'M') + (Number(p.t) / total * W).toFixed(1) + ' ' +
+    (H - 6 - Math.min(1, Math.max(0, Number(p.v) || 0)) * (H - 16)).toFixed(1)).join(' ');
+  const x = (Number(en.trimStart || 0) / total * W).toFixed(1);
+  $('#energyLive').innerHTML = '<svg class="wave" viewBox="0 0 460 92" preserveAspectRatio="none">' +
+    '<defs><linearGradient id="wgl" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#4a5b7d"/><stop offset="1" stop-color="#7ee8f5"/></linearGradient></defs>' +
+    '<line x1="0" y1="86" x2="460" y2="86" stroke="#2a3a5c" stroke-dasharray="4 4"/>' +
+    '<path d="' + line + ' L460 86 L0 86 Z" fill="url(#wgl)" opacity=".55"/>' +
+    '<line x1="' + x + '" y1="4" x2="' + x + '" y2="88" stroke="#ffc97a" stroke-width="2" stroke-dasharray="5 3"/>' +
+    '<text x="' + (Number(x) + 6) + '" y="14" fill="#ffc97a" font-size="10">trimStart = ' + en.trimStart + 's</text></svg>' +
+    '<p style="font-size:11px;color:var(--dim);margin-top:4px">曲线来自服务端，共 ' + pts.length + ' 帧；竖线是算出来的起唱点。</p>';
+}
+async function streamJob(id, onEvent) {
+  try {
+    const res = await fetch(apiUrl('/song/jobs/' + encodeURIComponent(id) + '/events'), { headers: auth() });
+    if (!res.ok || !res.body) throw new Error('SSE 不可用');
+    const reader = res.body.getReader(), dec = new TextDecoder(); let buf = '';
+    while (true) {
+      const chunk = await reader.read(); if (chunk.done) break;
+      buf += dec.decode(chunk.value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, i); buf = buf.slice(i + 2);
+        const line = block.split('\n').find(l => l.startsWith('data: '));
+        if (!line) continue;
+        try { const e = JSON.parse(line.slice(6)); if (!e.__end__) onEvent(e); } catch (err) {}
+      }
+    }
+  } catch (e) {
+    for (let n = 0; n < 600; n++) {
+      const snap = await api('/song/jobs/' + encodeURIComponent(id));
+      (snap.events || []).forEach(onEvent);
+      if (snap.done) break;
+      await new Promise(r => setTimeout(r, 700));
+    }
+  }
+}
+async function submitSong(picked) {
+  // 从搜索结果点下来的那首用它的真歌名，别把「歌名 + 歌手」当歌名写进缓存
+  const q = (picked && (picked.title || picked.name)) || ($('#songQuery').value || '').trim();
+  if (!q) { toast('先写个歌名'); return; }
+  if (!needLive('点歌')) return;
+  const bar = $('#jobBar'), msg = $('#jobMsg'), stage = $('#jobStage'), el = $('#jobElapsed');
+  bar.style.width = '0%'; msg.textContent = '提交中…';
+  if (stage) stage.textContent = '排队';
+  const started = Date.now();
+  const tick = setInterval(() => { if (el) el.textContent = fmtMs(Date.now() - started); }, 500);
+  const outBox = () => $('#songOutBox');
+  if (outBox()) outBox().style.display = 'none';
+  try {
+    // 搜到的第一条直接带进作业：不重新搜，也不会因为搜索结果抖动换成另一首
+    const body = { query: q };
+    const singMode = $('#singMode') && $('#singMode').value;
+    if (singMode) body.mode = singMode;
+    if (picked) {
+      body.sourceId = picked.sourceId || picked.source_id || picked.id || '';
+      body.url = picked.url || '';
+      body.artist = picked.artist || picked.artists || '';
+      body.source = picked.source || '';
+      body.candidates = (state.search && state.search.items) || [];
+    }
+    const made = await post('/song/request', body);
+    const id = made.jobId; state.currentJob = id;
+    msg.textContent = '作业 ' + id + ' · 已排队';
+    await streamJob(id, e => {
+      bar.style.width = Math.round((e.ratio || 0) * 100) + '%';
+      if (stage) stage.textContent = '[' + (e.stage || '做') + ']';
+      if (el) el.textContent = fmtMs(e.elapsedMs || (Date.now() - started));
+      if (e.level === 'error') msg.innerHTML = '<b style="color:var(--red)">' + esc(e.text) + '</b>';
+      else msg.textContent = '[' + e.stage + '] ' + e.text + ' · +' + fmtMs(e.sincePrevMs);
+    });
+    bar.style.width = '100%';
+    if (stage) stage.textContent = '完成';
+    const snap = await api('/song/jobs/' + encodeURIComponent(id));
+    const r = snap.result || {};
+    const url = r.fileUrl || (snap.events || []).slice().reverse().find(e => e.fileUrl)?.fileUrl || '';
+    state.lastSongUrl = url;
+    state.lastSongPath = r.file || '';
+    if (outBox() && (url || r.file)) {
+      outBox().style.display = 'block';
+      $('#songFilePath').textContent = r.file || (url ? apiUrl(url) : '');
+    }
+    msg.innerHTML = r.ok ? '<b style="color:var(--green)">做好了</b>：' + esc(r.title || q) + ' · 起唱点 ' + (r.trimStart || 0) + 's，下面可以直接听'
+      : '<b style="color:var(--red)">没做成：</b>' + esc(r.message || '');
+    await refreshJobsLive();
+    await refreshLatest();
+    await refreshCoversLive();
+    await showJob(id);
+  } catch (e) { msg.innerHTML = '<b style="color:var(--red)">提交失败：</b>' + esc(e.message); }
+  finally { clearInterval(tick); if (el) el.textContent = fmtMs(Date.now() - started); }
+}
+/** 试唱的「搜哪个源」：读的是 service 的同一份 music 源列表（config.json）。 */
+async function refreshSourcesLive() {
+  if (!state.live) return;
+  const sel = $('#searchSource');
+  if (!sel) return;
+  const r = await api('/song/sources');
+  const rows = (r.sources || []).filter(x => x.enabled !== false);
+  const keep = sel.value;
+  sel.innerHTML = rows.map(x => '<option value="' + esc(x.site || '') + '">' + esc(x.name || x.site || '') + '</option>').join('');
+  if (rows.some(x => x.site === keep)) sel.value = keep;
+  sel.title = rows.length
+    ? '搜哪个聚合站（默认 txqq；每个站最多取 10 首）'
+    : '还没有可用音乐源：去桌面面板「翻唱 → 音乐源」添加';
+}
+async function searchSong() {
+  if (!needLive('搜歌')) return null;
+  const q = ($('#searchQuery').value || '').trim();
+  if (!q) { toast('先给个歌名'); return null; }
+  const source = ($('#searchSource') && $('#searchSource').value) || '';
+  $('#searchOut').innerHTML = '检索中…';
+  try {
+    const r = await api('/song/search?q=' + encodeURIComponent(q) + '&limit=10' +
+      (source ? '&source=' + encodeURIComponent(source) : ''));
+    const items = r.items || [];
+    state.search = { query: r.query || q, items };
+    if (!items.length) { $('#searchOut').innerHTML = '<b style="color:var(--amber)">没搜到。</b>' + esc(r.message || ''); return state.search; }
+    $('#searchOut').innerHTML = '<b style="color:var(--green)">搜到 ' + items.length + ' 条</b> · 用时 ' + fmtMs(r.elapsedMs || 0) +
+      '<table style="margin-top:8px"><thead><tr><th>#</th><th>歌名</th><th>歌手</th><th>操作</th></tr></thead><tbody>' +
+      items.map((x, i) => '<tr><td>' + (i + 1) + '</td><td><b>' + esc(x.title) + '</b>' +
+        (x.source ? ' <span class="pill">' + esc(x.source) + '</span>' : '') +
+        '</td><td>' + esc(x.artist || '—') + '</td><td>' +
+        '<button class="btn sec sm" onclick="useSong(' + i + ')">用这首</button> ' +
+        (x.link ? '<button class="btn sec sm" onclick="copyText(this.dataset.u)" data-u="' + esc(x.link) + '">复制链接</button>' : '') +
+        '</td></tr>').join('') + '</tbody></table>';
+    await loadLog('song', '#songLog');
+    return state.search;
+  } catch (e) { $('#searchOut').innerHTML = '<b style="color:var(--red)">搜不了：</b>' + esc(e.message); return null; }
+}
+function useSong(i) {
+  const it = state.search && state.search.items[i];
+  if (!it) return;
+  $('#songQuery').value = (it.title + ' ' + (it.artist || '')).trim();
+  toast('已填进「点一首」：' + $('#songQuery').value);
+}
+/** 只有「固定起点 + 时长」才需要起点；整首时把起点收起来，少一个会被误改的输入框。 */
+function syncWindowRows() {
+  const mode = $('#windowSel').value;
+  const row = $('#startRow');
+  if (row) row.style.display = mode === 'offset' ? '' : 'none';
+  const note = $('#singLenNote');
+  if (note) {
+    const start = Math.max(0, Number($('#startSec').value) || 0);
+    const dur = Math.max(1, Number($('#durSec').value) || 120);
+    note.innerHTML = mode === 'offset'
+      ? ('从起唱点<b>再往后 ' + start + ' 秒</b>开始，唱 <b>' + dur + ' 秒</b>；原曲不够长就唱到结尾。')
+      : '整首：从起唱点一直唱到原曲结尾。想只要一段就切到「固定起点 + 时长」。';
+  }
+}
+async function refreshStrategyLive() {
+  if (!state.live) return;
+  const r = await api('/song/strategy');
+  const s = r.strategy; state.strategy = s;
+  // 旧配置里的 energy-peak / manual 不再提供入口，一律归到「固定起点 + 时长」
+  const mode = s.window.mode === 'full' ? 'full' : 'offset';
+  $('#modeSel').value = s.mode || 'accompaniment-trim';
+  $('#sepSel').value = s.separator; $('#trimSel').value = s.trim.mode; $('#windowSel').value = mode;
+  $('#idxRate').value = s.indexRate; $('#padSec').value = s.trim.paddingSec;
+  $('#durSec').value = s.window.durationSec; $('#startSec').value = s.window.startSec;
+  syncWindowRows();
+  $('#strategyNote').innerHTML = '<b>实时策略</b> · 指纹 <code>' + esc(s.fingerprint) + '</code> · 保存后下一首立即生效。';
+  await refreshSongAudioLive();
+}
+async function saveStrategyLive() {
+  if (!needLive('保存策略')) return;
+  const mode = $('#trimSel').value;
+  const winMode = $('#windowSel').value;
+  const body = { mode: $('#modeSel').value, separator: $('#sepSel').value,
+    trim: { mode: mode, paddingSec: Number($('#padSec').value), fixedSec: mode === 'fixed' ? Number($('#padSec').value) : 0 },
+    window: { mode: winMode, startSec: winMode === 'offset' ? Number($('#startSec').value) : 0,
+      durationSec: Number($('#durSec').value) },
+    indexRate: Number($('#idxRate').value) };
+  try { const r = await post('/song/strategy', body); toast(r.message || '策略已保存'); await refreshStrategyLive(); }
+  catch (e) { toast('保存失败：' + e.message); }
+}
+function gainOutText() {
+  const v = Math.round(Number($('#vocalGain').value) * 100);
+  const i = Math.round(Number($('#instGain').value) * 100);
+  $('#gainOut').textContent = '人声 ' + v + '% / 伴奏 ' + (i <= 0 ? '0%（清唱）' : i + '%');
+}
+function mixOutText() {
+  const rv = Number($('#reverb').value), tb = Number($('#treble').value);
+  $('#mixOut').textContent = '混响 ' + rv.toFixed(2) + ' / 高频 ' + (tb > 0 ? '+' : '') + tb + ' dB';
+}
+function syncAcapella(accompanimentGain) {
+  const gain = Number(accompanimentGain);
+  const on = gain <= 0.001;
+  if (!on) state.lastAccGain = gain > 0 ? gain : 1;
+  const sw = $('#acapellaSw');
+  if (sw) sw.classList.toggle('on', on);
+  const out = $('#acapellaOut');
+  if (out) out.textContent = on ? '清唱（无人声伴奏）' : '带伴奏';
+}
+async function refreshSongAudioLive() {
+  if (!state.live) return;
+  const r = await api('/song/audio'); const a = r.audio || {};
+  if (a.vocal_gain != null) $('#vocalGain').value = a.vocal_gain;
+  if (a.accompaniment_gain != null) $('#instGain').value = a.accompaniment_gain;
+  if (a.reverb != null) $('#reverb').value = a.reverb;
+  if (a.treble_db != null) $('#treble').value = a.treble_db;
+  $('#normSw') && $('#normSw').classList.toggle('on', !!a.two_pass_loudnorm);
+  syncAcapella(a.accompaniment_gain != null ? a.accompaniment_gain : $('#instGain').value);
+  mixOutText(); gainOutText();
+}
+async function saveSongAudio(override) {
+  if (!needLive('保存混音参数')) return;
+  const acc = override && override.accompaniment_gain != null
+    ? override.accompaniment_gain : Number($('#instGain').value);
+  try {
+    const r = await post('/song/audio', { vocal_gain: Number($('#vocalGain').value),
+      accompaniment_gain: acc,
+      reverb: Number($('#reverb').value), treble_db: Number($('#treble').value),
+      two_pass_loudnorm: $('#normSw') && $('#normSw').classList.contains('on') });
+    toast(r.message || '已保存');
+    await refreshSongAudioLive();
+  } catch (e) { toast('保存失败：' + e.message); }
+}
+/** 清唱开关：开 = 伴奏音量写 0；关 = 恢复上一次的伴奏音量（没记过就 1.0）。 */
+function toggleAcapella() {
+  if (!needLive('切换清唱')) return;
+  const on = !($('#acapellaSw') && $('#acapellaSw').classList.contains('on'));
+  const restore = state.lastAccGain != null ? state.lastAccGain : 1;
+  $('#instGain').value = on ? 0 : restore;
+  gainOutText();
+  saveSongAudio({ accompaniment_gain: on ? 0 : restore });
+}
+
+// ------------------------------------------------------------------ 驻留
+async function refreshStatusLive() {
+  if (!state.live) return;
+  const st = await api('/status'); state.status = st;
+  if (st.dirs) state.dirs = st.dirs;
+  if (st.audioDir) state.audioDir = st.audioDir;
+  const ovDir = $('#ovDataDir');
+  if (ovDir) { ovDir.textContent = st.dataDir || '—'; ovDir.title = st.dataDir || ''; }
+  const rows = st.resident || [];
+  const cards = rows.map(w => {
+    const engine = esc(w.engine || '');
+    return '<div class="card"><h3><span class="sdot on"></span>' + engine + ' <span class="tag t-blue">' + esc(w.kind || 'tts') + '</span></h3>' +
+      '<div class="kv"><span>模型</span><span title="' + esc(w.path || '') + '">' + esc((w.path || '—').split('/').slice(-1)[0]) + '</span></div>' +
+      '<div class="kv"><span>占内存</span><span>' + (w.rssMB || 0) + ' MB</span></div>' +
+      '<div class="kv"><span>闲着多久</span><span>' + fmtMs((w.idleSeconds || 0) * 1000) + '</span></div>' +
+      '<div class="kv"><span>最近音色</span><span>' + esc((w.voices || []).join(' / ') || '—') + '</span></div>' +
+      '<button class="btn sec sm" style="margin-top:12px" onclick="releaseLive(\'' + engine + '\')">释放内存</button></div>';
+  }).join('');
+  $('#residentBody').innerHTML = cards || '<div class="card" style="border-style:dashed"><h3><span class="sdot off"></span>现在没有常驻模型</h3><p>空闲 ' +
+    (st.idleMinutes || 8) + ' 分钟会自动释放。用「切到…」起一个，或者直接去试听一句。</p></div>';
+  if ($('#dashStatus')) {
+    const jobs = st.jobs || [];
+    $('#dashStatus').innerHTML = '<h3>服务状态 <span class="tag t-green">LIVE</span></h3>' +
+      '<div class="kv"><span>service 9876</span><span><span class="sdot on"></span><b>运行中</b> · v' + esc(st.version || '') + '</span></div>' +
+      '<div class="kv"><span>说话渠道</span><span>' + esc(st.ttsEngine || '') + '</span></div>' +
+      '<div class="kv"><span>驻留</span><span>' + rows.length + ' 个 · ' + rows.reduce((a, w) => a + (w.rssMB || 0), 0).toFixed(0) + ' MB</span></div>' +
+      '<div class="kv"><span>翻唱作业</span><span>' + jobs.length + ' 个</span></div>' +
+      '<div class="kv"><span>数据目录</span><span title="' + esc(st.dataDir || '') + '">' + esc((st.dataDir || '').split('/').slice(-2).join('/')) + '</span></div>';
+  }
+  const rvc = st.rvc || {};
+  if ($('#voiceName') && rvc.voiceName) $('#voiceName').value = rvc.voiceName;
+  if ($('#rvcIndex')) $('#rvcIndex').textContent = rvc.index || '还没选 .index（有就选，没有也能跑）';
+}
+async function switchTo(engine) {
+  if (!needLive('切换引擎')) return;
+  $('#switchMsg').textContent = '正在关掉旧引擎 → 起 ' + engine + ' → 合成一句探针音 …';
+  $('#switchBar').style.width = '35%';
+  try {
+    const r = await post('/tts/switch', { kind: 'tts', engine: engine });
+    $('#switchBar').style.width = '100%';
+    $('#switchMsg').innerHTML = '<b style="color:var(--green)">切到 ' + esc(r.to || engine) + ' 完成</b> · 释放 ' +
+      (r.releasedMB || 0) + ' MB · 探针音 ' + (r.probeOk ? '正常' : '没合成出来') +
+      (r.probeOk ? '（听下面）' : '');
+    if (r.probeUrl) await playFile(r.probeUrl, $('#ttsAudio'));
+    await refreshStatusLive(); await refreshModelsLive();
+  } catch (e) {
+    $('#switchBar').style.width = '0%';
+    $('#switchMsg').innerHTML = '<b style="color:var(--red)">切不了：</b>' + esc(e.message);
+  }
+}
+function switchLive() { return switchTo('qwen'); }
+async function releaseLive(engine) {
+  try { await del('/models/' + encodeURIComponent(engine)); toast('已释放 ' + engine); await refreshStatusLive(); await refreshModelsLive(); }
+  catch (e) { toast('释放失败：' + e.message); }
+}
+
+// ------------------------------------------------------------------ 路径 / 日志
+async function refreshPaths() {
+  if (!state.live) return;
+  const r = await api('/paths');
+  state.paths = r;
+  $('#pathsTag').textContent = (r.items || []).length + ' 处';
+  const row = (it) => '<div class="pickrow"><span class="sdot ' + (it.exists ? 'on' : 'off') + '"></span>' +
+    '<b style="min-width:96px">' + esc(it.label) + '</b>' +
+    '<span class="pt" title="' + esc(it.path) + '">' + esc(it.path) + '</span>' +
+    '<span class="fa"><span style="color:var(--dim);font-size:11.5px">' + (it.exists ? fmtBytes(it.bytes) : '不存在') + '</span>' +
+    '<button class="btn sec sm" onclick="copyText(this.dataset.p)" data-p="' + esc(it.path) + '">复制</button>' +
+    '<button class="btn sec sm" onclick="revealPath(this.dataset.p)" data-p="' + esc(it.path) + '">打开</button></span></div>';
+  $('#pathRows').innerHTML = (r.items || []).map(row).join('') +
+    row({ label: 'Downloads', path: r.downloads || '', exists: true, bytes: 0 });
+  const byLabel = {};
+  (r.items || []).forEach(it => { byLabel[it.label] = it.path; });
+  state.dirs = Object.assign({}, state.dirs, {
+    models: byLabel['模型总目录'], ttsQwen: byLabel['千问 TTS 模型'], ttsGpt: byLabel['GPT-SoVITS 模型'],
+    rvc: byLabel['RVC 音色'], separator: byLabel['人声分离'], refs: byLabel['参考音频'],
+    audio: byLabel['试听目录'], song: byLabel['曲库'], logs: byLabel['日志']
+  });
+  state.audioDir = byLabel['试听目录'] || state.audioDir;
+  state.logDirs = { tts: byLabel['日志'] || '' };
+  if ($('#audioDirText')) $('#audioDirText').textContent = state.audioDir || '';
+}
+async function revealPath(p) {
+  if (!p) { toast('没有路径'); return; }
+  try { const r = await post('/reveal', { path: p }); toast(r.message || '已打开'); }
+  catch (e) { toast('打不开：' + e.message); }
+}
+async function loadLog(source, sel, level) {
+  const box = $(sel); if (!box) return null;
+  if (!state.live) { box.textContent = '连上 service 后显示日志。'; return null; }
+  try {
+    const r = await api('/logs?source=' + encodeURIComponent(source) + '&lines=120' + (level ? '&level=' + level : ''));
+    box.textContent = (r.lines && r.lines.length) ? r.lines.join('\n') : '还没有记录。';
+    return r;
+  } catch (e) { box.textContent = '读日志失败：' + e.message; return null; }
+}
+async function showLog(source, level) {
+  state.logSource = source;
+  const r = await loadLog(source, '#anyLog', level);
+  if (r && $('#logPath')) $('#logPath').textContent = r.path + (r.exists ? '' : '（还没有内容）');
+}
+async function copyLog(source) {
+  if (!state.live) { toast('先连上 service'); return; }
+  try {
+    const r = await api('/logs?source=' + encodeURIComponent(source) + '&lines=200');
+    copyText((r.lines || []).join('\n') || '（空）');
+  } catch (e) { toast('读日志失败：' + e.message); }
+}
+
+// ------------------------------------------------------------------ 启停
+async function refreshStack() {
+  if (!state.live) {
+    state.stack = null;
+    const chip = $('#gwChip');
+    if (chip) { chip.className = 'chip demo'; chip.innerHTML = '<b>●</b> QQ 网关未检查'; }
+    if (state.step === 0) renderWiz();
+    return;
+  }
+  const r = await api('/stack');
+  state.stack = r;
+  // 顶栏这颗灯只看真连接数：6700 在听不等于 QQ 在线
+  const chip = $('#gwChip');
+  if (chip) {
+    const peers = Number(r.peers || 0);
+    const bridge = (r.rows || []).find(x => x.id === 'bridge') || {};
+    if (peers > 0) {
+      chip.className = 'chip';
+      chip.innerHTML = '<b>●</b> QQ 在线 · 6700 已连';
+    } else if (bridge.on) {
+      chip.className = 'chip demo';
+      chip.innerHTML = '<b>●</b> QQ 未连 · 6700 在听但没有客户端';
+    } else {
+      chip.className = 'chip demo';
+      chip.innerHTML = '<b>●</b> QQ 未启动';
+    }
+  }
+  if (state.step === 0) renderWiz();
+}
+async function stackAction(action) {
+  if (!needLive('启停本机组件')) return;
+  try {
+    const r = await post('/stack', { action });
+    toast(r.message || r.output || '已提交');
+    setTimeout(() => { refreshStack().catch(() => {}); }, 4000);
+  } catch (e) { toast('没执行：' + e.message); }
+}
+
+// ------------------------------------------------------------------ 自检 / 大屏
+function renderSelfcheck(r) {
+  state.selfcheck = r;
+  const steps = r.steps || [];
+  if ($('#scTag')) { $('#scTag').textContent = r.ok ? '全绿' : '有红项'; $('#scTag').className = 'tag ' + (r.ok ? 't-green' : 't-red'); }
+  if ($('#scBody')) $('#scBody').innerHTML = steps.map(s =>
+    '<div class="card" style="padding:14px"><h3><span class="sdot ' + (s.ok ? 'on' : 'off') + '"></span>' + esc(s.label || s.id) + '</h3>' +
+    '<p style="font-size:12px">' + esc(s.message || '') + '</p>' +
+    '<div class="kv" style="margin-top:8px"><span>code</span><span><code>' + esc(s.code || '') + '</code></span></div>' +
+    '<div class="kv"><span>用时</span><span>' + fmtMs(s.ms || 0) + '</span></div></div>').join('');
+  if ($('#scSummary')) $('#scSummary').textContent = r.ok ? '全部通过，可以上线了。' : '有失败项：点对应页面修复后重跑。';
+  renderWiz();
+}
+async function refreshSelfcheckLive() {
+  if (!state.live) return;
+  try { renderSelfcheck(await api('/selfcheck')); } catch (e) {}
+}
+async function runSelfcheck(deep) {
+  if (!needLive('跑自检')) return;
+  if ($('#scSummary')) $('#scSummary').textContent = deep ? '深度自检会真唱一首，要几分钟…' : '正在跑…';
+  try { renderSelfcheck(await post('/selfcheck', { deep: !!deep })); toast('自检完成'); }
+  catch (e) { toast('自检失败：' + e.message); }
+}
+function renderTimeline() {
+  const el = $('#tlBody'); if (!el) return;
+  const evs = state.jobs.map(j => {
+    const t = new Date((j.mtime || Date.now() / 1000) * 1000).toTimeString().slice(0, 5);
+    return { t: t, kind: j.ok ? 'song' : (j.done ? 'err' : 'song'),
+      html: '作业 <b>' + esc(j.query || j.id) + '</b> · ' + esc(j.lastStage || '') + ' · ' + fmtMs(j.elapsedMs), tag: j.ok ? '已完成' : (j.done ? '失败' : '进行中') };
+  });
+  el.innerHTML = evs.length ? evs.map(e => '<div class="ev"><time>' + e.t + '</time><div class="body">' + e.html + '</div></div>').join('')
+    : '<div class="ev"><time>—</time><div class="body" style="color:var(--dim)">还没有记录。作业跑一次就会出现在这里。</div></div>';
+  const dash = $('#dashTl'); if (dash) dash.innerHTML = el.innerHTML;
+}
+function renderToken() {
+  const box = $('#tokChart'); if (!box) return;
+  box.innerHTML = '<span style="color:var(--dim);font-size:12px">Token 统计需要宿主上报，这一版还没接；先看下方服务状态。</span>';
+  if ($('#tokToday')) $('#tokToday').textContent = '未接';
+  if ($('#tokByUse')) $('#tokByUse').textContent = '未接';
+}
+
+// ------------------------------------------------------------------ 汇总刷新（串行，避免 keep-alive 并发被 reset）
+async function refreshAll() {
+  const tasks = [refreshStack, refreshPaths, refreshDepsLive, refreshModelsLive,
+    refreshStrategyLive, refreshJobsLive, refreshLatest, refreshStatusLive, refreshTtsCfgLive,
+    refreshAudioList, refreshSourcesLive];
+  for (const task of tasks) {
+    try { await task(); } catch (e) { console.warn('refresh ' + task.name, e && e.message); }
+  }
+  await refreshSelfcheckLive().catch(() => {});
+  renderTimeline();
+  await loadLog('tts', '#ttsLog').catch(() => {});
+  await loadLog('song', '#songLog').catch(() => {});
+  renderWiz();
+  paintHero();
+}
+function paintHero() {
+  const pills = $('#heroPills'); if (!pills) return;
+  if (!state.live) { pills.innerHTML = '<span class="pill">● 未连接 service</span>'; return; }
+  const st = state.status || {};
+  const on = state.stack ? (state.stack.onCount || 0) + '/' + (state.stack.total || 5) + ' 组件在跑' : '组件未读';
+  pills.innerHTML = '<span class="pill ok">● service 在线</span>' +
+    '<span class="pill ' + (state.stack && state.stack.onCount >= 2 ? 'ok' : 'warn') + '">● ' + esc(on) + '</span>' +
+    '<span class="pill info">● ' + esc(ENGINE_LABEL[st.ttsEngine] || st.ttsEngine || '说话未选') + '</span>';
+}
+
+// ------------------------------------------------------------------ 启动
+function bindStatic() {
+  $$('.nav button').forEach(b => b.onclick = () => go(b.dataset.v));
+  $$('[data-sw]').forEach(el => el.onclick = () => {
+    if (el.hasAttribute('data-lock')) { toast(el.dataset.toast || '这里是只读展示，请去真实面板配置'); return; }
+    el.classList.toggle('on');
+  });
+  $$('.f').forEach(b => b.onclick = () => {
+    $$('.f').forEach(x => x.classList.remove('on')); b.classList.add('on');
+    state.filter = b.dataset.f; renderTimeline();
+  });
+  $('#connBtn').onclick = () => { const b = $('#connBox'); b.style.display = (b.style.display === 'none' ? 'block' : 'none'); };
+  $('#connGo').onclick = connect;
+  $('#connStop').onclick = () => { localStorage.removeItem(LS_KEY); location.reload(); };
+  $('#connRefresh').onclick = () => state.live ? refreshAll().then(() => toast('已重新拉取')) : toast('先连上 service');
+  $('#themeBtn').onclick = () => {
+    const root = document.documentElement;
+    const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+    root.dataset.theme = next;
+    try { localStorage.setItem('qqsoul-theme', next); } catch (e) {}
+    $('#themeBtn').textContent = next === 'dark' ? '切换亮色' : '切换深色';
+  };
+  $('#bigBtn').onclick = () => {
+    state.big = !state.big;
+    document.body.classList.toggle('bigscreen', state.big);
+    $('#bigBtn').textContent = state.big ? '退出大屏' : '进入大屏';
+    go('dashboard');
+  };
+  const panelBtn = $('#panelUrlBtn');
+  if (panelBtn) panelBtn.onclick = () => {
+    const url = (/^https?:$/.test(location.protocol) ? location.origin : 'http://127.0.0.1:9876') + '/panel';
+    copyText(url); toast('大屏地址：' + url);
+  };
+  $('#engine').onchange = () => { loadVoices().catch(() => {}); };
+  $('#ttsGo').onclick = () => { state.live ? ttsLive() : toast('先连上 service'); };
+  $('#ttsSave').onclick = async () => {
+    if (!needLive('保存说话参数')) return;
+    try { const r = await post('/tts/config', ttsBody()); toast(r.message || '已保存'); await refreshTtsCfgLive(); renderWiz(); }
+    catch (e) { toast('保存失败：' + e.message); }
+  };
+  $('#ttsReload').onclick = () => state.live ? refreshTtsCfgLive().then(() => toast('已重新读取')).catch(e => toast(e.message)) : toast('先连上 service');
+  $('#adoptBtn').onclick = adoptLocal;
+  $('#strategySave').onclick = saveStrategyLive;
+  $('#strategyLoad').onclick = () => state.live ? refreshStrategyLive() : toast('先连上 service');
+  $('#gainSave').onclick = () => saveSongAudio();
+  $('#vocalGain').oninput = gainOutText; $('#instGain').oninput = gainOutText;
+  $('#reverb').oninput = mixOutText; $('#treble').oninput = mixOutText;
+  $('#windowSel').onchange = syncWindowRows;
+  $('#startSec').oninput = syncWindowRows; $('#durSec').oninput = syncWindowRows;
+  $('#acapellaSw').onclick = toggleAcapella;
+  syncWindowRows(); gainOutText(); mixOutText();
+  $('#searchGo').onclick = searchSong;
+  $('#searchSing').onclick = async () => {
+    const r = await searchSong();
+    if (!r || !r.items.length) return;
+    useSong(0);
+    await submitSong(r.items[0]);
+  };
+  $('#songGo').onclick = submitSong;
+  bindWizard();
+}
+
+(function boot() {
+  try { const th = localStorage.getItem('qqsoul-theme'); if (th) document.documentElement.dataset.theme = th; } catch (e) {}
+  if (document.documentElement.dataset.theme === 'light') $('#themeBtn').textContent = '切换深色';
+  bindStatic();
+  renderEngine();
+  renderToken();
+  renderWiz();
+  renderDepsOffline();
+  renderAudioList();
+  renderRvcSelect();
+  setMode();
+  autoConnect().then(ok => {
+    if (!ok) {
+      const hint = $('#demoHint'); if (hint) hint.style.display = 'block';
+      const note = $('#connNote');
+      if (note && /^https?:$/.test(location.protocol)) {
+        note.innerHTML = '这个地址上没有 healthz：<b>' + esc(location.origin) + '</b> 看起来不是 service。先跑 <code>python3 -m services --serve</code>。';
+      }
+      renderWiz();
+      refreshModelsLive().catch(() => {});
+      refreshLatest().catch(() => {});
+      loadLog('tts', '#ttsLog').catch(() => {});
+      loadLog('song', '#songLog').catch(() => {});
+    }
+  });
+})();
+
+</script>
+</body>
+</html>

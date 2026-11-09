@@ -1,4 +1,4 @@
-# Aurabot 扩展接口说明（插件 v{{VERSION}} · 扩展接口 v{{API}}）
+# 懂你的QQ大肥鱼 · 扩展接口说明（插件 v{{VERSION}} · 扩展接口 v{{API}}）
 
 > 这个文件由插件维护，每次启动都会更新成当前版本，**别改它**（改了也会被覆盖）。
 > 你自己写的模块放在和它同一个文件夹（`modules/`）里，插件升级不会动。
@@ -332,7 +332,7 @@ return function Panel({ settings, save, toast }) {
 
 ## 社区模块
 
-插件能从社区库 `dsh-aurabot-qq-mods` 安装模块，装好后就是 `modules/<id>/` 里的一个普通模块，多一个记录来源的 `.aurabot-source.json`。想发布自己的模块，看那个仓库的贡献指南。桌宠、抖音、小黑盒、群管也在社区库里。
+本项目**默认关闭社区模块市场**（不回连任何上游仓库）。需要自建市场时，通过 `QQSOUL_REGISTRY_URL` 指向自己的索引，装好后模块落在 `modules/<id>/`，并写一个记录来源的 `.aurabot-source.json`（内部文件名沿用上游以兼容）。也可以直接把 `.mjs` 放进本地脚本目录，或用 `/modules/create` 自己写。
 
 ## 替换内置模块
 

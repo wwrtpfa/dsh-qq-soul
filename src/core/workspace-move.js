@@ -49,7 +49,7 @@ export function realWorkspace(dir) {
 /** 把工作区搬到 to，原路径 from 留联接。失败时一切恢复原样。 */
 export function moveWorkspace(from, to) {
   const target = resolve(String(to || '').trim())
-  if (!String(to || '').trim() || !isAbsolute(String(to).trim())) return { ok: false, message: '要填完整路径，比如 D:\\Aurabot\\qq-chats' }
+  if (!String(to || '').trim() || !isAbsolute(String(to).trim())) return { ok: false, message: '要填完整路径，比如 D:\\qq-soul\\qq-chats' }
   mkdirSync(from, { recursive: true })
   const real = realpathSync(from)
   if (inside(real, target) || inside(target, real)) return { ok: false, message: '新位置不能和现在的位置重叠' }

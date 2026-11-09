@@ -5,6 +5,9 @@
 import { createMemoryStore, memoryLine, looksLikeRuleMemory } from '../../features/memory.js'
 export { looksLikeRuleMemory } from '../../features/memory.js'
 import { defineTool, str } from '../../tools/tools.js'
+import { statSync } from 'node:fs'
+import { join } from 'node:path'
+import { dataDir } from '../../core/store.js'
 
 export default {
   id: 'memory',
@@ -95,6 +98,18 @@ export default {
     })
 
     api.route('/memories', async (req) => ({ ok: true, items: memory.list(http.query(req).q || '').slice(0, 300), stats: memory.stats() }))
+    // 记忆存在哪、多大、能不能拿走：面板「记忆库」顶部那行
+    api.route('/memory/manage', async () => {
+      const root = dataDir()
+      const files = ['memory.sqlite', 'memory.sqlite-wal', 'memory.sqlite-shm', 'memories.json']
+      let bytes = 0
+      for (const name of files) {
+        try { bytes += statSync(join(root, name)).size } catch (error) {}
+      }
+      return { ok: true, dir: root, sqlite: join(root, 'memory.sqlite'), bytes, stats: memory.stats() }
+    })
+    // 导出整份长期记忆（JSON）：换电脑 / 发布前备份用，不删任何东西
+    api.route('/memory/export', async () => ({ ok: true, at: Date.now(), items: memory.list('') }))
     api.route('/memory/add', async (req) => {
       const b = await http.body(req)
       return memory.add({ text: b.text, aboutName: b.aboutName || '', about: b.about || '', importance: b.importance ?? 0.6, tags: b.tags || [], source: 'panel', validFrom: b.validFrom, validUntil: b.validUntil })

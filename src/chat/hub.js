@@ -1,7 +1,7 @@
 // 消息中枢：QQ 会话 ↔ DSH 会话。
 //   收：OneBot 事件 → 白名单 / 群聊策略 → 拼好文案（带发言人、群上下文、图片、语音转写）→ 喂进对应 DSH 会话
 //   发：DSH 会话一轮结束 → 取最终正文 → 拆条 / 语音 / 表情 → 发回原来的 QQ 会话
-// 每个 QQ 会话一个 DSH 会话，统一放在「Aurabot · QQ」工作区，主人可以在 DSH 侧栏点开看、插手。
+// 每个 QQ 会话一个 DSH 会话，统一放在「懂你的QQ大肥鱼」工作区，主人可以在 DSH 侧栏点开看、插手。
 
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -42,7 +42,7 @@ const MAX_MESSAGE_IMAGES = 8 // 一条消息最多给她看几张，合并转发
 export const WORKSPACE_DIR = process.env.AURABOT_WORKSPACE || (existsSync(LEGACY_WORKSPACE) ? LEGACY_WORKSPACE : join(homedir(), 'Aurabot', 'qq-chats'))
 /** 现在用的工作区目录：面板里填了就用填的，否则默认。 */
 export const workspaceDirOf = (cfg) => String(cfg?.workspaceDir || '').trim() || WORKSPACE_DIR
-export const WORKSPACE_TITLE = 'Aurabot · QQ'
+export const WORKSPACE_TITLE = '懂你的QQ大肥鱼'
 const SOURCE_KIND = 'aurabot'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -196,7 +196,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   }
 
   let disposed = false
-  const disposedError = () => Object.assign(new Error('Aurabot 插件已卸载'), { code: 'AURABOT_DISPOSED' })
+  const disposedError = () => Object.assign(new Error('懂你的QQ大肥鱼 插件已卸载'), { code: 'AURABOT_DISPOSED' })
   const assertActive = () => { if (disposed) throw disposedError() }
 
   // 拆条间隔可在卸载时立即结束，后面的消息不再投递。
@@ -953,17 +953,38 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     const r = parseReply(text, cleaningFor(chatId))
     if (r.silent) return silenceTurn(chatId)
     let items = r.items
-    // 对方明确要语音、她却只打了字：整段改成语音发（模型偶尔会忘，这里兜底）
-    if (opts.wantVoice && cfg.voice.enabled && !items.some((i) => i.kind === 'voice')) {
-      const spoken = items.filter((i) => i.kind === 'text').map((i) => i.value).join('，')
-      if (spoken && spoken.length <= 300) items = [{ kind: 'voice', value: spoken }, ...items.filter((i) => i.kind !== 'text')]
+    // 说话方式：总开关关着 = 只发文字；四种模式互斥，先统一改好 items，后面只负责发。
+    const vmode = cfg.voice.enabled ? cfg.voice.mode : 'text'
+    const spokenOf = (list) => list.filter((i) => i.kind === 'text').map((i) => i.value).join('，')
+    if (vmode === 'text') {
+      // 只发文字：模型写了 <voice> 也改回文字，绝不发语音条。
+      items = items.map((i) => (i.kind === 'voice' ? { kind: 'text', value: i.value } : i))
+    } else if (vmode === 'voice') {
+      // 只发语音：所有文字合成一条语音，图片 / 表情照常发。
+      const spoken = spokenOf(items)
+      if (spoken) {
+        const firstText = items.findIndex((i) => i.kind === 'text')
+        items = items.filter((i) => i.kind !== 'text')
+        items.splice(Math.max(0, firstText), 0, { kind: 'voice', value: spoken })
+      }
+    } else if (vmode === 'both') {
+      // 文字 + 语音：每条文字后面跟一条同样的语音。
+      items = items.flatMap((i) => (i.kind === 'text' ? [i, { kind: 'voice', value: i.value }] : [i]))
+    } else {
+      // auto：对方明确要语音、她却只打了字，整段改成语音发（模型偶尔会忘，这里兜底）
+      if (opts.wantVoice && cfg.voice.enabled && !items.some((i) => i.kind === 'voice')) {
+        const spoken = spokenOf(items)
+        if (spoken && spoken.length <= 300) items = [{ kind: 'voice', value: spoken }, ...items.filter((i) => i.kind !== 'text')]
+      }
+      // 短回复按概率整条变语音
+      const texts = items.filter((i) => i.kind === 'text')
+      if (cfg.voice.enabled && items.length === texts.length && texts.length > 0) {
+        const all = texts.map((t) => t.value).join('，')
+        if (all.length <= cfg.voice.autoMaxChars && Math.random() < cfg.voice.autoChance * mood().voice) items = [{ kind: 'voice', value: all }]
+      }
     }
-    // 短回复按概率整条变语音
+    // 后面补表情时要看剩余文字
     const texts = items.filter((i) => i.kind === 'text')
-    if (cfg.voice.enabled && items.length === texts.length && texts.length > 0) {
-      const all = texts.map((t) => t.value).join('，')
-      if (all.length <= cfg.voice.autoMaxChars && Math.random() < cfg.voice.autoChance * mood().voice) items = [{ kind: 'voice', value: all }]
-    }
     const inGroup = chatId.startsWith('group:')
     // 群里别刷屏：一段最多 3 条
     if (inGroup && items.length > 3) items = items.slice(0, 3)

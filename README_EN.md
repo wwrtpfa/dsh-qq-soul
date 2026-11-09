@@ -1,28 +1,26 @@
 <div align="center">
 
-<img src="assets/banner.svg" alt="Aurabot · 大肥鱼" width="100%" />
+<img src="assets/banner.svg" alt="懂你的QQ大肥鱼" width="100%" />
 
-**"Dafeiyu" — an AI companion living inside QQ · A DeepSeek Harness plugin**
+**懂你的QQ大肥鱼 ("The QQ Big Fish That Knows You") — an AI companion living inside QQ · A DeepSeek Harness plugin**
 
 A persona, a mood, and a memory of her own. She chats, sees images, sends voice notes, collects stickers, sings in her own voice, writes Qzone diaries, browses Bilibili — and sometimes reaches out to you first.
 
 **English** · [简体中文](README.md)
 
-[![release](https://img.shields.io/github/v/release/aureth-labs/dsh-aurabot-qq?include_prereleases&label=release&color=4a7dff)](https://github.com/aureth-labs/dsh-aurabot-qq/releases)
-[![license](https://img.shields.io/github/license/aureth-labs/dsh-aurabot-qq?color=3fb950)](LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-3fb950)](LICENSE)
 [![DSH plugin](https://img.shields.io/badge/DeepSeek%20Harness-plugin-6a5acd)](https://github.com/deepseek-ai/deepseek-harness)
 [![QQ](https://img.shields.io/badge/QQ-SnowLuma%20%2F%20OneBot%20v11-12b7f5)](https://github.com/SnowLuma/SnowLuma)
-[![stars](https://img.shields.io/github/stars/aureth-labs/dsh-aurabot-qq?color=f5b301)](https://github.com/aureth-labs/dsh-aurabot-qq/stargazers)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](#-contributing)
 
 </div>
 
-> Aurabot turns the AI inside **DeepSeek Harness (DSH)** into someone with a QQ account: her own persona, moods, a long-term memory of your chats, and a personality that shows in every reply. She can follow group conversations, send voice notes, sing with her own voice, keep a Qzone diary, and browse Bilibili.
+> QQ Soul turns the AI inside **DeepSeek Harness (DSH)** into someone with a QQ account: her own persona, moods, a long-term memory of your chats, and a personality that shows in every reply. She can follow group conversations, send voice notes, sing with her own voice, keep a Qzone diary, and browse Bilibili.
 >
 > This is not another keyword-reply bot: every reply, every decision to join a conversation, every model choice, and every outgoing message is a pluggable module. Everything is off by default — **not a single message reaches QQ until you turn it on.**
 
 ```
-QQ ⇄ SnowLuma (OneBot v11; or your existing bot) ⇄ Aurabot plugin ⇄ DSH sessions
+QQ ⇄ NapCat / SnowLuma (OneBot v11, installed by you) ⇄ this plugin ⇄ DSH sessions
                                                        ├─ persona + mood + memory
                                                        ├─ tools / hot-reloadable modules
                                                        └─ web panel (DSH Web)
@@ -30,7 +28,7 @@ QQ ⇄ SnowLuma (OneBot v11; or your existing bot) ⇄ Aurabot plugin ⇄ DSH se
 
 ---
 
-## ✨ Why Aurabot
+## ✨ Why QQ Soul
 
 <table>
   <tr>
@@ -69,16 +67,16 @@ QQ ⇄ SnowLuma (OneBot v11; or your existing bot) ⇄ Aurabot plugin ⇄ DSH se
 **Windows desktop:**
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add github:aureth-labs/dsh-aurabot-qq
+& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add /absolute/path/dsh-qq-soul
 ```
 
 **Linux / Docker** (replace `<profile>` with yours; run inside the container if applicable):
 
 ```bash
-dsh plugin --profile <profile> add github:aureth-labs/dsh-aurabot-qq
+dsh plugin --profile <profile> add /absolute/path/dsh-qq-soul
 ```
 
-Restart DSH; **Aurabot** appears in the sidebar under *Automation*.
+Restart DSH; **QQ Soul** appears in the sidebar under *Automation*.
 
 ### 2. Follow the setup wizard
 
@@ -98,7 +96,7 @@ Re-run the install command and restart DSH — settings, persona and memory are 
 
 Apart from the core (config, QQ gateway, chat hub, persona, permissions, panel), **every feature is a module**.
 
-- Install/update/remove community modules from the panel’s **Module market** — registry: [dsh-aurabot-qq-mods](https://github.com/aureth-labs/dsh-aurabot-qq-mods)
+- The **Module market is disabled by default** (no upstream callbacks). Point `QQSOUL_REGISTRY_URL` at your own registry to enable it.
 - Your own modules live in the data directory `modules/` — never overwritten by upgrades, hot-reloaded on save (multi-file and npm deps supported)
 - The panel has a sandboxed “simulate” test that captures outgoing messages instead of sending them
 - Extension API: [API.md (Chinese)](src/modules/API.md) · types: [aurabot.d.ts](src/modules/aurabot.d.ts) · [module tutorial](docs/MODULE-TUTORIAL.md)
@@ -112,7 +110,7 @@ Apart from the core (config, QQ gateway, chat hub, persona, permissions, panel),
 - **Per-context permissions**: owner DMs get the full toolset; group chats and other people’s DMs get **no local tools**; sensitive actions (profiles, files, song covers, image gen, …) require the whole turn to be the owner
 - **Execution-level guards**: dangerous shell commands need a “confirm” reply in QQ (optional); DSH approvals can be confirmed from your QQ DM (can be disabled); unload/reload clears pending confirmations and timers
 - **Privacy boundaries**: what you say in an owner DM is never fed into groups or other DMs; memory is isolated by chat origin; social contexts only recall memories from that chat
-- **Local data**: `%USERPROFILE%\.dsh\plugins-data\aurabot\`; use *System → Backup* to export everything as a zip and restore on a new machine
+- **Local data**: plugin data lives in `%USERPROFILE%\.dsh\plugins-data\aurabot\`; the audio service keeps its config, models and cover cache in `%USERPROFILE%\.dsh\plugins-data\qqsoul\service\`. Use *System → Backup* to export plugin data as a zip and restore it on a new machine.
 
 ## 🖥️ Panel overview
 
@@ -168,14 +166,13 @@ Edit the persona section by section in the panel (effective next turn); features
 <details>
 <summary><b>Install fails / errors?</b></summary>
 
-Bring the error and version from the panel’s *Logs* page to the QQ group (QR below), or open a [GitHub issue](https://github.com/aureth-labs/dsh-aurabot-qq/issues).
+Check the *Logs* page and run *Dependency check*. This project is in local development; there is no public issue tracker or group yet.
 </details>
 
 ## 🧑‍💻 Development
 
 ```bash
-git clone https://github.com/aureth-labs/dsh-aurabot-qq.git
-cd dsh-aurabot-qq
+cd /absolute/path/dsh-qq-soul
 npm test        # unit tests + end-to-end tests with a fake DSH host and a mock OneBot
 ```
 
@@ -201,27 +198,28 @@ Requires Node.js ≥ 22.13.0.
 
 Issues and PRs are welcome!
 
-- **Bug / feature request**: [open an issue](https://github.com/aureth-labs/dsh-aurabot-qq/issues) (please search first)
-- **Code**: [fork → PR](https://github.com/aureth-labs/dsh-aurabot-qq/pulls); include regression tests for fixes; modules belong in the [module repo](https://github.com/aureth-labs/dsh-aurabot-qq-mods)
+- Forked from `aureth-labs/dsh-aurabot-qq` v1.2.0 (MIT); see [NOTICE.md](NOTICE.md)
+- Include regression tests for fixes; gate: `npm test`
 - **Modules**: start with the [tutorial](docs/MODULE-TUTORIAL.md)
 - Contributors are credited in the changelog and PR history 💙
 
 ## 💬 Community
 
-QQ group (install help, usage, ideas — please include the error from the panel logs and your version):
+No public group during local development; use *Dependency check* and *Logs*.
 
-<div align="center">
-<img src="assets/qq-group.jpg" alt="QQ group QR code" width="240" />
-</div>
+## 🧰 Installer, service & self-check (P5 / P6)
 
-## 📈 Star history
+- `python3 -m services --serve` (Windows: `python -m services --serve`, run from the plugin repo) starts the single-port `127.0.0.1:9876` audio service — stdlib only, zero third-party dependencies, no bundled model weights. The plugin's *Overview → Audio service* card shows the exact command with your local plugin path and a copy button.
+- The service keeps its own config, model paths and cover cache under `~/.dsh/plugins-data/qqsoul/service/` (`%USERPROFILE%\.dsh\plugins-data\qqsoul\service\` on Windows), separate from the plugin's `aurabot` data directory.
+- `npm run package:verify` / `npm run package` enforce the distribution gate (<5 MB, zero weights, no upstream callbacks, licences present) and produce `dist/dsh-qq-soul/` with a per-file sha256 manifest.
+- `/install/plan`, `/install/check`, `/install/paths` drive the six-step dual-platform installer; macOS reuses an existing Applio environment and never auto-installs torch.
+- The plugin is a **forward WebSocket client**: it connects to `wsUrl`, does not listen on any port and does not launch the gateway. `/gateway/report` accepts redacted status only; `/selfcheck` runs five steps (service → deps → gateway → tts → song).
+- Tools/skills grouping, Markdown skill loader, token accounting and the unified 7-day timeline are exposed through `/panel/ops/*`.
+- See [USER-MANUAL.md](docs/USER-MANUAL.md) for the 10-minute walkthrough.
 
-<a href="https://www.star-history.com/?repos=aureth-labs%2Fdsh-aurabot-qq&type=date&legend=top-left">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=aureth-labs/dsh-aurabot-qq&type=date&theme=dark&legend=top-left" />
-    <img alt="Star history" src="https://api.star-history.com/svg?repos=aureth-labs/dsh-aurabot-qq&type=date&legend=top-left" />
-  </picture>
-</a>
+## 📈 Roadmap
+
+Local development first; origin and release notes come later.
 
 ## 📄 License & acknowledgements
 
@@ -229,4 +227,4 @@ QQ group (install help, usage, ideas — please include the error from the panel
 
 Inspired by lessons from [Yuuyuko-uu](https://github.com/Yuuyuko-uu)’s dsh-qq-bridge, dsh-speak-up, dsh-feiyu-mood and dsh-fish-memory plugins (MIT) about the DSH plugin mechanism — no code was copied. Thanks to every contributor, module author, and everyone in the group who keeps tinkering with us.
 
-<div align="center"><sub>Made with 🐟 by the Aurabot community</sub></div>
+<div align="center"><sub>Made with 🐟 · QQ Soul · based on an MIT-licensed open-source project</sub></div>

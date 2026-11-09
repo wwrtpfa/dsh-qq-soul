@@ -100,7 +100,7 @@ export function createBridge({ ctx, getConfig, setConfig, hub, mods, log, versio
     return [
       defineTool({
         name: 'aurabot_qq_send',
-        description: '让 QQ 上的「大肥鱼」（Aurabot 插件里的 AI 伙伴）替你发一条 QQ 消息。target 写 private:QQ号 或 group:群号，不填就发给主人。text 是要发的话，可以用 ||| 分多条、<voice>…</voice> 发语音。',
+        description: '让 QQ 上的「大肥鱼」替你发一条 QQ 消息。target 写 private:QQ号 或 group:群号，不填就发给主人。text 是要发的话，可以用 ||| 分多条、<voice>…</voice> 发语音。',
         properties: { target: str('private:QQ号 / group:群号，可不填（发给主人）'), text: str('要发的话') },
         required: ['text'],
         execute: async (args) => ops.send(args),
@@ -204,6 +204,6 @@ function examples(base, token) {
     powershell: `Invoke-RestMethod -Method Post -Uri ${base}/aurabot/api/open/send -Headers @{Authorization='Bearer ${t}'} -ContentType 'application/json' -Body '{"text":"下班啦"}'`,
     python: `import requests\nrequests.post("${base}/aurabot/api/open/send", headers={"Authorization": "Bearer ${t}"}, json={"text": "下班啦"})`,
     // 不写进 inject：写了就变成「没装 Aurabot 这个插件就不启动」；用的时候再 ctx.get
-    plugin: `// 别的 DSH 插件里\nexport function apply(ctx) {\n  // 用的时候再拿（Aurabot 没装 / 没启动时是 undefined）\n  ctx.get('aurabot')?.send({ text: '构建完成啦' })\n}`,
+    plugin: `// 别的 DSH 插件里\nexport function apply(ctx) {\n  // 用的时候再拿（插件没装 / 没启动时是 undefined）\n  ctx.get('aurabot')?.send({ text: '构建完成啦' })\n}`,
   }
 }

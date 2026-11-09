@@ -79,9 +79,30 @@ export function deletePersona(id) {
 }
 
 /** 当前人格正文；找不到就退回第一个，再不行给一句兜底，保证提示词变量永远有值。 */
-export function currentPersonaText(currentId) {
+export function currentPersonaText(currentId, muted = []) {
   const p = readPersona(currentId) || (listPersonas()[0] && readPersona(listPersonas()[0].id))
-  return p ? p.body : '你是「大肥鱼」，一个住在 QQ 里、说话简短口语化的女孩子。'
+  const body = p ? p.body : '你是「大肥鱼」，一个住在 QQ 里、说话简短口语化的女孩子。'
+  return filterPersonaText(body, muted)
+}
+
+const SECTION_HEAD = /^【([^】\n]{1,30})】\s*$/
+
+/**
+ * 按分节开关裁人格正文：关掉的【节】整段不发给模型。
+ * 开场白（第一节标题之前）始终保留；标题按去掉零宽字符后比较，和面板分节同一套规则。
+ */
+export function filterPersonaText(body, muted = []) {
+  const text = String(body || '').replace(/\r\n/g, '\n')
+  const off = new Set((Array.isArray(muted) ? muted : []).map((x) => String(x || '').replace(/[​-‍﻿]/g, '').trim()).filter(Boolean))
+  if (!off.size) return text.trim()
+  const out = []
+  let drop = false
+  for (const line of text.split('\n')) {
+    const m = SECTION_HEAD.exec(line.replace(/[​-‍﻿]/g, '').trim())
+    if (m) drop = off.has(m[1].trim())
+    if (!drop) out.push(line)
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 /** Aurabot 自己的规则（输出格式、安全边界），拼在人格后面。 */

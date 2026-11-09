@@ -13,7 +13,7 @@ export default {
   version: '1.0.0',
   description: '画一张图发到聊天里（qq_draw_image）',
   tab: 'imagegen',
-  files: ['features/imagegen.js', 'features/image-shape.js', 'features/paintings.js', 'features/codex-auth.js', 'features/codex-image.js'],
+  files: ['features/imagegen.js', 'features/image-shape.js', 'features/paintings.js', 'features/codex-auth.js', 'features/codex-image.js', 'features/api-image.js'],
   setup(api) {
     const { hub, local } = api.core
     const memory = api.lazy('memory')
@@ -34,6 +34,15 @@ export default {
     }))
     api.route('/image/codex/cancel', accountAction(async () => ({ ok: true, ...auth.cancelLogin('已取消') })))
     api.route('/image/codex/logout', accountAction(async () => ({ ok: true, ...auth.logout() })))
+    // 本地 api-image：只读 Codex 配置的脱敏摘要；密钥不经过面板。
+    api.route('/image/api-image/status', async (req) => {
+      const ig = api.config().imageGen
+      const q = api.core.http.query(req)
+      // 面板把草稿里的目录带过来：没保存也能先检测；显式空值 = 用默认目录。
+      return gen.apiImage.status(Object.hasOwn(q, 'codexHome')
+        ? { ...ig, apiImage: { ...(ig.apiImage || {}), codexHome: q.codexHome } }
+        : ig)
+    })
 
     // 她的画作：面板底下的图库（直接读存图目录，可以单张删、开文件夹）
     api.route('/image/gallery', async (req) => {
@@ -52,6 +61,29 @@ export default {
       return removePainting(String((b && b.file) || ''))
     })
     api.route('/image/open-folder', async () => openPaintFolder())
+
+    // 面板自测：用当前已保存的配置画一张，只回面板预览，不发 QQ、不进图库。
+    api.route('/image/test', async (req) => {
+      if (req.method !== 'POST') return { ok: false, message: '测试生图需要 POST 请求' }
+      const b = await api.core.http.body(req).catch(() => ({}))
+      const prompt = String((b && b.prompt) || '').trim().slice(0, 500) || '一只圆滚滚的大飞鱼，蓝色，圆眼睛，开心，干净背景'
+      const shape = ['square', 'portrait', 'landscape', 'wide'].includes(b && b.shape) ? b.shape : 'square'
+      const startedAt = Date.now()
+      try {
+        const buf = await gen.generate(prompt, { shape })
+        const mime = String(mimeOf(buf) || 'image/png')
+        return {
+          ok: true,
+          prompt,
+          shape,
+          bytes: buf.length,
+          elapsedMs: Date.now() - startedAt,
+          dataUrl: `data:${mime};base64,${buf.toString('base64')}`,
+        }
+      } catch (error) {
+        return { ok: false, message: error.message, elapsedMs: Date.now() - startedAt }
+      }
+    })
 
     api.tool(({ chat, sessionId }) => (gen.enabled() && chat.kind !== 'system' ? defineTool({
       name: 'qq_draw_image',

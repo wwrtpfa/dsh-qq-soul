@@ -25,9 +25,10 @@ export const DEFAULTS = {
   subagentBackground: false,
   allow: { private: [], groups: [] }, // 主人永远能私聊，不用写进白名单
   // 用什么接 QQ：snowluma = 插件帮你管 SnowLuma（Windows）；onebot = 接你已有的 OneBot v11 机器人（NapCat、LLOneBot、Lagrange、Docker 里的 SnowLuma……），
-  // 这时只按下面 snowluma.httpUrl / wsUrl / token 去连，不启动、不注入任何东西
-  gateway: 'snowluma',
-  workspaceDir: '', // QQ 会话放在哪个文件夹（DSH 里的「Aurabot · QQ」工作区）；留空 = 默认（用户目录下 Aurabot\\qq-chats）
+  // 这时只按下面 snowluma.httpUrl / wsUrl / token 去连，不启动、不注入任何东西。
+  // 默认按平台给：SnowLuma 只有 Windows 有，macOS / Linux 默认走本机 NapCat（6700/6701）。
+  gateway: (typeof process !== 'undefined' && process.platform === 'win32') ? 'snowluma' : 'onebot',
+  workspaceDir: '', // QQ 会话放在哪个文件夹（DSH 里的「懂你的QQ大肥鱼」工作区）；留空 = 默认（用户目录下 qq-soul\\qq-chats）
   // 发文件（#52）：默认开但限制很多——她只能把 QQ 工作区（workspaceDir）和 dirs 里列的目录中的文件当文件发出去；
   // 单个文件有大小上限；主人私聊里能触发，群里只在主人开口那一轮能触发（可以发给白名单里的人和群）。日志里会记下发了什么。
   // imageByPath（#169）：本地图片先按路径直发，被网关明确拒绝才改用 base64；网关和 NapCat 没共享挂载时会自动回退。
@@ -44,8 +45,11 @@ export const DEFAULTS = {
   // 聊天回复/工具/审批/定时任务本身不变。offPeakHolidays 是中国法定节假日（北京时间日期 'YYYY-MM-DD'）。
   cost: { offPeak: false, offPeakHolidays: [] },
   update: { unstable: null }, // 订阅不稳定版本（beta、rc）；null = 没选过，按正在用的版本定
+  // 音频服务（127.0.0.1:9876）：说话 / 唱歌的唯一配置源。关着时语音走插件内置引擎、翻唱走旧版 studio。
+  // 双端（Web / 桌面）读的都是这一份；地址和 token 在概览页直接改，不用手编 config.json。
+  service: { enabled: false, url: 'http://127.0.0.1:9876', token: '' },
   snowluma: {
-    dir: 'C:\\Aurabot\\snowluma', // 主人自己下载解压到这里（EULA 不允许自动部署）
+    dir: 'C:\\qq-soul\\snowluma', // 主人自己下载解压到这里（EULA 不允许自动部署）
     autoStart: true, // 随 DSH 启动它（只启动主人已安装并同意过协议的副本）
     webuiPort: 5099,
     webuiPassword: '', // 插件自动生成并保存（第一次启动 SnowLuma 时）；用来调 /api/processes 只给机器人号注入
@@ -62,7 +66,7 @@ export const DEFAULTS = {
   merge: { enabled: true, waitSec: 2.5, maxSec: 8, groupWaitSec: 5, groupMaxSec: 15 }, // 连发合并：对方停顿 waitSec 秒再一起回，最多等 maxSec 秒；群里等得久一点，把一段话攒齐
   imageGen: {
     enabled: false,
-    provider: 'openai', // openai / custom；codex = 实验性订阅接法（需单独登录）
+    provider: 'openai', // openai / custom；codex = 实验性订阅接法（需单独登录）；apiimage = 本地 api-image（读 Codex 配置）
     baseUrl: '',
     apiKey: '',
     model: '',
@@ -77,14 +81,20 @@ export const DEFAULTS = {
     custom: { method: 'GET', url: '', bodyType: 'json', responsePath: '', params: [] },
     // 实验性订阅接法；登录令牌独立保存在数据目录，不进入配置。
     codex: { model: 'gpt-image-2', quality: 'auto', background: 'auto' },
+    // 本地 api-image：读 Codex 的 config.toml / auth.json；密钥不落这里。
+    apiImage: { codexHome: '', model: 'auto', quality: 'high' },
   },
-  persona: { current: 'dafeiyu' },
+  persona: { current: 'dafeiyu', mutedBy: {} }, // mutedBy[人格 id]：不注入上下文的【节】标题（省 token；开场白始终保留）
+  // 运行时开关：关掉的工具不挂给模型（面板「运行记录」里改），技能分组开关也存这里
+  ops: { toolsOff: [], switches: {} },
   // 主人私聊里问起群里的事：把最近 24 小时的群聊流水补进这一轮（默认关，开启前先把群加进白名单）
   group: { ...DEFAULT_GROUP_POLICY, overrides: {}, ownerBrief: { enabled: false, lines: 12, groups: [] } },
   // 按群头衔不回：勾选的群里，专属头衔正好是 title 的成员（一般是别的机器人）说话、戳她都不理。没勾群就不起作用
   titleFilter: { enabled: true, groups: [], title: '大肥鱼' },
   voice: {
     enabled: true,
+    // auto = 按内容决定（被要求 / 短回复概率）；text = 只发文字；voice = 只发语音；both = 同一条内容文字 + 语音都发
+    mode: 'auto',
     // auto = 先 edge-tts，不行用 Windows 语音；edge / windows / cosyvoice / gptsovits / http = 指定引擎（失败都会退回 Windows 语音）
     engine: 'auto',
     cosyvoice: { url: 'http://127.0.0.1:50000', mode: 'sft', spkId: '中文女', instruct: '', sampleRate: 22050 },
@@ -249,7 +259,7 @@ export const DEFAULTS = {
   }, // extractIdleMinutes 为 0 时关闭空闲提炼；手动记忆不受容量限制
   song: {
     enabled: false,
-    root: '', // 翻唱环境目录，留空 = 自动（老安装 C:\Aurabot\rvc，新安装在用户目录下）
+    root: '', // 翻唱环境目录，留空 = 自动（老安装 C:\qq-soul\rvc，新安装在用户目录下）
     voice: '', // 用哪个音色（models 目录里的 .pth 文件名），留空 = 第一个
     pitch: 0, // 默认变调（半音）；她点歌时会按原唱是男声还是女声自己定
     neteaseCookie: '', // 网易云 Cookie（MUSIC_U），下会员歌用
@@ -263,6 +273,13 @@ export const DEFAULTS = {
     pypiMirror: 'auto', // 安装时用的下载源：auto = 先测一下，官方源慢就用国内镜像；cn = 一直用国内镜像；off = 只用官方源
   },
   tabs: {}, // 面板记住的小偏好
+  // 资源目录：面板「目录与路径」统一管。留空 = 用默认位置（数据目录下的 refs / audio / models）
+  resources: {
+    refDirs: [], // 额外扫描的参考音频目录（本机已有的那些，只读）
+    modelDirs: [], // 额外扫描的模型目录（RVC / TTS，只读）
+    voiceOutDir: '', // 语音试听输出，留空 = 数据目录/audio
+    qqOutDir: '', // QQ 语音条实际落盘，留空 = ~/Downloads
+  },
   // 模块：内置的和数据目录 modules/ 里自己写的。{ 模块id: { enabled, useBuiltin } }，没写的算开着
   // useBuiltin：自己写了同名模块，但想先用回内置的
   modules: {},
@@ -360,6 +377,11 @@ export function normalize(raw) {
   const rawHolidays = Array.isArray(c.cost.offPeakHolidays) ? c.cost.offPeakHolidays : String(c.cost.offPeakHolidays || '').split(/[\n,，;；\s]+/)
   c.cost.offPeakHolidays = [...new Set(rawHolidays.map(dateKey).filter(Boolean))].sort().slice(0, 60)
   c.update = { unstable: typeof c.update?.unstable === 'boolean' ? c.update.unstable : null }
+  if (!isObj(c.service)) c.service = {}
+  c.service.enabled = bool(c.service.enabled, false)
+  c.service.url = String(c.service.url || '').trim().replace(/\/+$/, '') || 'http://127.0.0.1:9876'
+  if (!/^https?:\/\//i.test(c.service.url)) c.service.url = 'http://127.0.0.1:9876'
+  c.service.token = String(c.service.token || '').trim()
   c.files.enabled = bool(c.files.enabled, true)
   c.files.maxMB = num(c.files.maxMB, 50, 1, BIG)
   c.files.imageByPath = bool(c.files.imageByPath, true)
@@ -379,6 +401,7 @@ export function normalize(raw) {
   g.ownerBrief.enabled = bool(g.ownerBrief.enabled, false)
   g.ownerBrief.lines = num(g.ownerBrief.lines, 12, 1, BIG)
   g.ownerBrief.groups = qqList(g.ownerBrief.groups)
+  if (!['auto', 'text', 'voice', 'both'].includes(c.voice.mode)) c.voice.mode = 'auto'
   c.voice.autoChance = num(c.voice.autoChance, 0.15, 0, 1)
   c.voice.autoMaxChars = num(c.voice.autoMaxChars, 80, 1, BIG)
   c.voice.emojiSeparate = c.voice.emojiSeparate !== false
@@ -588,6 +611,17 @@ export function normalize(raw) {
   c.voice.rate = signed(pct ? Math.max(-50, Math.min(50, Number(pct[1]))) : 0, '%')
   const hz = /^([+-]?\d{1,3})\s*Hz$/i.exec(String(c.voice.pitch || '').trim())
   c.voice.pitch = signed(hz ? Math.max(-80, Math.min(80, Number(hz[1]))) : 0, 'Hz')
+  // 人格分节开关：每个 id 一组标题；开场白不在列表里，永远保留
+  c.persona.current = String(c.persona.current || 'dafeiyu').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'dafeiyu'
+  if (!isObj(c.persona.mutedBy)) c.persona.mutedBy = {}
+  c.persona.mutedBy = Object.fromEntries(Object.entries(c.persona.mutedBy)
+    .filter(([id]) => /^[a-zA-Z0-9_-]{1,40}$/.test(id))
+    .map(([id, list]) => [id, [...new Set((Array.isArray(list) ? list : [])
+      .map((x) => String(x || '').replace(/\s+/g, ' ').trim().slice(0, 30)).filter(Boolean))].slice(0, 60)]))
+  if (!isObj(c.ops)) c.ops = {}
+  if (!isObj(c.ops.switches)) c.ops.switches = {}
+  c.ops.toolsOff = [...new Set((Array.isArray(c.ops.toolsOff) ? c.ops.toolsOff : [])
+    .map((x) => String(x || '').trim().slice(0, 60)).filter(Boolean))].slice(0, 200)
   c.imageGen.enabled = bool(c.imageGen.enabled, false)
   c.imageGen.ownerOnly = bool(c.imageGen.ownerOnly, true)
   c.imageGen.seeOwn = bool(c.imageGen.seeOwn, true)
@@ -596,13 +630,18 @@ export function normalize(raw) {
   c.imageGen.galleryShown = Math.min(50, Math.max(1, Math.round(Number(c.imageGen.galleryShown) || 20)))
   c.imageGen.shape = ['her', 'square', 'portrait', 'landscape', 'wide'].includes(c.imageGen.shape) ? c.imageGen.shape : 'her'
 
-  // provider：custom = 自己填接口（GET/POST + 自定义参数），其它按 OpenAI 兼容
-  c.imageGen.provider = ['custom', 'codex'].includes(c.imageGen.provider) ? c.imageGen.provider : 'openai'
+  // provider：custom = 自己填接口（GET/POST + 自定义参数），apiimage = 读本地 Codex 配置，其它按 OpenAI 兼容
+  c.imageGen.provider = ['custom', 'codex', 'apiimage'].includes(c.imageGen.provider) ? c.imageGen.provider : 'openai'
   if (!isObj(c.imageGen.codex)) c.imageGen.codex = { ...DEFAULTS.imageGen.codex }
   const igx = c.imageGen.codex
   igx.model = ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'].includes(igx.model) ? igx.model : 'gpt-image-2'
   igx.quality = ['auto', 'low', 'medium', 'high', 'xhigh', 'max'].includes(igx.quality) ? igx.quality : 'auto'
   igx.background = ['auto', 'transparent', 'opaque'].includes(igx.background) ? igx.background : 'auto'
+  if (!isObj(c.imageGen.apiImage)) c.imageGen.apiImage = { ...DEFAULTS.imageGen.apiImage }
+  const iga = c.imageGen.apiImage
+  iga.codexHome = String(iga.codexHome || '').trim().slice(0, 1024)
+  iga.model = String(iga.model || '').trim().slice(0, 80) || 'auto'
+  iga.quality = ['low', 'medium', 'high', 'auto'].includes(iga.quality) ? iga.quality : 'high'
   if (!c.imageGen.custom || typeof c.imageGen.custom !== 'object') c.imageGen.custom = { ...DEFAULTS.imageGen.custom }
   const igc = c.imageGen.custom
   igc.method = String(igc.method || 'GET').toUpperCase() === 'POST' ? 'POST' : 'GET'
@@ -613,6 +652,15 @@ export function normalize(raw) {
     .map((p) => ({ key: String((p && p.key) || '').trim().slice(0, 60), value: String(p && p.value != null ? p.value : '').slice(0, 500) }))
     .filter((p) => p.key)
     .slice(0, 30)
+
+  // 资源目录：数组去重、路径去空白；两个输出目录留空就用默认位置
+  if (!isObj(c.resources)) c.resources = { ...DEFAULTS.resources }
+  const dirList = (v) => (Array.isArray(v) ? v : String(v || '').split(/[\n,，]+/))
+    .map((s) => String(s || '').trim()).filter(Boolean).slice(0, 20)
+  c.resources.refDirs = dirList(c.resources.refDirs)
+  c.resources.modelDirs = dirList(c.resources.modelDirs)
+  c.resources.voiceOutDir = String(c.resources.voiceOutDir || '').trim()
+  c.resources.qqOutDir = String(c.resources.qqOutDir || '').trim()
 
   c.song.enabled = bool(c.song.enabled, false)
   c.song.ownerOnly = bool(c.song.ownerOnly, true)

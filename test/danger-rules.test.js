@@ -174,7 +174,7 @@ test('safeOwnedSession：判断不出来按 owned=true（fail-closed），只有
   assert.equal(d.kind, 'deny', '认不出会话也必须 fail-closed 拦下，不能静默放行')
 })
 
-test('Aurabot 模块目录：变量路径删除、移动、重命名都要确认，只读不误伤', () => {
+test('插件模块目录：变量路径删除、移动、重命名都要确认，只读不误伤', () => {
   const base = "$m='C:\\Users\\Administrator\\AppData\\Roaming\\dsh-desktop\\harness\\plugins-data\\aurabot\\modules'; "
   const dangerous = [
     base + 'Get-ChildItem $m -Directory -Force | Remove-Item -Recurse -Force',
@@ -184,7 +184,7 @@ test('Aurabot 模块目录：变量路径删除、移动、重命名都要确认
     "Remove-Item -Recurse -Force 'C:\\Users\\Administrator\\AppData\\Roaming\\dsh-desktop\\harness\\plugins-data\\aurabot\\modules-data'",
   ]
   for (const cmd of dangerous) {
-    assert.equal(isDangerousCommand(cmd)?.label, '删除/移动 Aurabot 模块目录', '应拦：' + cmd.slice(-80))
+    assert.equal(isDangerousCommand(cmd)?.label, '删除/移动插件模块目录', '应拦：' + cmd.slice(-80))
   }
   for (const cmd of [
     base + 'Get-ChildItem $m -Directory -Force | Measure-Object',

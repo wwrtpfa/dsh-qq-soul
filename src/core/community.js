@@ -1,4 +1,8 @@
-// 社区模块：从 dsh-aurabot-qq-mods 仓库的索引下载、校验、安装、更新、卸载模块。
+// 社区模块：从可选 registry 索引下载、校验、安装、更新、卸载模块。
+//
+// 本项目（懂你的QQ大肥鱼）默认**关闭**社区市场：REGISTRY_URL 为空，不回连上游 mods 仓库。
+// 想启用时，通过 QQSOUL_REGISTRY_URL 指定自己的索引（格式见上游 docs/MODULE_SPEC.md），
+// 或在 createCommunity 里显式传 registryUrl；两者都为空时所有网络操作直接短路。
 //
 // 规则见 mods 仓库的 docs/MODULE_SPEC.md「插件端要遵守的约定」：
 // - 下载后先核对 sha256，zip 里的路径不合法就整包拒绝
@@ -15,7 +19,9 @@ import { inflateRawSync, crc32 } from 'node:zlib'
 import { dataDir } from './store.js'
 import { API_VERSION, builtinDir, userDir } from './modules.js'
 
-export const REGISTRY_URL = 'https://raw.githubusercontent.com/aureth-labs/dsh-aurabot-qq-mods/registry/index.json'
+// 默认关闭：不指向上游 mods 仓库，也不自动下载任何模块。
+// 需要自建市场时用 QQSOUL_REGISTRY_URL 指向自己的 index.json。
+export const REGISTRY_URL = ''
 export const SOURCE_FILE = '.aurabot-source.json'
 const MAX_ZIP_BYTES = 25 * 1024 * 1024
 const MAX_FILE_BYTES = 64 * 1024 * 1024
@@ -109,8 +115,9 @@ function safeName(name) {
   return name.split('/').every((seg) => seg && seg !== '.' && seg !== '..')
 }
 
-export function createCommunity({ mods, getConfig, setConfig, log, version, alive = () => true, registryUrl = process.env.AURABOT_REGISTRY_URL || REGISTRY_URL, fetcher = fetch, retryMs = RETRY_MS }) {
+export function createCommunity({ mods, getConfig, setConfig, log, version, alive = () => true, registryUrl = process.env.QQSOUL_REGISTRY_URL || process.env.AURABOT_REGISTRY_URL || REGISTRY_URL, fetcher = fetch, retryMs = RETRY_MS }) {
   const dirOf = (id) => join(userDir(), id)
+  const enabled = Boolean(registryUrl) // 未配置 registry：整个社区市场离线，不回连任何远端
   let cache = null // { at, index }
   let busy = null // 同一时间只跑一个安装 / 卸载
   let progress = null // 安装中：{ id, name, stage: 'index' | 'download' | 'install' | 'start', received, total }
@@ -121,6 +128,8 @@ export function createCommunity({ mods, getConfig, setConfig, log, version, aliv
   const hasFolder = (id) => existsSync(dirOf(id))
 
   async function loadIndex({ force = false } = {}) {
+    // 未配置 registry：返回空索引，杜绝任何 fetch / 自动装回上游模块（含 douyin、pet）。
+    if (!enabled) return { schema: 1, modules: [], revoked: [], generatedAt: '' }
     if (!force && cache && Date.now() - cache.at < INDEX_TTL) return cache.index
     const index = await withRetry(async () => {
       const r = await fetcher(registryUrl, { signal: AbortSignal.timeout(20_000), cache: 'no-store' })
@@ -264,6 +273,7 @@ export function createCommunity({ mods, getConfig, setConfig, log, version, aliv
 
   /** 升级后把搬走的模块自动装回来：每个 id 只成功处理一次，失败下次启动重试。 */
   async function migrate() {
+    if (!enabled) return [] // 离线模式不自动装回任何上游社区模块
     const done = { ...(getConfig().communityMigrated || {}) }
     const result = []
     for (const [id, inUse] of Object.entries(MOVED)) {

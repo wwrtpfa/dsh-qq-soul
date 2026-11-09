@@ -374,7 +374,8 @@ test('#6 头像来源：显式网址直接给网关；「刚才那张」和「�
 
 test('#28 QQ 网关：默认 SnowLuma；接自己的 OneBot 机器人时用 onebot；乱填的回到 SnowLuma', async () => {
   const { normalize } = await import('../src/core/config.js')
-  assert.equal(normalize({}).gateway, 'snowluma')
+  // 默认网关跟平台走：Windows 用 SnowLuma 整包，macOS / Linux 直接连本机 NapCat
+  assert.equal(normalize({}).gateway, process.platform === 'win32' ? 'snowluma' : 'onebot')
   assert.equal(normalize({ gateway: 'onebot', snowluma: { wsUrl: 'ws://napcat:3001' } }).gateway, 'onebot')
   assert.equal(normalize({ gateway: 'onebot', snowluma: { wsUrl: 'ws://napcat:3001' } }).snowluma.wsUrl, 'ws://napcat:3001')
   assert.equal(normalize({ gateway: 'whatever' }).gateway, 'snowluma')

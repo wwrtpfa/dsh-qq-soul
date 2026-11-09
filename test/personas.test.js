@@ -24,3 +24,15 @@ test('persona 数据目录不可写时 seed/list 不抛错，当前人格有兜�
     rmSync(home, { recursive: true, force: true })
   }
 })
+
+test('人格分节开关：关掉的【节】整段不进上下文，开场白始终保留', async () => {
+  const { filterPersonaText } = await import('../src/persona/personas.js')
+  const body = '你是大肥鱼。\n\n【你的样子】\n- 圆圆的\n\n【你的生活】\n- 爱吃鱼\n\n【记忆】\n- 记得住'
+  assert.equal(filterPersonaText(body, []), body)
+  const out = filterPersonaText(body, ['你的生活'])
+  assert.match(out, /你是大肥鱼/)
+  assert.match(out, /【你的样子】/)
+  assert.doesNotMatch(out, /爱吃鱼/)
+  assert.match(out, /【记忆】/)
+  assert.match(filterPersonaText(body, ['不存在的节']), /爱吃鱼/)
+})

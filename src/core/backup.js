@@ -224,7 +224,7 @@ export async function stageRestore(path) {
   try {
     const entries = await readEntries(fh, size)
     const head = entries.find((e) => e.name === MANIFEST)
-    if (!head) throw new Error('这不是 Aurabot 的备份文件')
+    if (!head) throw new Error('这不是 懂你的QQ大肥鱼 的备份文件')
     const manifest = JSON.parse((await readEntry(fh, head)).toString('utf8'))
     if (manifest.schema !== SCHEMA || manifest.app !== 'aurabot') throw new Error('这个备份的格式认不出来，先更新插件')
     await rm(stage, { recursive: true, force: true })

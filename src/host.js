@@ -1,7 +1,7 @@
-// Aurabot · 宿主半边（DSH 插件入口）
+// 懂你的QQ大肥鱼 · 宿主半边（DSH 插件入口）
 //
 // 让 DSH 里的 AI 以独立 QQ 号「大肥鱼」住在 QQ 里：
-//   SnowLuma（OneBot v11）⇄ 本插件 ⇄ DSH 会话（Aurabot 自带的 preset + 人格）
+//   NapCat / SnowLuma（OneBot v11）⇄ 本插件 ⇄ DSH 会话（插件自带的 preset + 人格）
 // 面板在侧栏「自动化任务」下面（网页半边见 client/client.js），这里提供它要的 /aurabot/api/* 接口。
 //
 // 这个文件只管「核心」：配置、QQ 网关、聊天中枢、人格、面板接口、模块内核和联动。
@@ -12,7 +12,8 @@
 import { readFileSync, existsSync, writeFileSync, unlinkSync, statSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawn } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
+import net from 'node:net'
 import { loadConfig, saveConfig, publicConfig, mergeFromPanel } from './core/config.js'
 import { createLogger } from './core/logger.js'
 import { registerSecret, redact } from './core/redact.js'
@@ -38,6 +39,10 @@ import { createBridge } from './core/bridge.js'
 import { createDangerGuard, safeOwnedSession } from './security/danger.js'
 import { setSsrpMode, assertPublicUrl, fetchGuarded } from './core/net.js'
 import { BUILTINS } from './modules/index.js'
+import { probeUpstream } from './installer/probe.js'
+import { diagnose, applyFix, portOfUrl, napCatFlag, platformOf, DEFAULT_WS_PORT } from './setup/doctor.js'
+import { createOpsStore } from './features/ops-store.js'
+import { registerResourceRoutes } from './resources/routes.js'
 
 export const name = 'aurabot'
 export const inject = ['agents', 'sessions', 'webServer', 'timer', 'workspaceRegistry', 'attachments', 'systemPrompt', 'llm']
@@ -50,7 +55,7 @@ const VERSION = PKG.version
 const PREFIX = '/aurabot/api'
 
 /**
- * 这个 DSH 会话是不是 Aurabot 的 QQ 聊天会话（私聊/群聊各对应一个 DSH 会话）。
+ * 这个 DSH 会话是不是插件的 QQ 聊天会话（私聊/群聊各对应一个 DSH 会话）。
  * 桌宠的干活状态只该跟 DSH 自己发起的活儿走，聊天回合不算（#184：每句聊天都弹完工气泡太吵）。
  */
 export function isChatSession(hub, session) {
@@ -88,12 +93,12 @@ export function apply(ctx) {
   secrets()
   seedPersonas()
 
-  // ---------- 人格与规则：通过提示词变量注入到 Aurabot 的两个 preset ----------
+  // ---------- 人格与规则：通过提示词变量注入到插件的两个 preset ----------
   const variable = (n, fn) => ctx.effect(() => ctx.systemPrompt.variable(n, (...args) => captureSystemPrompt(n, cleanText(fn(...args)))), `aurabot: 变量 ${n}`)
   const rulesOpts = (kind) => (mods ? { off: mods.builtinOff(), extra: mods.rules(kind) } : {})
   // 扩展模块能整段改写人格和规则（同步：提示词变量不能等）
   const rewrite = (event, text, ...args) => { const r = mods ? mods.filterSync(event, text, ...args) : text; return typeof r === 'string' ? r : r === null ? '' : text }
-  variable('aurabot_persona', () => rewrite('persona', currentPersonaText(cfg.persona.current)))
+  variable('aurabot_persona', () => rewrite('persona', currentPersonaText(cfg.persona.current, cfg.persona.mutedBy?.[cfg.persona.current])))
   variable('aurabot_rules_private', () => {
     const base = rewrite('rules', rulesText('private', cfg, rulesOpts('private')), 'private')
     // 危险命令确认开着时补一句：被拦下要如实告诉主人，别绕着写
@@ -113,10 +118,14 @@ export function apply(ctx) {
   const endpoint = () => {
     const s = cfg.snowluma
     // 接自己的 OneBot 时只认填的地址；用 SnowLuma 时没填的从它的配置里读
-    const auto = cfg.gateway === 'onebot' || (s.httpUrl && s.wsUrl) ? null : snowluma.endpoint()
+    const auto = snowluma.endpoint() || null
+    // 本机 NapCat：一格都没填、也没有可用的 SnowLuma 地址时，直接按本机默认端口连。
+    // 之前这里要求 gateway === 'onebot'，可默认值是 snowluma（Windows 专用），
+    // 结果 macOS 上从没配过的人永远停在 unconfigured，QQ 一直连不上（2026-11-09 的真实故障）。
+    const local = !s.wsUrl && !auto?.wsUrl
     return {
-      httpUrl: s.httpUrl || auto?.httpUrl || '',
-      wsUrl: s.wsUrl || auto?.wsUrl || '',
+      httpUrl: s.httpUrl || auto?.httpUrl || (local ? 'http://127.0.0.1:6701' : ''),
+      wsUrl: s.wsUrl || auto?.wsUrl || (local ? 'ws://127.0.0.1:6700' : ''),
       httpToken: s.httpToken || auto?.httpToken || '',
       wsToken: s.wsToken || auto?.wsToken || '',
     }
@@ -510,13 +519,18 @@ export function apply(ctx) {
     listModels,
     defaultModel: () => defaultModel(ctx, { model: {} }),
     http: { body: readBody, raw: readRaw, query, send },
-    personas: { list: listPersonas, read: readPersona, current: () => currentPersonaText(cfg.persona.current) },
+    personas: { list: listPersonas, read: readPersona, current: () => currentPersonaText(cfg.persona.current, cfg.persona.mutedBy?.[cfg.persona.current]) },
     getConfig, setConfig,
   }
   mods = createModules({ ctx, core, getConfig, setConfig, logger, version: VERSION, builtins: BUILTINS })
   bridge = createBridge({ ctx, getConfig, setConfig, hub, mods, log: logger.child('bridge'), version: VERSION, apiVersion: API_VERSION, overview: () => overview() })
   core.bridge = bridge
   core.modules = mods
+  // 决策 21–24：技能分组 / Markdown Skill / Token 统计 / 统一时间线的运行时装配。
+  // 统一时间线自动接住 activity 事件（含消息正文），保留 7 天；写入走串行队列。
+  const ops = createOpsStore({ dir: join(dataDir(), 'ops'), keepDays: 7 })
+  mods.listen('activity', (a) => { ops.recordActivity(a) })
+  core.ops = ops
   // 危险命令确认（可选保护）：DSH 在真正执行终端工具前会走 tools/pre-execute；
   // 这里只拦 bash / pwsh 的危险命令，其它工具和普通命令原样放行。
   dangerGuard = createDangerGuard({
@@ -592,7 +606,7 @@ export function apply(ctx) {
   // ---------- 审批请求：DSH 要授权时把请求发到 QQ ----------
   // 说明：DSH 的批准动作只能由界面回答（host 拿不到应答通道），所以这里只做通知。
   const approvalSeen = new Map()
-  // 授权通知只看 Aurabot · QQ 工作区：既包括 hub 映射的聊天会话，也包括同一工作区里
+  // 授权通知只看「懂你的QQ大肥鱼」工作区：既包括 hub 映射的聊天会话，也包括同一工作区里
   // 主人手动打开 / 调试 / 新建的会话。别的 DSH 项目的会话一律不转到 QQ。
   function isAurabotWorkspaceSession(session) {
     if (!session?.id) return false
@@ -736,6 +750,11 @@ export function apply(ctx) {
       sessions: hub.sessions(),
       workspaceDir: workspaceDirOf(cfg),
       workspaceReal: realWorkspace(workspaceDirOf(cfg)),
+      // 配置 / 人格 / 记忆 / 时间线都在这里；面板「概览」直接给用户看
+      dataDir: dataDir(),
+      // 面板要给出「在哪个目录起音频服务」，别让用户自己猜仓库路径
+      pluginDir: ROOT,
+      platform: process.platform,
       personas: listPersonas(),
       modules: mods.status(),
       bridge: { dshTools: cfg.bridge.dshTools, http: cfg.bridge.http, hasToken: Boolean(cfg.bridge.token), tools: bridge.deniedTools(), toolsService: Boolean(ctx.get?.('tools')) },
@@ -780,6 +799,9 @@ export function apply(ctx) {
   const petStatus = () => redactTokens(use('pet')?.status?.() ?? null)
 
   route('/state', async () => overview())
+
+  // 资源库：目录 / 参考音频 / RVC 音色 / TTS 模型（面板「语音」「翻唱」「目录与路径」共用）
+  registerResourceRoutes({ route, getConfig, readBody, readRaw, query, send, log: logger.child('资源') })
 
   route('/save', async (req) => {
     const body = await readBody(req)
@@ -1214,6 +1236,101 @@ export function apply(ctx) {
     }
     return r
   })
+  // §7.1：向导打开时先查上游插件是否还装着（同挂载 ID / 同数据目录会双份回复）
+  route('/setup/upstream-check', async () => ({ ok: true, ...probeUpstream() }))
+
+  // ---------- 连接体检 / 一键修复（向导第 2 步与「连接」页共用） ----------
+  // 用户装完插件最常见的卡点不是配置填错，而是「链路里有一环没装/方向反了」：
+  // QQ 没开、NapCat 没装、NapCat 只配了反向连接（和本插件同为客户端，没人监听）。
+  // 这里把每一环摊开给人看，能自动补的直接补（改 NapCat 配置 + 回填插件地址）。
+  const portOpen = (port, timeoutMs = 400) => new Promise((resolve) => {
+    let done = false
+    const sock = net.connect({ host: '127.0.0.1', port: Number(port) || DEFAULT_WS_PORT })
+    const finish = (v) => { if (done) return; done = true; try { sock.destroy() } catch (error) {} resolve(v) }
+    sock.setTimeout(timeoutMs, () => finish(false))
+    sock.once('connect', () => finish(true))
+    sock.once('error', () => finish(false))
+  })
+  /** QQ 在不在跑：只有 macOS 有稳定的进程名可查，其它平台交给端口那一行判断。 */
+  const qqRunning = () => new Promise((resolve) => {
+    if (platformOf() !== 'mac') return resolve(null)
+    execFile('pgrep', ['-x', 'QQ'], (error, stdout) => resolve(!error && Boolean(String(stdout || '').trim())))
+  })
+  const doctorState = async () => {
+    const port = portOfUrl(endpoint().wsUrl)
+    return diagnose({ cfg: getConfig(), port, portOpen: await portOpen(port), qqRunning: await qqRunning() })
+  }
+  /** 带 NapCat 启动 QQ：放标记文件让 loadNapCat.js 进 NapCat 模式，再用 LaunchServices 启动。 */
+  const startQQApp = async () => {
+    if (platformOf() !== 'mac') return { ok: false, message: '只有 macOS 能一键启动；Windows 请从开始菜单启动 QQ（要带 NapCat 的启动器）' }
+    try { const flag = napCatFlag(); if (flag) writeFileSync(flag, '') } catch (error) { log.debug('写 NapCat 标记失败：', error.message) }
+    const r = await new Promise((resolve) => execFile('open', ['-a', 'QQ'], (error) => resolve(error)))
+    return r ? { ok: false, message: '启动 QQ 失败：' + r.message } : { ok: true, message: '正在启动 QQ（第一次要在 QQ 里登录机器人号）' }
+  }
+  route('/setup/doctor', async () => {
+    const state = await doctorState()
+    // ok 永远是「接口调通了」，链路健不健康看 healthy —— 否则 unhealthy 时前端会把整份体检当成失败丢掉
+    return { ...state, ok: true, healthy: state.ok }
+  })
+  route('/setup/start-qq', async () => startQQApp())
+  route('/setup/repair', async (req) => {
+    const body = await readBody(req)
+    const port = DEFAULT_WS_PORT
+    const fix = applyFix({ port })
+    const turnOn = body.start !== false
+    // 只回填「本机 NapCat」这一种；用户接的是 Docker / 别的机器时，地址保持原样
+    const keepRemote = Boolean(cfg.snowluma.wsUrl && !/^wss?:\/\/(127\.0\.0\.1|localhost|\[::1\])/i.test(cfg.snowluma.wsUrl))
+    const next = keepRemote ? cfg : {
+      ...cfg,
+      gateway: 'onebot',
+      enabled: turnOn ? true : cfg.enabled,
+      snowluma: { ...cfg.snowluma, wsUrl: fix.wsUrl || `ws://127.0.0.1:${port}`, httpUrl: fix.httpUrl || `http://127.0.0.1:${port + 1}` },
+    }
+    if (next !== cfg) {
+      setConfig(next)
+      // 地址变了必须重连，否则面板还显示旧状态
+      wrongAccount = ''
+      onebot.restart()
+    }
+    if (body.startQQ) await startQQApp()
+    for (let i = 0; i < 16 && !(onebotState === 'connected' && loginOk); i++) await new Promise((r) => setTimeout(r, 500))
+    const connected = onebotState === 'connected' && loginOk
+    const parts = []
+    if (fix.changed && fix.changed.length) parts.push(fix.message)
+    else if (fix.ok === false) parts.push(fix.message)
+    parts.push(connected ? 'QQ 已经连上，机器人号核对通过' : '还没连上：' + (await connectionProblem()))
+    log.info('连接体检修复：' + parts.join('；'))
+    const state = await doctorState()
+    return { ...state, ok: connected, healthy: state.ok, connected, message: parts.join('；') }
+  })
+  // 决策 21–24：面板「工具 / 技能」「Token」「统一时间线」三个只读入口
+  route('/panel/ops/skills', async () => {
+    const switches = cfg.ops?.switches || {}
+    const loaded = ops.skills()
+    return { ok: true, groups: ops.groups(mods.status(), switches), switches,
+             skills: loaded.items, errors: loaded.errors }
+  })
+  // 工具开关：关掉的工具不挂给模型（省上下文，也能临时关掉生图 / 群管这类能力）
+  const ownerChat = () => ({ chatId: 'private:sim', kind: 'private', userId: cfg.ownerQQ, nickname: cfg.ownerName || '主人' })
+  route('/panel/ops/tools', async (req) => {
+    if (req.method === 'POST') {
+      const b = await readBody(req)
+      setConfig({ ...cfg, ops: { ...(cfg.ops || {}), toolsOff: Array.isArray(b.off) ? b.off : [] } })
+    }
+    const off = new Set(cfg.ops?.toolsOff || [])
+    const list = mods.buildTools({ chat: ownerChat(), level: 'full', sessionId: 'sim' }, { includeOff: true })
+      .map((t) => ({ name: t.name, description: String(t.description || '').slice(0, 200), off: off.has(t.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    return { ok: true, list, off: [...off] }
+  })
+  route('/panel/ops/usage', async () => ({ ok: true, ...ops.usage.summary() }))
+  route('/panel/ops/timeline', async () => {
+    let memoryRows = [], songRows = []
+    try { const m = use('memory'); memoryRows = typeof m?.timeline === 'function' ? m.timeline({}) : [] } catch {}
+    try { const s = use('song'); songRows = s?.status?.()?.history || [] } catch {}
+    return { ok: true, keepDays: 7, list: ops.timeline.list(),
+             merged: ops.timeline.merge({ memory: memoryRows, song: songRows }) }
+  })
   route('/setup/done', async (req) => {
     const body = await readBody(req)
     if (!cfg.botQQ || !cfg.ownerQQ || cfg.botQQ === cfg.ownerQQ) return { ok: false, message: '先填好不同的机器人 QQ 和你的 QQ' }
@@ -1267,7 +1384,7 @@ export function apply(ctx) {
   route('/test-send', async () => {
     if (!cfg.enabled) return { ok: false, message: '先打开总开关' }
     if (cfg.dryRun) return { ok: false, message: '现在是试运行，先关掉试运行再测' }
-    const r = await hub.sendText(`private:${cfg.ownerQQ}`, '【Aurabot 自测】大肥鱼到此一游～')
+    const r = await hub.sendText(`private:${cfg.ownerQQ}`, '【懂你的QQ大肥鱼 自测】大肥鱼到此一游～')
     return r ? { ok: true, message: '发给主人了，去 QQ 看看' } : { ok: false, message: '没发出去（看日志）' }
   })
 
@@ -1296,9 +1413,17 @@ export function apply(ctx) {
   route('/persona/use', async (req) => {
     const b = await readBody(req)
     if (!readPersona(b.id)) return { ok: false, message: '没有这个人格' }
-    setConfig({ ...cfg, persona: { current: b.id } })
+    setConfig({ ...cfg, persona: { ...cfg.persona, current: b.id } })
     log.info(`切换人格 → ${b.id}`)
     return { ok: true, current: b.id, message: '切换好了，下一轮回复起生效' }
+  })
+  // 每一节是否注入上下文：只存标题，开场白永远保留
+  route('/persona/mute', async (req) => {
+    const b = await readBody(req)
+    const id = String(b.id || cfg.persona.current)
+    if (!readPersona(id)) return { ok: false, message: '没有这个人格' }
+    setConfig({ ...cfg, persona: { ...cfg.persona, mutedBy: { ...(cfg.persona.mutedBy || {}), [id]: Array.isArray(b.muted) ? b.muted : [] } } })
+    return { ok: true, muted: cfg.persona.mutedBy?.[id] || [], message: '下一轮起按新的分节发了' }
   })
   // 人格页「AI 润色」：只改面板上这一节的文字，不保存；用不用由主人在面板里选
   route('/persona/polish', async (req) => {
@@ -1575,7 +1700,7 @@ export function apply(ctx) {
     }
   })
 
-  log.info(`Aurabot v${VERSION} 已加载｜总开关 ${cfg.enabled ? '开' : '关'}｜试运行 ${cfg.dryRun ? '开' : '关'}｜工作区 ${workspaceDirOf(cfg)}`)
+  log.info(`懂你的QQ大肥鱼 v${VERSION} 已加载｜总开关 ${cfg.enabled ? '开' : '关'}｜试运行 ${cfg.dryRun ? '开' : '关'}｜工作区 ${workspaceDirOf(cfg)}`)
 
   return {
     hub, onebot, snowluma, getConfig, setConfig, logger, modules: mods, bridge, ready: booted,

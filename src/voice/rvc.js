@@ -7,24 +7,26 @@
  * @param {() => object} deps.getConfig 插件配置
  * @param {() => object | null} deps.getSong 拿翻唱模块（api.use('song')）
  * @param {(sub: string) => string} deps.dataDir 插件数据目录
+ * @param {(file: string, opts: object) => Promise<string>} [deps.convert] 自定义变声（service 模式）
  * @param {object} [deps.log]
  * @returns {(file: string) => Promise<string>} TTS 后处理：输入音频文件，返回（可能变声后的）文件
  */
-export function createSongVoice({ getConfig, getSong, dataDir, log } = {}) {
+export function createSongVoice({ getConfig, getSong, dataDir, convert, log } = {}) {
   return async function convertSpeech(file) {
     const c = (getConfig().voice) || {}
     if (!c.songVoice) return file // 没选音色：用 TTS 原声
     const song = getSong && getSong()
-    if (!song || typeof song.convertSpeech !== 'function') {
+    if (!convert && (!song || typeof song.convertSpeech !== 'function')) {
       log?.debug?.('翻唱模块没在跑，语音条不变声')
       return file
     }
     try {
-      const out = await song.convertSpeech(file, {
+      const opts = {
         voice: String(c.songVoice),
         pitch: Number(c.songPitch) || 0,
         outDir: dataDir('voice-rvc'),
-      })
+      }
+      const out = convert ? await convert(file, opts) : await song.convertSpeech(file, opts)
       return out || file
     } catch (error) {
       // 失败由调用方统一兜底（tts.js 会保留原声并记日志），这里补一句更容易懂的提示

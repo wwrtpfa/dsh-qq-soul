@@ -1,38 +1,55 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-label="Aurabot · 大肥鱼">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-label="懂你的QQ大肥鱼 · 大肥鱼">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#12141c"/>
-      <stop offset="0.55" stop-color="#1b2140"/>
-      <stop offset="1" stop-color="#233a6b"/>
+      <stop offset="0" stop-color="#060912"/>
+      <stop offset="0.55" stop-color="#101a33"/>
+      <stop offset="1" stop-color="#182b52"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0.72" cy="0.35" r="0.75">
-      <stop offset="0" stop-color="#6ea8ff" stop-opacity="0.38"/>
-      <stop offset="1" stop-color="#6ea8ff" stop-opacity="0"/>
+    <radialGradient id="glow" cx="0.76" cy="0.34" r="0.72">
+      <stop offset="0" stop-color="#4fd1c5" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#4fd1c5" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="sea" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#8fd3ff"/>
-      <stop offset="0.5" stop-color="#7ea9ff"/>
-      <stop offset="1" stop-color="#c39cff"/>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7ee8f5"/>
+      <stop offset="0.5" stop-color="#8fa8ff"/>
+      <stop offset="1" stop-color="#e6a6ff"/>
+    </linearGradient>
+    <linearGradient id="fish" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8fe3ff"/>
+      <stop offset="0.55" stop-color="#5f9df0"/>
+      <stop offset="1" stop-color="#a17ae8"/>
     </linearGradient>
   </defs>
   <rect width="1200" height="320" rx="18" fill="url(#bg)"/>
   <rect width="1200" height="320" rx="18" fill="url(#glow)"/>
-  <g opacity="0.16" fill="#ffffff">
-    <circle cx="1050" cy="70" r="3"/><circle cx="1110" cy="140" r="2"/><circle cx="980" cy="220" r="2.5"/>
-    <circle cx="1130" cy="250" r="2"/><circle cx="900" cy="60" r="2"/><circle cx="760" cy="250" r="2"/>
+  <g opacity="0.22" fill="#ffffff">
+    <circle cx="1050" cy="70" r="2.5"/><circle cx="1110" cy="140" r="1.8"/><circle cx="980" cy="220" r="2.2"/>
+    <circle cx="1130" cy="250" r="1.8"/><circle cx="900" cy="60" r="2"/><circle cx="760" cy="250" r="1.6"/>
+    <circle cx="1010" cy="290" r="1.5"/><circle cx="1160" cy="40" r="1.5"/>
   </g>
-  <path d="M880 250c40-34 76-50 120-52-18 14-26 30-26 46 0 16 8 30 24 44-38-2-70-14-94-38-8-8-16-14-24 0z" fill="url(#sea)" opacity="0.85"/>
-  <text x="64" y="132" fill="#ffffff" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif" font-size="64" font-weight="800" letter-spacing="1">Aurabot</text>
-  <text x="66" y="178" fill="url(#sea)" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif" font-size="26" font-weight="600" letter-spacing="4">大肥鱼 · 住在 QQ 里的 AI 伙伴</text>
-  <text x="66" y="220" fill="#9fb0d0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif" font-size="17" letter-spacing="2">DeepSeek Harness Plugin · QQ × SnowLuma (OneBot v11)</text>
-  <g transform="translate(66,258)">
-    <rect x="0" y="0" width="94" height="28" rx="14" fill="#ffffff14" stroke="#ffffff2e"/>
-    <text x="47" y="19" text-anchor="middle" fill="#cfd9ef" font-family="'Segoe UI','PingFang SC',sans-serif" font-size="13">人格 · 记忆</text>
-    <rect x="106" y="0" width="94" height="28" rx="14" fill="#ffffff14" stroke="#ffffff2e"/>
-    <text x="153" y="19" text-anchor="middle" fill="#cfd9ef" font-family="'Segoe UI','PingFang SC',sans-serif" font-size="13">语音 · 表情</text>
-    <rect x="212" y="0" width="110" height="28" rx="14" fill="#ffffff14" stroke="#ffffff2e"/>
-    <text x="267" y="19" text-anchor="middle" fill="#cfd9ef" font-family="'Segoe UI','PingFang SC',sans-serif" font-size="13">模块化扩展</text>
-    <rect x="334" y="0" width="94" height="28" rx="14" fill="#ffffff14" stroke="#ffffff2e"/>
-    <text x="381" y="19" text-anchor="middle" fill="#cfd9ef" font-family="'Segoe UI','PingFang SC',sans-serif" font-size="13">安全默认</text>
+  <!-- 自有飞鱼形象：圆润身体 + 上扬翅膀状胸鳍 + 分叉尾，纯路径绘制，不引用任何上游素材 -->
+  <g transform="translate(830,58) scale(1.05)">
+    <path d="M60 130 C95 78 172 62 236 92 C266 106 284 128 290 148 C262 143 240 146 222 160 C244 172 266 190 282 212 C232 226 152 222 104 194 C74 176 56 154 60 130 Z" fill="url(#fish)" opacity="0.95"/>
+    <path d="M150 92 C140 46 176 14 226 18 C204 44 200 72 214 96 Z" fill="#b7a4ff" opacity="0.9"/>
+    <path d="M96 170 C58 176 26 202 14 232 C56 224 84 210 108 194 Z" fill="#7ee8f5" opacity="0.72"/>
+    <path d="M282 150 C316 132 344 132 366 142 C348 156 330 166 306 170 Z" fill="#e6a6ff" opacity="0.8"/>
+    <circle cx="112" cy="128" r="8" fill="#06101f"/>
+    <circle cx="114" cy="125" r="2.6" fill="#ffffff"/>
+    <path d="M96 158 Q112 168 128 158" stroke="#0b1a30" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.6"/>
+    <circle cx="330" cy="60" r="3" fill="#7ee8f5" opacity="0.8"/>
+    <circle cx="352" cy="82" r="2" fill="#e6a6ff" opacity="0.8"/>
+  </g>
+  <text x="64" y="126" fill="#ffffff" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif" font-size="60" font-weight="800" letter-spacing="1">懂你的QQ大肥鱼</text>
+  <text x="66" y="172" fill="url(#ink)" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif" font-size="25" font-weight="600" letter-spacing="3">大肥鱼 · 住在 QQ 里的 AI 伙伴</text>
+  <text x="66" y="212" fill="#9fb0d0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif" font-size="16" letter-spacing="1.6">DeepSeek Harness Plugin · macOS / Windows · NapCat / SnowLuma (OneBot v11)</text>
+  <g transform="translate(66,250)">
+    <rect x="0" y="0" width="106" height="28" rx="14" fill="#7ee8f515" stroke="#7ee8f540"/>
+    <text x="53" y="19" text-anchor="middle" fill="#a8e9f2" font-family="'Segoe UI','PingFang SC',sans-serif" font-size="13">人格 · 记忆</text>
+    <rect x="118" y="0" width="106" height="28" rx="14" fill="#8fa8ff15" stroke="#8fa8ff40"/>
+    <text x="171" y="19" text-anchor="middle" fill="#bcc9ff" font-family="'Segoe UI','PingFang SC',sans-serif" font-size="13">说话 · 唱歌</text>
+    <rect x="236" y="0" width="118" height="28" rx="14" fill="#e6a6ff15" stroke="#e6a6ff40"/>
+    <text x="295" y="19" text-anchor="middle" fill="#e9c8ff" font-family="'Segoe UI','PingFang SC',sans-serif" font-size="13">模型自己加载</text>
+    <rect x="366" y="0" width="106" height="28" rx="14" fill="#4fd1c515" stroke="#4fd1c540"/>
+    <text x="419" y="19" text-anchor="middle" fill="#a5e8dd" font-family="'Segoe UI','PingFang SC',sans-serif" font-size="13">不预装权重</text>
   </g>
 </svg>

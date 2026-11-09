@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "note": "安装包不带任何权重。三档分发：零下载默认 / 按需轻量 / 纯手动导入。sha256 为占位值，下载时以实际文件校验为准。",
+  "items": [
+    {
+      "id": "edge-tts",
+      "kind": "tts",
+      "name": "edge-tts（微软在线）",
+      "tier": "zero-download",
+      "size": "约 1 MB",
+      "officialUrl": "https://pypi.org/project/edge-tts/",
+      "mirrors": ["https://pypi.tuna.tsinghua.edu.cn/simple/edge-tts/"],
+      "sha256": "verify-on-download",
+      "platforms": ["macOS", "Windows", "Linux"],
+      "required": false,
+      "importHint": "默认渠道， pip install edge-tts 到私有 venv 即可，无需任何权重"
+    },
+    {
+      "id": "breeze-remote",
+      "kind": "tts",
+      "name": "Breeze 远程 API",
+      "tier": "zero-download",
+      "size": "0",
+      "officialUrl": "https://api.breezeblue.ai/",
+      "mirrors": [],
+      "sha256": "not-applicable",
+      "platforms": ["macOS", "Windows", "Linux"],
+      "required": false,
+      "importHint": "只填 key，不下载模型"
+    },
+    {
+      "id": "ffmpeg",
+      "kind": "tool",
+      "name": "ffmpeg / ffprobe",
+      "tier": "on-demand",
+      "size": "约 80 MB",
+      "officialUrl": "https://ffmpeg.org/download.html",
+      "mirrors": ["https://formulae.brew.sh/formula/ffmpeg"],
+      "sha256": "verify-on-download",
+      "platforms": ["macOS", "Windows", "Linux"],
+      "required": false,
+      "importHint": "macOS: brew install ffmpeg；Windows: 下载后把路径填进设置"
+    },
+    {
+      "id": "demucs-htdemucs",
+      "kind": "separator",
+      "name": "demucs htdemucs 分离权重",
+      "tier": "on-demand",
+      "size": "约 320 MB",
+      "officialUrl": "https://github.com/adefossez/demucs",
+      "mirrors": ["https://hf-mirror.com/"],
+      "sha256": "verify-on-download",
+      "platforms": ["macOS", "Windows", "Linux"],
+      "required": false,
+      "importHint": "首次分离时按需下载；默认 htdemucs，BS-RoFormer 作高质量离线档"
+    },
+    {
+      "id": "rvc-contentvec",
+      "kind": "rvc",
+      "name": "contentvec / rmvpe 预训练权重",
+      "tier": "on-demand",
+      "size": "约 560 MB",
+      "officialUrl": "https://huggingface.co/IAHispano/Applio",
+      "mirrors": ["https://hf-mirror.com/IAHispano/Applio"],
+      "sha256": "verify-on-download",
+      "platforms": ["macOS", "Windows"],
+      "required": false,
+      "importHint": "放进 Applio 的 rvc/models 目录，依赖体检会逐文件确认"
+    },
+    {
+      "id": "qwen3-tts-mlx",
+      "kind": "tts",
+      "name": "千问 3-TTS MLX（0.6B 4bit）",
+      "tier": "manual",
+      "size": "约 488 MB",
+      "officialUrl": "https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit",
+      "mirrors": ["https://hf-mirror.com/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"],
+      "sha256": "verify-on-download",
+      "platforms": ["macOS"],
+      "required": false,
+      "importHint": "自己下载后，在「模型」页选目录加载；也可以连已经跑着的服务"
+    },
+    {
+      "id": "gpt-sovits",
+      "kind": "tts",
+      "name": "GPT-SoVITS 整包",
+      "tier": "manual",
+      "size": "约 7.7 GB",
+      "officialUrl": "https://github.com/RVC-Boss/GPT-SoVITS",
+      "mirrors": [],
+      "sha256": "verify-on-download",
+      "platforms": ["macOS", "Windows"],
+      "required": false,
+      "importHint": "自己装好后把服务地址填进设置；本插件只连接、不负责启动"
+    },
+    {
+      "id": "rvc-voice",
+      "kind": "rvc",
+      "name": "大肥鱼音色 .pth + .index",
+      "tier": "manual",
+      "size": "约 565 MB",
+      "officialUrl": "https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI",
+      "mirrors": [],
+      "sha256": "verify-on-download",
+      "platforms": ["macOS", "Windows"],
+      "required": false,
+      "importHint": "在「模型」页选目录加载，index_rate 可调"
+    },
+    {
+      "id": "applio",
+      "kind": "rvc",
+      "name": "Applio 引擎 + torch",
+      "tier": "manual",
+      "size": "约 2.0 GB",
+      "officialUrl": "https://github.com/IAHispano/Applio",
+      "mirrors": [],
+      "sha256": "verify-on-download",
+      "platforms": ["macOS", "Windows"],
+      "required": false,
+      "importHint": "Mac 首版只做检测 + 复用已装目录，不自动装 torch；Windows 沿用一键装"
+    }
+  ]
+}

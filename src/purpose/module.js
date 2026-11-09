@@ -197,7 +197,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
   function promptFor(cfg, config, selected, ctx, state, now = Date.now(), friend = '') {
     const name = friend ? friendName(friend) : cfg.ownerName || '主人'
     const prompt = buildPurposePrompt({
-      now, config, mode: 'auto', // 模型直接输出那句话（Aurabot 没有 QQ 发送工具）
+      now, config, mode: 'auto', // 模型直接输出那句话（此处没有 QQ 发送工具）
       ownerUin: friend || cfg.ownerQQ,
       ownerName: name,
       contextBlocks: [],

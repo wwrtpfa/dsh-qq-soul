@@ -53,12 +53,12 @@ const MENTION_WORDS = {
   '关闭/重启电脑': new Set(['shutdown', 'stop-computer', 'restart-computer', 'reboot', 'halt', 'poweroff']),
 }
 
-// Aurabot 自己的模块目录：变量赋值、管道删除、Move/Rename 都可能绕过
+// 插件自己的模块目录：变量赋值、管道删除、Move/Rename 都可能绕过
 // 「Remove-Item 后面必须跟绝对路径」的通用规则。只要同一条命令里同时出现
 // 受保护路径和删除/移动动作，就要求主人确认，宁可多问一次。
 const AURABOT_MODULES_PATH_RE = /plugins-data[\\/]+aurabot[\\/]+modules(?:-data)?(?:[\\/]|["'\s;]|$)/i
 const AURABOT_MODULES_ACTION_RE = /\b(?:Remove-Item|Move-Item|Rename-Item|rm|del|erase|rd|rmdir|mv|move|ren|rename)\b/i
-const AURABOT_MODULES_DANGER = '删除/移动 Aurabot 模块目录'
+const AURABOT_MODULES_DANGER = '删除/移动插件模块目录'
 function touchesAurabotModules (text) {
   return AURABOT_MODULES_PATH_RE.test(text) && AURABOT_MODULES_ACTION_RE.test(text)
 }

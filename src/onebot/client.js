@@ -33,8 +33,10 @@ const notConnected = (error) => ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOS
  * @param {(event: object) => void} o.onEvent
  * @param {(state: string, detail?: string) => void} [o.onState]
  * @param {{info:Function, warn:Function, debug:Function}} o.log
+ * @param {Function} [o.WebSocketImpl] 可注入的 WebSocket 构造（契约测试用来钉住「主动连」的正向语义）
  */
-export function createOneBotClient({ endpoint, onEvent, onState, log, retryDelays = RETRY_DELAYS }) {
+export function createOneBotClient({ endpoint, onEvent, onState, log, retryDelays = RETRY_DELAYS,
+  WebSocketImpl = globalThis.WebSocket }) {
   let ws = null
   let stopped = true
   let timer = null
@@ -153,7 +155,7 @@ export function createOneBotClient({ endpoint, onEvent, onState, log, retryDelay
     if (ep.wsToken) url += (url.includes('?') ? '&' : '?') + 'access_token=' + encodeURIComponent(ep.wsToken)
     let sock
     try {
-      sock = new WebSocket(url)
+      sock = new WebSocketImpl(url)
     } catch (error) {
       log.warn('WS 连接失败：', error.message)
       schedule()

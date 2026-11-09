@@ -1,28 +1,26 @@
 <div align="center">
 
-<img src="assets/banner.svg" alt="Aurabot · 大肥鱼" width="100%" />
+<img src="assets/banner.svg" alt="懂你的QQ大肥鱼 · 大肥鱼" width="100%" />
 
-**住在 QQ 里的 AI 伙伴「大肥鱼」· DeepSeek Harness 插件**
+**懂你的QQ大肥鱼 · 住在 QQ 里的 AI 伙伴「大肥鱼」· DeepSeek Harness 插件**
 
 有人格、有心情、有记忆；能聊天、看图、发语音、发表情、唱歌、写空间、刷 B 站，还会主动找你。
 
 [English](README_EN.md) · **简体中文**
 
-[![release](https://img.shields.io/github/v/release/aureth-labs/dsh-aurabot-qq?include_prereleases&label=release&color=4a7dff)](https://github.com/aureth-labs/dsh-aurabot-qq/releases)
-[![license](https://img.shields.io/github/license/aureth-labs/dsh-aurabot-qq?color=3fb950)](LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-3fb950)](LICENSE)
 [![DSH plugin](https://img.shields.io/badge/DeepSeek%20Harness-plugin-6a5acd)](https://github.com/deepseek-ai/deepseek-harness)
 [![QQ](https://img.shields.io/badge/QQ-SnowLuma%20%2F%20OneBot%20v11-12b7f5)](https://github.com/SnowLuma/SnowLuma)
-[![stars](https://img.shields.io/github/stars/aureth-labs/dsh-aurabot-qq?color=f5b301)](https://github.com/aureth-labs/dsh-aurabot-qq/stargazers)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](#-参与贡献)
 
 </div>
 
-> Aurabot 把 **DeepSeek Harness（DSH）** 里的 AI 变成一个有 QQ 号的「人」：独立人格、会生气会开心、记得住聊天里的细节、认识你的朋友，也能在群里接梗、发语音条、用自己的声音唱歌、给空间写日记、刷 B 站。
+> 懂你的QQ大肥鱼 把 **DeepSeek Harness（DSH）** 里的 AI 变成一个有 QQ 号的「人」：独立人格、会生气会开心、记得住聊天里的细节、认识你的朋友，也能在群里接梗、发语音条、用自己的声音唱歌、给空间写日记、刷 B 站。
 >
 > 不是又一个「关键词回复机器人」——她的每一次回复、要不要接话、用什么模型、发出去什么，都是可插拔的模块；默认一切都是关着的，**不手动打开，一句话都不会发出去。**
 
 ```
-QQ ⇄ SnowLuma（OneBot v11，你自己安装/已有机器人也行）⇄ Aurabot 插件 ⇄ DSH 会话
+QQ ⇄ NapCat / SnowLuma（OneBot v11，你自己安装）⇄ 本插件 ⇄ DSH 会话
                                                     ├─ 人格 + 心情 + 记忆
                                                     ├─ 工具 / 模块（可热插拔）
                                                     └─ 面板（DSH Web）
@@ -30,7 +28,7 @@ QQ ⇄ SnowLuma（OneBot v11，你自己安装/已有机器人也行）⇄ Aurab
 
 ---
 
-## ✨ 为什么是 Aurabot
+## ✨ 为什么是 懂你的QQ大肥鱼
 
 <table>
   <tr>
@@ -69,16 +67,18 @@ QQ ⇄ SnowLuma（OneBot v11，你自己安装/已有机器人也行）⇄ Aurab
 **Windows 桌面版：**
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add github:aureth-labs/dsh-aurabot-qq
+& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add /绝对路径/dsh-qq-soul
 ```
 
 **Linux / Docker（换成你在用的 profile；容器里就进容器执行）：**
 
 ```bash
-dsh plugin --profile <profile> add github:aureth-labs/dsh-aurabot-qq
+dsh plugin --profile <profile> add /绝对路径/dsh-qq-soul
 ```
 
-装好后重启 DSH，左侧栏「自动化任务」下面会出现 **Aurabot**。
+装好后重启 DSH，左侧栏「自动化任务」下面会出现 **懂你的QQ大肥鱼**。
+
+> 开发期请用**本地目录安装**（pnpm `link:` 软链，改的就是跑的那份），不要再用 `github:` 地址装，否则会变成「改仓库版、跑 node_modules 副本」。
 
 ### 2. 跟着设置向导走
 
@@ -88,17 +88,85 @@ dsh plugin --profile <profile> add github:aureth-labs/dsh-aurabot-qq
    - **接已有的 OneBot 机器人**：NapCat、LLOneBot、Lagrange、Docker 版 SnowLuma 都行；把正向 WebSocket 地址（和 token）填进向导即可，插件只连接、不启动
 3. 先试运行（只回话不真发），或者直接上线
 
-> **Linux / Docker 注意：** 语音要 `python3-venv` 或 [uv](https://docs.astral.sh/uv/)；翻唱（RVC）目前只支持 Windows；容器连宿主机/别的容器上的 OneBot，地址用容器能访问到的主机名和端口，别填 `127.0.0.1`。
+> **Linux / Docker 注意：** 语音要 `python3-venv` 或 [uv](https://docs.astral.sh/uv/)；上游「翻唱（RVC）只支持 Windows」的说法在本项目不适用——macOS 复用 `~/tools/applio`，见下面 §4；容器连宿主机/别的容器上的 OneBot，地址用容器能访问到的主机名和端口，别填 `127.0.0.1`。
 
 ### 3. 升级
 
-重新跑一遍安装命令，然后重启 DSH。设置、人格、记忆都会保留；有新版本面板里也会提示。想尝鲜可在面板打开「订阅不稳定版本」，会收到 beta/rc 更新提示。
+重新跑一遍安装命令，然后重启 DSH。设置、人格、记忆都会保留。本地开发阶段不回连上游仓库，也不做在线更新检查；`origin` 建好后再接自己的更新源。
+
+### 4. 音频服务（可选，P1–P6 已全部落地）
+
+说话与唱歌由仓库自带的 `services/` 包提供，**单端口 `127.0.0.1:9876`、零第三方依赖、默认关闭、不预装任何大模型**。聊天功能不需要它；只有要发语音条 / 翻唱时才起。
+
+```bash
+# macOS / Linux
+python3 -m services --check-deps        # 依赖体检（只查文件，不下载、不启动模型）
+python3 -m services --serve              # 起服务
+python3 -m services --stub --serve       # 无模型自检：假 TTS / 假翻唱，先验证接口
+python3 -m services --once --text "你好呀，我是大肥鱼"   # 不起后台，直接合成一句
+QQSOUL_SERVICE_TOKEN=自定义串 python3 -m services --serve   # 开鉴权
+```
+
+> **Windows** 用 `python` 代替 `python3`（例如 `python -m services --serve`）。必须在**插件仓库目录**里运行；面板「概览 → 音频服务」会直接给出带本机目录的完整命令，可一键复制。
+> 服务的配置、模型和翻唱缓存放在 `~/.dsh/plugins-data/qqsoul/service/`（Windows 是 `%USERPROFILE%\.dsh\plugins-data\qqsoul\service\`），与插件自己的配置分开。
+
+- 渠道：默认 **edge-tts（零下载）**；可选 Breeze 远程（只填 key）、GPT-SoVITS / 千问 3-TTS MLX（选目录加载或连已跑着的服务）、任意 HTTP。长文本自动分句合成 + 静音拼接。
+- 模型目录见 `models.json`，三档分发（零下载 / 按需轻量 / 手动导入），安装包不带权重。
+- 主要接口：`/healthz`、`/status`（驻留清单 + 当前策略）、`/tts/speak`、`/tts/switch`、`/models/catalog`、`/models/load`、`/song/strategy`（读/存翻唱策略）、`/song/sources`（读/存有序音乐源）、`/song/search`、`/song/request`、`/song/jobs`、`/song/jobs/{id}`（分阶段进度）、`/song/jobs/{id}/energy`（能量曲线）、`/song/jobs/{id}/events`（SSE）、`/deps/check`、`/panel`（托管面板）、`/files/*`。
+- 插件侧的 `src/service/client.js` 是薄客户端，**默认关闭**；开启前现有语音 / 翻唱模块行为完全不变。开启后 `src/service/song-bridge.js` 接管点歌 → 等作业 → 发语音条。面板与运维大屏对语音、音色、翻唱策略、音乐源读写**同一份服务配置**。
+- Python 回归：`python3 -m pytest tests/ -q`（沙箱环境加 `--basetemp=/tmp/…`）。
+
+### 4.1 面板 10 分钟跑通（P4）
+
+1. **起服务**：`python3 -m services --check-deps` 看必需项 → `python3 -m services --serve`。还没装模型时先加 `--stub` 自检。
+2. **打开面板**：浏览器开 `http://127.0.0.1:9876/panel`，或双击 `docs/prototype/index.html`；装进 DSH 后也可在「翻唱」页点「打开运维大屏」。
+3. **连接**：点右上「连接 service」→ 地址默认已填好，token 没设就留空 → 连接；左上角变成「实时」即连上。双击打开也能连（service 允许 `null` origin 的 CORS）。
+4. **看体检**：向导第 3 步与「依赖体检」页逐项显示真状态，缺哪行按「修复动作」补。
+5. **说一句**：「语音渠道」页点「合成语音条」，默认 edge-tts 零下载，成品可直接播放。
+6. **唱一首**（需 Applio + 音色）：「翻唱策略」页选分离器 / 前奏处理 / 取窗 / `index_rate` → 保存策略 → 「点一首试试」提交作业；SSE 实时推进度，完成后点作业行看**能量曲线缩略图 + 每阶段耗时**，还能试听成品。
+
+> 自检模式（`--stub`）不跑 demucs / RVC，曲线与 24.6 s 起唱点是服务端标了 `stub:true` 的演示数据；去掉 `--stub` 才是真链路。
+> 「模型管理」只给链接 + 选目录加载 + 立即释放，**安装包不带任何权重**。
+
+### 4.2 双平台安装器（P5）
+
+上层 UX 共用，平台差异只在 `services/installer/plan.py` 的两个 provider：
+
+- **macOS**：只检测 + 复用已装 `~/tools/applio` + 给链接 / 手动拖入，**不自动装 torch**；唯一允许自动执行的轻量动作是私有 venv 里 `pip install edge-tts`。
+- **Windows**：给完整一键装步骤；SnowLuma 因 EULA 仍由用户自己下载解压、本人同意。
+- 六步进度 `GET /install/plan`；模型四态 `GET /install/check`（未安装 / 已下载待加载 / 已加载 / 路径失效）；路径持久化 `POST /install/paths`（合并写回 `config.json`，立即生效）。
+- 下载底座：sha256 校验（占位值如实标 `placeholder`，**不假装通过**）、镜像 fallback、`.part` 断点续传、手动拖入校验。
+- Node 侧 `src/installer/`：`detectUpstreamConflict()` 在向导里拦住「上游插件还装着」这个双份回复坑；`checkDistribution()` 做分发门禁。
+
+```bash
+npm run package:verify    # 只检查：<5 MB / 零权重 / 无上游回连 / 许可齐全 / 不带测试
+npm run package           # 产出 dist/dsh-qq-soul/ + manifest.json（逐文件 sha256）
+npm run package -- --zip  # 额外压成 zip（本机有 zip 命令时）
+```
+
+### 4.3 网关方向与五步自检（P6）
+
+本插件是 **OneBot 正向 WebSocket 客户端**：`createOneBotClient` 主动连 `wsUrl`，不监听端口、不启动网关、不注入 QQ（契约测试钉住）。
+
+- 迁移重点：NapCat 里若还留着 `websocketClients` 反向连 `ws://127.0.0.1:6700`，同一 QQ 号会被两个消费者抢答。`checkGateway()` / `checkReverseWsResidue()` 会给出可枚举 code 和人话提示。
+- 插件通过 `POST /gateway/report` 上报**脱敏结论**（只有方向与 host，token 一律拒绝），`GET /gateway/report` 可查。
+- `GET /selfcheck` 五步：service → deps → gateway → tts → song；`POST /selfcheck {"deep":true}` 会真唱一首。每步都是 code + 一句人话，大屏只转述不诊断。
+
+### 4.4 其余已补齐的能力
+
+| 决策 | 落地 |
+|---|---|
+| 工具 / 技能分组 + 各自开关 | `src/skills/grouping.js`，面板路由 `/panel/ops/skills` |
+| Markdown Skill 加载器 | `src/skills/loader.js`：frontmatter、白名单权限（`read` / `llm`）、关键词命中、上下文截断 |
+| Token 统计 | `src/features/usage.js`：先探 `dsh.llm` 的结构化 `usage`，无则按字符**估算并标注**，绝不解析模型输出正文；`/panel/ops/usage` |
+| 统一时间线 | `src/features/timeline.js`：合并 activity / 记忆 / 翻唱 history，**7 天、含正文**；`/panel/ops/timeline` |
+| 串行写队列 | `src/core/write-queue.js`：定时任务与前台写入排队，防后写覆盖 |
 
 ## 🧩 模块系统
 
 除了核心（配置、QQ 网关、聊天中枢、人格、权限、面板），**每一项本事都是模块**。
 
-- 面板「模块市场」一键安装/更新/卸载社区模块，仓库在 [dsh-aurabot-qq-mods](https://github.com/aureth-labs/dsh-aurabot-qq-mods)
+- 「模块市场」**默认关闭**（不回连任何上游仓库）；自建市场时用 `QQSOUL_REGISTRY_URL` 指向自己的索引。自己写的模块放数据目录 `modules/`，保存 3 秒内热重载
 - 你自己写的模块放在数据目录 `modules/`，升级不覆盖，保存即生效（多文件、npm 依赖都能热重载）
 - 面板「已安装」页有模拟测试：截获发送，不真发
 - 扩展接口：[API.md](src/modules/API.md) · 类型：[aurabot.d.ts](src/modules/aurabot.d.ts) · [写模块教程](docs/MODULE-TUTORIAL.md)
@@ -114,7 +182,7 @@ dsh plugin --profile <profile> add github:aureth-labs/dsh-aurabot-qq
 - **管理接口只许本机**：面板的所有管理接口（改配置、装模块、取联动密钥、下载桌宠客户端包）默认只接受本机回环访问，并带跨站（CSRF）防护。远程管理要在面板「安全防护」页显式开 `security.panelRemoteAccess`，**并且**在反向代理层再加一道认证（Basic Auth / OAuth）
 - **放反代必须配两件事**（面板「安全防护」页）：① `security.trustedProxy` 填反代地址——插件判断请求来源只看 TCP 对端地址，反代部署时对端永远是反代自己，不填的话所有访问都被当成「本机」，管理接口对反代流量**形同虚设**（且要求反代追加 `X-Forwarded-For`）；② `security.publicHostname` 填面板对外域名——跨站防护把它算作同源，否则远端打开面板一保存就会被 403。反代请**只放行面板需要的精确路径**，不要整段 `/aurabot/api/*` 放行——那会把没有独立鉴权的模块接口一起暴露出去
 - **隐私边界**：主人私聊里的内容不会被带进群聊/别人的私聊；记忆按聊天来源隔离；社交场景只回忆当前聊天的事
-- **数据都在本地**：`%USERPROFILE%\.dsh\plugins-data\aurabot\`（配置、人格、表情、日记、记忆、日志、你的模块）；换电脑用面板「系统 → 备份」打成 zip 带走
+- **数据都在本地**：插件数据在 `%USERPROFILE%\.dsh\plugins-data\aurabot\`（配置、人格、表情、日记、记忆、日志、你的模块）；音频服务的配置、模型和翻唱缓存在 `%USERPROFILE%\.dsh\plugins-data\qqsoul\service\`。换电脑用面板「系统 → 备份」打包插件数据带走
 
 ## 🖥️ 面板一览
 
@@ -170,14 +238,13 @@ dsh plugin --profile <profile> add github:aureth-labs/dsh-aurabot-qq
 <details>
 <summary><b>装不上/报错怎么办？</b></summary>
 
-带上面板「日志」里的报错和版本号来 QQ 群问（见下方二维码），或到 [GitHub issue](https://github.com/aureth-labs/dsh-aurabot-qq/issues) 反馈。
+先看面板「日志」页的报错，再去「依赖体检」页跑一次检测。本项目当前处于本地开发阶段，尚未建立公开 issue 与交流群。
 </details>
 
 ## 🧑💻 开发
 
 ```bash
-git clone https://github.com/aureth-labs/dsh-aurabot-qq.git
-cd dsh-aurabot-qq
+cd /绝对路径/dsh-qq-soul
 npm test        # 单元测试 + 假 DSH 宿主/模拟 OneBot 的端到端测试
 ```
 
@@ -203,27 +270,18 @@ test/                  单元测试 + 端到端测试
 
 欢迎 issue 和 PR！
 
-- **报 bug / 提需求**：[新建 issue](https://github.com/aureth-labs/dsh-aurabot-qq/issues)（先翻一下有没有重复）
-- **提代码**：[fork → PR](https://github.com/aureth-labs/dsh-aurabot-qq/pulls)；修 bug 尽量带回归测试；模块请提给 [模块仓库](https://github.com/aureth-labs/dsh-aurabot-qq-mods)
+- 本仓库由 `aureth-labs/dsh-aurabot-qq` v1.2.0（MIT）二开而来，来源与许可见 [NOTICE.md](NOTICE.md)
+- 修 bug 请带回归测试；先红后绿，Node 侧 `npm test`
 - **写模块**：先从 [教程](docs/MODULE-TUTORIAL.md) 开始
 - 贡献者名单见版本说明和 PR 记录 💙
 
 ## 💬 交流
 
-QQ 交流群：安装踩坑、用法讨论、想法都在这（提问尽量带上面板日志里的报错和版本号）。
+本地开发阶段暂不设公开交流群；面板「依赖体检」与「日志」页可自助排查。
 
-<div align="center">
-<img src="assets/qq-group.jpg" alt="QQ 交流群二维码" width="240" />
-</div>
+## 📈 迭代节奏
 
-## 📈 Star 趋势
-
-<a href="https://www.star-history.com/?repos=aureth-labs%2Fdsh-aurabot-qq&type=date&legend=top-left">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=aureth-labs/dsh-aurabot-qq&type=date&theme=dark&legend=top-left" />
-    <img alt="Star 趋势" src="https://api.star-history.com/svg?repos=aureth-labs/dsh-aurabot-qq&type=date&legend=top-left" />
-  </picture>
-</a>
+本项目处于本地开发阶段，稳定后补 origin 与发布记录。
 
 ## 📄 License & 致谢
 
@@ -231,4 +289,4 @@ QQ 交流群：安装踩坑、用法讨论、想法都在这（提问尽量带�
 
 参考了 [Yuuyuko-uu](https://github.com/Yuuyuko-uu) 的 dsh-qq-bridge、dsh-speak-up、dsh-feiyu-mood、dsh-fish-memory 等插件（MIT）在 DSH 插件机制上踩过的坑；没有复制它们的代码。人物记忆（人物画像、群印象、分层记忆、人物关系）的设计来自 [Emotionana](https://github.com/Emotionana) 的人像记忆库 persona-memory。感谢所有贡献者、模块作者和群里一起折腾的朋友。
 
-<div align="center"><sub>Made with 🐟 by the Aurabot community</sub></div>
+<div align="center"><sub>Made with 🐟 · 懂你的QQ大肥鱼 · 基于 MIT 开源项目二开</sub></div>
