@@ -123,7 +123,7 @@ td b{color:var(--tx);font-weight:600}
 .sw.on{background:linear-gradient(90deg,var(--cyan),var(--blue))}
 .sw.on::after{left:21px}
 .sw[data-lock]{cursor:not-allowed;opacity:.5}
-select,input[type=text],input:not([type]),input[type=password],input[type=number],textarea{
+select,input[type=text],input[type=date],input[type=time],input:not([type]),input[type=password],input[type=number],textarea{
   background:var(--panel2);color:var(--tx);border:1px solid var(--line2);border-radius:9px;
   padding:7px 10px;font-size:12.5px;font-family:inherit;outline:none;transition:.16s}
 select:focus,input:focus,textarea:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(126,232,245,.09)}
@@ -165,8 +165,10 @@ select{appearance:none;-webkit-appearance:none;padding-right:26px;
 .ev.song::before{background:var(--purple)}
 .ev.err::before{background:var(--red)}
 .ev time{font-size:10.5px;color:var(--dim);letter-spacing:.6px}
-.ev .body{font-size:12.5px;margin-top:3px;color:var(--tx)}
+.ev .body{font-size:12.5px;margin-top:3px;color:var(--tx);white-space:pre-wrap;word-break:break-word}
 .ev .body em{font-style:normal;color:var(--mut);font-size:11.5px}
+.tllab{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--dim)}
+.tllab input{padding:5px 8px;font-size:12px}
 /* 能量曲线 */
 .wave{width:100%;height:92px;display:block;margin:6px 0}
 .legend{display:flex;gap:14px;font-size:10.5px;color:var(--dim);flex-wrap:wrap}
@@ -831,7 +833,7 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
     <!-- ---------- 日志 / 时间线 ---------- -->
     <section class="view" id="v-logs">
       <h2 class="sec">日志与时间线</h2>
-      <p class="sub">合并 activity 事件 / 记忆梗概 / 翻唱 history 三套数据；保留 <b style="color:var(--amber)">7 天</b>、含消息正文、按类型筛选。</p>
+      <p class="sub">统一时间线含每天全部<b>输入与输出正文</b>；按日期（默认今天）、起止时间和关键字筛选，保留 <b style="color:var(--amber)">7 天</b>。</p>
       <div class="card" style="margin-bottom:14px">
         <h3>总日志 <span class="tag t-gray">三份分开</span></h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
@@ -843,6 +845,15 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
           <span style="color:var(--dim);font-size:11.5px" id="logPath">连上 service 后显示日志文件位置</span>
         </div>
         <pre class="logbox" id="anyLog">点上面三个按钮看对应的日志。</pre>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
+        <label class="tllab">日期 <input type="date" id="tlDate"></label>
+        <label class="tllab">从 <input type="time" id="tlFrom"></label>
+        <label class="tllab">到 <input type="time" id="tlTo"></label>
+        <input type="text" id="tlQ" placeholder="关键字（输入或输出正文）" style="min-width:190px">
+        <button class="btn sm" onclick="applyTimelineFilters('logs')">筛选</button>
+        <button class="btn sec sm" onclick="resetTimelineFilters()">回到今天</button>
+        <span id="tlMeta" style="color:var(--dim);font-size:11.5px"></span>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
         <button class="btn sec sm f on" data-f="all">全部</button>
@@ -878,12 +889,13 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
       </div>
       <div class="dash" style="margin-top:16px">
         <div class="card">
-          <h3>每日 Token 消耗 <span class="tag t-amber">估算</span></h3>
-          <p style="font-size:11.5px;margin-bottom:4px">先探 <code>dsh.llm</code> 是否返回 usage；拿不到就按字符数估算并标注，绝不从模型输出里解析。</p>
+          <h3>每日 Token 消耗 <span class="tag t-amber" id="tokTag">读取中</span></h3>
+          <p style="font-size:11.5px;margin-bottom:4px">优先用 DSH <code>assistant/message.usage</code> 的实测值；拿不到时按输入 + 输出字符数估算并标注「估算」，绝不解析模型输出正文。</p>
           <div class="chart" id="tokChart"></div>
-          <div class="chartx"><span>周一</span><span>周二</span><span>周三</span><span>周四</span><span>周五</span><span>周六</span><span>今天</span></div>
+          <div class="chartx" id="tokX"></div>
           <div class="kv" style="margin-top:12px"><span>今日合计</span><span id="tokToday"></span></div>
           <div class="kv"><span>按用途</span><span id="tokByUse"></span></div>
+          <div class="kv"><span>口径</span><span id="tokMeta"></span></div>
         </div>
         <div class="card" id="dashStatus">
           <h3>服务状态</h3>
@@ -909,7 +921,14 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
       </div>
       <div class="dash" style="margin-top:14px">
         <div class="card">
-          <h3>统一时间线 <span class="tag t-gray">7 天 · 含正文</span></h3>
+          <h3>统一时间线 <span class="tag t-gray" id="dashTlTag">今天 · 含正文</span></h3>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
+            <input type="date" id="dtlDate" style="padding:5px 8px;font-size:12px">
+            <input type="time" id="dtlFrom" style="padding:5px 8px;font-size:12px">
+            <input type="time" id="dtlTo" style="padding:5px 8px;font-size:12px">
+            <input type="text" id="dtlQ" placeholder="关键字" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px">
+            <button class="btn sm" onclick="applyTimelineFilters('dash')">筛</button>
+          </div>
           <div class="tl" id="dashTl"></div>
         </div>
         <div class="card">
@@ -968,6 +987,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp
 
 const state = {
   live: false, base: 'http://127.0.0.1:9876', token: '', step: 0, big: false, filter: 'all',
+  tlDate: '', tlFrom: '', tlTo: '', tlQ: '', tlRows: [], tlMessage: '', tlCount: 0, usage: null,
   status: null, deps: [], depsOptional: new Set(), models: null, stack: null, latest: null,
   jobs: [], voices: [], refs: null, selfcheck: null, search: null, currentJob: null,
   ttsLast: '', logDirs: {}, paths: null,
@@ -975,6 +995,11 @@ const state = {
   lastTtsPath: '', lastTtsUrl: '', lastSongPath: '', lastSongUrl: '',
   covers: [], lastAccGain: null
 };
+function localDay(d) {
+  const x = d ? new Date(d) : new Date();
+  return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0');
+}
+state.tlDate = localDay();
 const ENGINE_LABEL = { edge: '微软在线 edge-tts', breeze: 'Breeze 远程', http: '本机 Bridge / 任意 HTTP TTS',
   gptsovits: 'GPT-SoVITS 本地', qwen: '千问 3-TTS MLX' };
 /** 路径 → 好认的名字：HF 快照目录只显示模型名，别把一长串哈希糊在脸上。 */
@@ -2265,34 +2290,148 @@ async function runSelfcheck(deep) {
   try { renderSelfcheck(await post('/selfcheck', { deep: !!deep })); toast('自检完成'); }
   catch (e) { toast('自检失败：' + e.message); }
 }
-function renderTimeline() {
-  const el = $('#tlBody'); if (!el) return;
-  const evs = state.jobs.map(j => {
-    const t = new Date((j.mtime || Date.now() / 1000) * 1000).toTimeString().slice(0, 5);
-    return { t: t, kind: j.ok ? 'song' : (j.done ? 'err' : 'song'),
-      html: '作业 <b>' + esc(j.query || j.id) + '</b> · ' + esc(j.lastStage || '') + ' · ' + fmtMs(j.elapsedMs), tag: j.ok ? '已完成' : (j.done ? '失败' : '进行中') };
+const TL_KIND = { in: '收到消息', out: '发出消息', song: '翻唱作业', err: '错误', memory: '记忆', activity: '活动' };
+function tlQuery() {
+  const p = new URLSearchParams();
+  if (state.tlDate) p.set('date', state.tlDate);
+  if (state.tlFrom) p.set('from', state.tlFrom);
+  if (state.tlTo) p.set('to', state.tlTo);
+  if (state.tlQ) p.set('q', state.tlQ);
+  if (state.filter && state.filter !== 'all') p.set('kind', state.filter);
+  p.set('limit', '500');
+  return p.toString();
+}
+function syncTimelineInputs() {
+  [['tl', ''], ['dtl', 'dash']].forEach(([pre]) => {
+    const set = (id, value) => { const el = $('#' + id); if (el) el.value = value || ''; };
+    set(pre + 'Date', state.tlDate); set(pre + 'From', state.tlFrom);
+    set(pre + 'To', state.tlTo); set(pre + 'Q', state.tlQ);
+    const meta = $('#' + pre + 'Meta'); if (meta) meta.textContent = state.live && state.tlCount ? state.tlCount + ' 条' : '';
   });
-  el.innerHTML = evs.length ? evs.map(e => '<div class="ev"><time>' + e.t + '</time><div class="body">' + e.html + '</div></div>').join('')
-    : '<div class="ev"><time>—</time><div class="body" style="color:var(--dim)">还没有记录。作业跑一次就会出现在这里。</div></div>';
-  const dash = $('#dashTl'); if (dash) dash.innerHTML = el.innerHTML;
+}
+function tlRowHtml(row) {
+  const cls = row.kind === 'in' ? 'in' : row.kind === 'song' ? 'song' : row.kind === 'err' ? 'err' : '';
+  const when = [row.day || '', row.time || ''].filter(Boolean).join(' ') || '—';
+  const label = TL_KIND[row.kind] || row.kind || '活动';
+  return '<div class="ev ' + cls + '"><time>' + esc(when + ' · ' + label) + '</time>' +
+    '<div class="body">' + esc(row.text || '') + '</div></div>';
+}
+function renderTimeline() {
+  const el = $('#tlBody'); const dash = $('#dashTl');
+  let html = '';
+  if (state.live && state.tlRows.length) {
+    html = state.tlRows.map(tlRowHtml).join('');
+  } else if (state.live) {
+    html = '<div class="ev"><time>—</time><div class="body" style="color:var(--dim)">' +
+      esc(state.tlMessage || '这个时间段还没有记录。换一天或清空关键字试试。') + '</div></div>';
+  } else {
+    const evs = state.jobs.map(j => {
+      const t = new Date((j.mtime || Date.now() / 1000) * 1000).toTimeString().slice(0, 5);
+      return { kind: j.ok ? 'song' : (j.done ? 'err' : 'song'),
+        html: '作业 <b>' + esc(j.query || j.id) + '</b> · ' + esc(j.lastStage || '') + ' · ' + fmtMs(j.elapsedMs) };
+    });
+    html = evs.length ? evs.map(e => '<div class="ev ' + (e.kind === 'err' ? 'err' : 'song') + '"><time>' + e.t + '</time><div class="body">' + e.html + '</div></div>').join('')
+      : '<div class="ev"><time>—</time><div class="body" style="color:var(--dim)">还没有记录。作业跑一次就会出现在这里。</div></div>';
+  }
+  if (el) el.innerHTML = html;
+  if (dash) dash.innerHTML = html;
+  const tag = $('#dashTlTag');
+  if (tag) tag.textContent = state.live ? (state.tlRows.length + ' 条 · 含正文') : '演示数据';
+}
+async function refreshTimelineLive() {
+  if (!state.live) { state.tlRows = []; state.tlCount = 0; state.tlMessage = ''; syncTimelineInputs(); renderTimeline(); return; }
+  const r = await api('/timeline?' + tlQuery());
+  state.tlRows = r.rows || [];
+  state.tlCount = Number(r.count || state.tlRows.length);
+  state.tlMessage = r.message || '';
+  syncTimelineInputs(); renderTimeline();
+}
+async function applyTimelineFilters(src) {
+  const pre = src === 'dash' ? 'dtl' : 'tl';
+  const val = (id) => { const el = $('#' + id); return el ? el.value : ''; };
+  state.tlDate = val(pre + 'Date');
+  state.tlFrom = val(pre + 'From');
+  state.tlTo = val(pre + 'To');
+  state.tlQ = val(pre + 'Q').trim();
+  syncTimelineInputs();
+  try { await refreshTimelineLive(); } catch (e) { toast('读时间线失败：' + e.message); }
+}
+async function resetTimelineFilters() {
+  state.tlDate = localDay(); state.tlFrom = ''; state.tlTo = ''; state.tlQ = '';
+  state.filter = 'all';
+  $$('.f').forEach(x => x.classList.toggle('on', x.dataset.f === 'all'));
+  syncTimelineInputs();
+  try { await refreshTimelineLive(); } catch (e) { toast('读时间线失败：' + e.message); }
+}
+function fmtTokens(n) {
+  n = Number(n || 0);
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+  return String(n);
+}
+function usageDays(u) {
+  const total = Math.max(1, Math.min(30, Number(u && u.days) || 7));
+  const daily = (u && u.daily) || {};
+  const out = [];
+  for (let i = total - 1; i >= 0; i--) {
+    const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
+    const key = localDay(d);
+    out.push({ key, label: i === 0 ? '今天' : (d.getMonth() + 1) + '/' + d.getDate(), value: Number(daily[key] || 0) });
+  }
+  return out;
 }
 function renderToken() {
   const box = $('#tokChart'); if (!box) return;
-  box.innerHTML = '<span style="color:var(--dim);font-size:12px">Token 统计需要宿主上报，这一版还没接；先看下方服务状态。</span>';
-  if ($('#tokToday')) $('#tokToday').textContent = '未接';
-  if ($('#tokByUse')) $('#tokByUse').textContent = '未接';
+  const u = state.usage;
+  if (!state.live || !u) {
+    box.innerHTML = '<span style="color:var(--dim);font-size:12px">' + (state.live ? '还没有 Token 记录。聊几句就会出现。' : '连上 service 后显示最近 7 天用量。') + '</span>';
+    if ($('#tokX')) $('#tokX').innerHTML = '';
+    if ($('#tokToday')) $('#tokToday').textContent = state.live ? '0' : '未连接';
+    if ($('#tokByUse')) $('#tokByUse').textContent = state.live ? '—' : '未连接';
+    if ($('#tokMeta')) $('#tokMeta').textContent = '';
+    if ($('#tokTag')) { $('#tokTag').textContent = state.live ? '暂无数据' : '未连接'; $('#tokTag').className = 'tag t-gray'; }
+    return;
+  }
+  const days = usageDays(u);
+  const max = Math.max(1, ...days.map(d => d.value));
+  const total = days.reduce((sum, d) => sum + d.value, 0);
+  box.innerHTML = total
+    ? days.map(d => '<div class="col" title="' + esc(d.key + ' · ' + d.value + ' tokens') + '">' +
+      (d.value ? '<i style="height:' + Math.max(3, Math.round(d.value / max * 100)) + '%"></i>' : '') + '</div>').join('')
+    : '<span style="color:var(--dim);font-size:12px;margin:auto">最近 7 天还没有 Token 记录。重启 DSH 后聊几句，这里就会写入实测值。</span>';
+  if ($('#tokX')) $('#tokX').innerHTML = days.map(d => '<span>' + esc(d.label) + '</span>').join('');
+  if ($('#tokToday')) $('#tokToday').textContent = fmtTokens(u.today) + ' tokens';
+  const by = u.byPurpose || {};
+  const names = { chat: '聊天', image: '生图', song: '翻唱', tts: '说话' };
+  const parts = Object.entries(by).map(([k, v]) => (names[k] || k) + ' ' + fmtTokens(v));
+  if ($('#tokByUse')) $('#tokByUse').textContent = parts.length ? parts.join(' · ') : '—';
+  if ($('#tokMeta')) {
+    const meta = [];
+    if (u.measured) meta.push('实测 ' + u.measured + ' 次');
+    if (u.estimated) meta.push('估算 ' + u.estimated + ' 次');
+    $('#tokMeta').textContent = meta.join(' · ') || '—';
+  }
+  if ($('#tokTag')) {
+    const has = u.measured || u.estimated || u.today || Object.keys(u.byPurpose || {}).length;
+    const tag = !has ? ['暂无数据', 't-gray'] : u.measured && u.estimated ? ['实测+估算', 't-blue'] : u.measured ? ['实测', 't-green'] : ['估算', 't-amber'];
+    $('#tokTag').textContent = tag[0]; $('#tokTag').className = 'tag ' + tag[1];
+  }
+}
+async function refreshUsageLive() {
+  if (!state.live) { state.usage = null; renderToken(); return; }
+  state.usage = await api('/usage?days=7');
+  renderToken();
 }
 
 // ------------------------------------------------------------------ 汇总刷新（串行，避免 keep-alive 并发被 reset）
 async function refreshAll() {
   const tasks = [refreshStack, refreshPaths, refreshDepsLive, refreshModelsLive,
     refreshStrategyLive, refreshJobsLive, refreshLatest, refreshStatusLive, refreshTtsCfgLive,
-    refreshAudioList, refreshSourcesLive];
+    refreshAudioList, refreshSourcesLive, refreshUsageLive, refreshTimelineLive];
   for (const task of tasks) {
     try { await task(); } catch (e) { console.warn('refresh ' + task.name, e && e.message); }
   }
   await refreshSelfcheckLive().catch(() => {});
-  renderTimeline();
   await loadLog('tts', '#ttsLog').catch(() => {});
   await loadLog('song', '#songLog').catch(() => {});
   renderWiz();
@@ -2317,8 +2456,14 @@ function bindStatic() {
   });
   $$('.f').forEach(b => b.onclick = () => {
     $$('.f').forEach(x => x.classList.remove('on')); b.classList.add('on');
-    state.filter = b.dataset.f; renderTimeline();
+    state.filter = b.dataset.f;
+    state.live ? refreshTimelineLive().catch(e => toast('读时间线失败：' + e.message)) : renderTimeline();
   });
+  ['tlQ', 'dtlQ'].forEach(id => {
+    const el = $('#' + id); if (!el) return;
+    el.onkeydown = (ev) => { if (ev.key === 'Enter') applyTimelineFilters(id === 'dtlQ' ? 'dash' : 'logs'); };
+  });
+  syncTimelineInputs();
   $('#connBtn').onclick = () => { const b = $('#connBox'); b.style.display = (b.style.display === 'none' ? 'block' : 'none'); };
   $('#connGo').onclick = connect;
   $('#connStop').onclick = () => { localStorage.removeItem(LS_KEY); location.reload(); };
@@ -2376,6 +2521,7 @@ function bindStatic() {
   bindStatic();
   renderEngine();
   renderToken();
+  renderTimeline();
   renderWiz();
   renderDepsOffline();
   renderAudioList();

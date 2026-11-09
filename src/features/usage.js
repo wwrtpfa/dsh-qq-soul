@@ -8,6 +8,13 @@ import { createSerialQueue } from '../core/write-queue.js'
 
 const DAY_MS = 86400000
 
+/** 「今天」按本机时区算，和面板图表 / service 的日期筛选保持一致。 */
+function localDay (at) {
+  const d = new Date(Number(at))
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 export function extractUsage(result) {
   if (!result || typeof result !== 'object') return null
   const u = result.usage || result.data?.usage || result.response?.usage || result.meta?.usage
@@ -92,7 +99,7 @@ export function createUsageStore({
         const tokens = Number(r.tokens) || 0
         const purpose = r.purpose || 'chat'
         byPurpose[purpose] = (byPurpose[purpose] || 0) + tokens
-        const day = new Date(Number(r.at)).toISOString().slice(0, 10)
+        const day = localDay(r.at)
         daily[day] = (daily[day] || 0) + tokens
         if (Number(r.at) >= todayStart) today += tokens
         if (r.source === 'usage') measured += 1

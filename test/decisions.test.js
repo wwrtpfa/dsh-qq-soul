@@ -166,6 +166,17 @@ test('Token：按天与用途汇总，估算与实测分开记', () => {
   assert.equal(s.measured, 1)
 })
 
+test('Token：按天汇总用本地日期，跨零点不会算到前一天', () => {
+  const fsImpl = memoryFs()
+  const at = new Date(2026, 10, 9, 0, 30).getTime()
+  const store = createUsageStore({ file: '/ops/usage.jsonl', fsImpl, now: () => at })
+  store.append({ purpose: 'chat', result: { usage: { total_tokens: 42 } } })
+  const s = store.summary()
+  assert.deepEqual(Object.keys(s.daily), ['2026-11-09'])
+  assert.equal(s.daily['2026-11-09'], 42)
+  assert.equal(s.today, 42)
+})
+
 // ---------------------------------------------------------------- 决策 24 统一时间线
 
 test('时间线：三套数据归一合并、保留正文、按时间倒序去重', () => {

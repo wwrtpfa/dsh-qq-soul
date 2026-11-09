@@ -109,6 +109,7 @@ window.__ModuleLoader__.load({
       if (s < 86400) return Math.floor(s / 3600) + ' 小时前'
       return new Date(t).toLocaleDateString()
     }
+    const TL_KIND = { in: '收到消息', out: '发出消息', song: '翻唱作业', err: '错误', memory: '记忆', activity: '活动' }
 
     // ---------------- 样式（只注入一次） ----------------
     const CSS = `
@@ -3100,10 +3101,34 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [timeline, setTimeline] = useState(null)
       const [tools, setTools] = useState(null)
       const [skills, setSkills] = useState(null)
+      const dayOf = (ms) => {
+        const d = new Date(ms)
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+      }
+      const clockOf = (ms) => {
+        const d = new Date(ms)
+        return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':')
+      }
+      const [tlDate, setTlDate] = useState(() => dayOf(Date.now()))
+      const [tlFrom, setTlFrom] = useState('')
+      const [tlTo, setTlTo] = useState('')
+      const [tlQ, setTlQ] = useState('')
+      const [tlKind, setTlKind] = useState('')
       const loadUsage = () => get('/panel/ops/usage').then(setUsage).catch(() => setUsage({ ok: false }))
+      const fetchTimeline = (f) => {
+        const p = new URLSearchParams()
+        if (f.date) p.set('date', f.date)
+        if (f.from) p.set('from', f.from)
+        if (f.to) p.set('to', f.to)
+        if (String(f.q || '').trim()) p.set('q', String(f.q).trim())
+        if (f.kind) p.set('kind', f.kind)
+        p.set('limit', '500')
+        return get('/panel/ops/timeline?' + p.toString()).then(setTimeline).catch(() => setTimeline({ ok: false }))
+      }
+      const loadTimeline = () => fetchTimeline({ date: tlDate, from: tlFrom, to: tlTo, q: tlQ, kind: tlKind })
       useEffect(() => {
         loadUsage()
-        get('/panel/ops/timeline').then(setTimeline).catch(() => setTimeline({ ok: false }))
+        loadTimeline()
         get('/panel/ops/tools').then(setTools).catch(() => setTools({ ok: false }))
         get('/panel/ops/skills').then(setSkills).catch(() => setSkills({ ok: false }))
       }, [])
@@ -3125,7 +3150,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         h('div', { className: 'ab-flex', style: { flexWrap: 'wrap' } },
           h(Seg, { value: page, onChange: setPage, options: [{ value: 'token', label: 'Token 用量' }, { value: 'timeline', label: '统一时间线' }, { value: 'tools', label: '工具与技能' }] }),
           h('div', { className: 'ab-spacer' }),
-          h(Btn, { small: true, kind: 'ghost', onClick: () => { loadUsage(); get('/panel/ops/timeline').then(setTimeline); get('/panel/ops/tools').then(setTools); get('/panel/ops/skills').then(setSkills) } }, '刷新')),
+          h(Btn, { small: true, kind: 'ghost', onClick: () => { loadUsage(); loadTimeline(); get('/panel/ops/tools').then(setTools); get('/panel/ops/skills').then(setSkills) } }, '刷新')),
         page === 'token' ? h(Card, { title: 'Token 用量（最近 7 天）', desc: usage && usage.note ? usage.note : '按 DSH 返回的 usage 实测；拿不到就按字符数估算，并明确标「估算」。' },
           usage === null ? h(Empty, { icon: '⏳', text: '加载中…' }) : !usage.ok ? h('div', { className: 'ab-note err' }, usage.message || '统计没读出来') : h('div', null,
             h('div', { className: 'ab-grid ab-g4', style: { marginBottom: 12 } },
@@ -3136,10 +3161,24 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             days.length ? h('div', { className: 'ab-list' }, days.map(([day, n]) => h('div', { key: day, className: 'ab-li' },
               h('div', { className: 'meta' }, day), h('div', { className: 'body' }, h('div', { className: 'ab-mood', style: { width: 160, display: 'inline-block', verticalAlign: 'middle' } }, h('i', { style: { width: Math.max(4, Math.round(n / peak * 100)) + '%' } })), h('span', { className: 'ab-muted ab-small' }, '  ' + n + ' token'))))) : h(Empty, { icon: '🫧', text: '还没有用量记录，聊几句再回来。' }),
             Object.keys(usage.byPurpose || {}).length ? h('div', { className: 'ab-kv', style: { marginTop: 10 } }, Object.entries(usage.byPurpose).map(([k, n]) => h('span', { key: k, className: 'ab-flex' }, h('span', null, k), h('span', { className: 'ab-muted' }, n + ' token')))) : null)) : null,
-        page === 'timeline' ? h(Card, { title: '统一时间线（保留 ' + ((timeline && timeline.keepDays) || 7) + ' 天）', desc: '聊天、记忆整理、翻唱合成合在一起按时间排。只在本机，过期自动清。' },
+        page === 'timeline' ? h(Card, { title: '统一时间线（保留 ' + ((timeline && timeline.keepDays) || 7) + ' 天）', desc: '每天全部输入 / 输出正文都在这里，按日期（默认今天）、起止时间和关键字筛。只在本机，过期自动清。' },
+          h('div', { className: 'ab-flex', style: { flexWrap: 'wrap', gap: 8, marginBottom: 10 } },
+            h('input', { className: 'ab-input sm', type: 'date', value: tlDate, onChange: (e) => setTlDate(e.target.value) }),
+            h('input', { className: 'ab-input', type: 'time', style: { width: 110 }, value: tlFrom, onChange: (e) => setTlFrom(e.target.value) }),
+            h('span', { className: 'ab-muted ab-small' }, '至'),
+            h('input', { className: 'ab-input', type: 'time', style: { width: 110 }, value: tlTo, onChange: (e) => setTlTo(e.target.value) }),
+            h('input', { className: 'ab-input', type: 'text', placeholder: '关键字（输入或输出正文）', value: tlQ, onChange: (e) => setTlQ(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') loadTimeline() } }),
+            h('select', { className: 'ab-select', value: tlKind, onChange: (e) => setTlKind(e.target.value) },
+              h('option', { value: '' }, '全部类型'),
+              h('option', { value: 'in' }, '收到消息'),
+              h('option', { value: 'out' }, '发出消息'),
+              h('option', { value: 'song' }, '翻唱作业'),
+              h('option', { value: 'memory' }, '记忆')),
+            h(Btn, { small: true, onClick: loadTimeline }, '筛选'),
+            h(Btn, { small: true, kind: 'ghost', onClick: () => { setTlDate(dayOf(Date.now())); setTlFrom(''); setTlTo(''); setTlQ(''); setTlKind(''); fetchTimeline({ date: dayOf(Date.now()) }) } }, '回到今天')),
           timeline === null ? h(Empty, { icon: '⏳', text: '加载中…' }) : !timeline.ok ? h('div', { className: 'ab-note err' }, timeline.message || '时间线没读出来') :
-            (timeline.merged || []).length ? h('div', { className: 'ab-list' }, (timeline.merged || []).slice(0, 200).map((row, i) => h('div', { key: i, className: 'ab-li' },
-              h('div', { className: 'meta' }, timeAgo(row.at) + ' · ' + (row.source || row.kind)), h('div', { className: 'body' }, row.text)))) : h(Empty, { icon: '🫧', text: '还没有记录。' })) : null,
+            (timeline.merged || []).length ? h('div', { className: 'ab-list' }, (timeline.merged || []).map((row, i) => h('div', { key: i, className: 'ab-li' },
+              h('div', { className: 'meta' }, dayOf(row.at) + ' ' + clockOf(row.at) + ' · ' + (TL_KIND[row.kind] || row.source || row.kind)), h('div', { className: 'body' }, row.text)))) : h(Empty, { icon: '🫧', text: '这个时间段还没有记录。换一天或清空关键字试试。' })) : null,
         page === 'tools' ? h('div', { className: 'ab-grid' },
           h(Card, { title: '工具暴露开关', desc: '关掉的工具不会挂给模型：她不会看见、也不会调用。省上下文，也能临时关掉生图 / 群管这类能力。共 ' + ((tools && tools.list && tools.list.length) || 0) + ' 个，已停用 ' + offCount + ' 个。' },
             tools === null ? h(Empty, { icon: '⏳', text: '加载中…' }) : !tools.ok ? h('div', { className: 'ab-note err' }, tools.message || '工具列表没读出来') :
