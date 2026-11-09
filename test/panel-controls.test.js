@@ -2,7 +2,7 @@
 // 这些都直接改服务端状态，必须真的作用到模型上下文 / 工具表，不能只改界面。
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startMockOneBot } from './helpers/mock-onebot.js'
@@ -113,4 +113,25 @@ test('运行记录接口可用；生图自测只接受 POST（不会误触发生
   const img = await call('/image/test')
   assert.equal(img.ok, false)
   assert.match(img.message, /POST/)
+})
+
+test('时间线合并包含聊天收发，并按日期 / 关键字筛选', async () => {
+  const at = Date.now()
+  const d = new Date(at)
+  const pad = (n) => String(n).padStart(2, '0')
+  const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  const text = '时间线合并测试关键字-' + at
+  mkdirSync(join(dataDir, 'ops'), { recursive: true })
+  appendFileSync(join(dataDir, 'ops', 'timeline.jsonl'), JSON.stringify({
+    at, kind: 'in', text, source: 'activity', chatId: 'private:' + OWNER,
+  }) + '\n')
+
+  const hit = await call('/panel/ops/timeline?date=' + today + '&q=' + encodeURIComponent('时间线合并测试关键字'))
+  assert.equal(hit.ok, true, JSON.stringify(hit))
+  assert.ok(Array.isArray(hit.merged), 'timeline 没返回 merged')
+  assert.ok(hit.merged.some((row) => row.text === text), 'merged 漏掉了 activity（聊天输入/输出）')
+  assert.ok(hit.list.some((row) => row.text === text), 'list 没读到刚写入的 activity')
+
+  const miss = await call('/panel/ops/timeline?date=1999-01-01&q=' + encodeURIComponent('时间线合并测试关键字'))
+  assert.equal(miss.merged.length, 0, '日期筛选没生效')
 })

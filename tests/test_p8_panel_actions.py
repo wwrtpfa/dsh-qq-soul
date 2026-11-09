@@ -342,3 +342,14 @@ def test_音色库每一行都告诉面板有没有索引(srv):
     out = tools_mod.rvc_voices(cfg)
     row = next(r for r in out["items"] if r["name"] == "d2")
     assert row["hasIndex"] is True and row["index"].endswith("d2.index")
+
+
+def test_三种演唱模式保存后读回(srv):
+    base, _cfg = srv
+    saved = _call(base, "POST", "/song/strategy", {"mode": "accompaniment"})
+    assert saved["strategy"]["mode"] == "accompaniment"
+    assert saved["strategy"]["trim"]["mode"] == "off"
+    again = _call(base, "GET", "/song/strategy")
+    assert again["strategy"]["mode"] == "accompaniment"
+    bad = _call(base, "POST", "/song/strategy", {"mode": "karaoke-night"})
+    assert bad["code"] == "BAD_STRATEGY"

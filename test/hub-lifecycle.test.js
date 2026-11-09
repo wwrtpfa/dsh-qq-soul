@@ -105,14 +105,14 @@ function config(patch = {}) {
     snowluma: { autoStart: false, autoAttach: false, dir: join(root, 'no-snowluma') }, ...patch })
 }
 
-function setup(t, { cfg = config(), brain = async () => '', hooks, buildTools, onebot, onCommand, onActivity } = {}) {
+function setup(t, { cfg = config(), brain = async () => '', hooks, buildTools, onebot, onCommand, onActivity, onUsage } = {}) {
   process.env.AURABOT_DATA_DIR = mkdtempSync(join(root, 'data-'))
   const fake = createFakeDsh({ brain })
   const calls = []
   const hub = createHub({ dsh: fake.ctx, getConfig: () => cfg,
     log: Object.fromEntries(['info', 'warn', 'error', 'debug'].map((k) => [k, (...v) => fake.logs.push(v.join(' '))])),
     onebot: onebot || { connected: true, async call(action, params) { calls.push({ action, params }); return { message_id: calls.length } } },
-    hooks, buildTools, onCommand, onActivity })
+    hooks, buildTools, onCommand, onActivity, onUsage })
   fake.ctx.effect(() => fake.ctx.on('session/event', hub.onSessionEvent))
   t.after(() => { try { hub.dispose?.() } finally { fake.dispose() } })
   return { hub, fake, calls }
@@ -369,3 +369,37 @@ test('卸载会结束后台回复等待，而不用等模型或超时', { timeou
   assert.equal(result.code, 'AURABOT_DISPOSED')
 })
 
+
+test('turn/end 把 DSH 的结构化 usage 交给 onUsage（实测）', { timeout: 5000 }, async (t) => {
+  const usages = []
+  const s = setup(t, { brain: async () => '第一轮回复', onUsage: (entry) => usages.push(entry) })
+  await s.hub.onMessage(event('你好'))
+  await settle()
+  const agent = [...s.fake.agents.values()][0]
+  s.hub.onSessionEvent(agent.session, {
+    type: 'assistant/message',
+    data: {
+      turn: 2,
+      usage: { inputTokens: 120, outputTokens: 30, totalTokens: 150 },
+      message: { content: [{ type: 'text', text: '第二轮回复' }] },
+    },
+  })
+  s.hub.onSessionEvent(agent.session, { type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })
+  await settle()
+  const measured = usages.find((u) => u.result)
+  assert.ok(measured, 'DSH 给了 usage，但 hub 没上报：' + JSON.stringify(usages))
+  assert.equal(measured.purpose, 'chat')
+  assert.deepEqual(measured.result.usage, { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 })
+})
+
+test('没有 usage 时按输入 + 回复估算，并带上正文给统计标估算', { timeout: 5000 }, async (t) => {
+  const usages = []
+  const s = setup(t, { brain: async () => '收到啦', onUsage: (entry) => usages.push(entry) })
+  await s.hub.onMessage(event('你好呀'))
+  await settle()
+  assert.equal(usages.length, 1, '一轮只该上报一次：' + JSON.stringify(usages))
+  assert.equal(usages[0].purpose, 'chat')
+  assert.equal(usages[0].result, undefined)
+  assert.match(usages[0].text, /你好呀/)
+  assert.match(usages[0].text, /收到啦/)
+})
