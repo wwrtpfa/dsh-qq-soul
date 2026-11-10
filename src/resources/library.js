@@ -13,9 +13,10 @@ import { basename, extname, join, resolve, sep, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { dataDir, dshHome } from '../core/store.js'
 import { readZip } from '../song/zip.js'
+import { readRar } from '../song/rar.js'
 
 export const AUDIO_EXT = ['.wav', '.mp3', '.m4a', '.flac', '.ogg', '.aac', '.opus']
-export const MODEL_EXT = ['.pth', '.index', '.ckpt', '.zip', '.bin', '.safetensors', '.onnx', '.pt']
+export const MODEL_EXT = ['.pth', '.index', '.ckpt', '.zip', '.rar', '.bin', '.safetensors', '.onnx', '.pt']
 
 const AUDIO = new Set(AUDIO_EXT)
 const MODEL = new Set(MODEL_EXT)
@@ -265,12 +266,18 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
   }
 
   /**
-   * 导入音色。.zip / .pth / .index 都收。
+   * 导入音色。.zip / .rar / .pth / .index 都收。
    * 用户要的「校验两个文件」：pth 必须有；没有 index 也导入，但明确告警（音高细节会差一点）。
+   * rar 要解压，返回 Promise；其余格式同步返回。
    */
   function importRvc(filename, buf) {
     const name = clean(filename)
     const lower = name.toLowerCase()
+    if (lower.endsWith('.rar')) {
+      return readRar(buf, (n) => /\.(pth|index)$/i.test(n) && !n.includes('__MACOSX'))
+        .then((files) => saveRvc(files.map((f) => ({ name: clean(f.name), data: f.data }))))
+        .catch((error) => ({ ok: false, message: '这个 rar 解不开：' + (error.message || error) }))
+    }
     let files = []
     if (lower.endsWith('.zip')) {
       try {
@@ -282,8 +289,12 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
     } else if (lower.endsWith('.pth') || lower.endsWith('.index')) {
       files = [{ name, data: buf }]
     } else {
-      return { ok: false, message: '只支持 .zip、.pth、.index' }
+      return { ok: false, message: '只支持 .zip、.rar、.pth、.index' }
     }
+    return saveRvc(files)
+  }
+
+  function saveRvc(files) {
     const { pths, idxs } = pairZip(files)
     const dir = roots().rvc
     // 只传了一个 .index：按同名配到已有的 .pth 上（用户常见的「补一个索引」）

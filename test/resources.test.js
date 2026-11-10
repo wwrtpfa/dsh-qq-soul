@@ -60,6 +60,14 @@ test('RVC：假 pth（文件太小）拒绝', () => {
   assert.match(r.message, /不像 RVC 权重/)
 })
 
+test('RVC：坏 rar 给一句人话，不抛异常', async () => {
+  const out = res.importRvc('假的.rar', Buffer.from('not a rar'))
+  assert.equal(typeof out.then, 'function')
+  const r = await out
+  assert.equal(r.ok, false)
+  assert.match(r.message, /rar 解不开/)
+})
+
 test('RVC：受管目录里改名，pth 和 index 一起改', () => {
   const before = res.listRvc().items.find((x) => x.name === '我的音色')
   const r = res.renameRvc(before.pth, '新名字')

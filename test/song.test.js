@@ -134,6 +134,15 @@ test('导入音色：zip 里的 .pth 和 .index 自动识别，单个音色时 i
   assert.ok(v[0].index.endsWith('小鱼.index'), '唯一的 index 自动配上')
 })
 
+test('导入音色：.rar 也能导（异步解压），坏包给一句人话而不是抛异常', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'import-'))
+  const out = studio.importModels(dir, 'yae-rvc.rar', Buffer.from('definitely not rar'))
+  assert.equal(typeof out.then, 'function', 'rar 走异步解压')
+  const r = await out
+  assert.equal(r.ok, false)
+  assert.match(r.message, /rar 解不开/)
+})
+
 test('导入音色：单个 .pth 直接导入；不是模型、不支持的格式会拒绝；可以删除', () => {
   const dir = mkdtempSync(join(tmpdir(), 'import-'))
   assert.equal(studio.importModels(dir, 'voiceX.pth', fakePth()).ok, true)

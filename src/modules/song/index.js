@@ -7,6 +7,7 @@
 import { createSongStudio, checkRoot, listDrives } from '../../song/studio.js'
 import { defineTool, str, int, bool } from '../../tools/tools.js'
 import { createServiceClient } from '../../service/client.js'
+import { createServiceLauncher } from '../../service/launcher.js'
 import { createSongBridge } from '../../service/song-bridge.js'
 
 export default {
@@ -42,8 +43,29 @@ export default {
 
     // ---- service 模式（可开关）--------------------------------------------
     const service = createServiceClient({ getConfig: api.config, log: api.log })
-    const bridge = createSongBridge({ service, hub, onSung, getConfig: api.config })
+    //: 服务没跑时由插件自己拉起：面板「启动服务」和点歌失败自动重试共用。
+    //: 不要求用户单独开 Applio——那是服务内部的事。
+    const startService = () => createServiceLauncher({
+      root: api.core.root,
+      url: String(api.config()?.service?.url || '') || undefined,
+    }).start()
+    const bridge = createSongBridge({ service, hub, onSung, getConfig: api.config, startService })
     const started = { jobs: [] }
+
+    /** 搜/下/唱之前都先确保服务在跑：连不上就自动拉一次，再不行才报错。 */
+    const withService = async (run) => {
+      try { return await run() } catch (error) {
+        if (error?.code !== 'SERVICE_UNREACHABLE') throw error
+        const boot = await startService().catch(() => null)
+        if (!boot?.ok) {
+          const err = new Error(`音频服务没在跑，自动启动也没成功（${boot?.message || '启动报错'}）。` +
+            '去面板「概览 → 音频服务」点「启动服务」或「安装向导」')
+          err.code = 'SERVICE_START_FAILED'
+          throw err
+        }
+        return run()
+      }
+    }
 
     /** 慢工具先回一句人话：作业在后台跑，状态去面板 / SSE 看（决策 19）。 */
     const startSong = (args) => {
@@ -75,7 +97,7 @@ export default {
       return [
         defineTool({
           name: 'qq_song_cover',
-          description: '用你自己的声音翻唱一首歌，做好后自动以语音条发到当前聊天（要两三分钟，调用后先简单回一句「等我一下」就好）。song 写歌名，最好带上歌手，比如「小幸运 田馥甄」。pitch 是变调半音：你是女声，原唱是男声时一般 +12，原唱是女声时 0。用户要清唱、不要伴奏时 mode 填 acapella；要伴奏时填 accompaniment（保留原曲前奏）或 accompaniment-trim（从人声开始，去掉开头没人声的空白）；不填就跟随后台默认。如果先用 qq_music_download 下好了歌，把落盘路径填到 file，翻唱就直接用它，不再自己搜。',
+          description: '用你自己的声音翻唱一首歌，做好后自动以语音条发到当前聊天（要两三分钟，调用后先简单回一句「等我一下」就好）。song 写歌名，最好带上歌手，比如「小幸运 田馥甄」。pitch 是变调半音：你是女声，原唱是男声时一般 +12，原唱是女声时 0。用户要清唱、不要伴奏时 mode 填 acapella；要伴奏时填 accompaniment（保留原曲前奏）或 accompaniment-trim（从人声开始，去掉开头没人声的空白）；不填就跟随后台默认。如果先用 qq_music_download 下好了歌，把落盘路径填到 file，翻唱就直接用它，不再自己搜。音频服务没跑时插件会自动拉起，不用叫用户手动开 service 或 Applio；如果它自己起不来，就让用户去面板「概览 → 音频服务」点「启动服务」或「安装向导」。',
           properties: {
             song: str('歌名（可以带歌手）'),
             pitch: int('变调半音：原唱男声 +12，女声 0'),
@@ -104,7 +126,7 @@ export default {
           execute: async ({ song: name, limit, source }) => {
             if (!service.enabled()) return { ok: false, message: '搜歌要走音频服务：先在面板「概览 → 音频服务」打开并保存' }
             try {
-              const r = await service.musicSearch(String(name || '').trim(), Number(limit) || 10, String(source || ''))
+              const r = await withService(() => service.musicSearch(String(name || '').trim(), Number(limit) || 10, String(source || '')))
               const items = (r.items || []).map((row) => ({
                 title: row.title || row.name || '',
                 artist: row.artist || '',
@@ -136,13 +158,13 @@ export default {
             if (ownerOnly()) return { ok: false, message: '只有主人能让我下歌' }
             if (!service.enabled()) return { ok: false, message: '下载要走音频服务：先在面板「概览 → 音频服务」打开并保存' }
             try {
-              const r = await service.musicDownload({
+              const r = await withService(() => service.musicDownload({
                 name: String(name || '').trim(),
                 url: String(url || '').trim(),
                 artist: String(artist || ''),
                 sourceId: String(sourceId || ''),
                 site: String(site || ''),
-              })
+              }))
               return r.ok === false
                 ? { ok: false, code: r.code || 'DOWNLOAD_FAILED', message: r.message || '没下下来' }
                 : { ok: true, file: r.file, cached: Boolean(r.cached), message: r.message || '下好了' }
@@ -158,6 +180,12 @@ export default {
     api.route('/service/health', async () => {
       try { return { ok: true, ...(await service.healthz()) } }
       catch (error) { return { ok: false, code: error.code || 'SERVICE_UNREACHABLE', message: error.message } }
+    })
+    // 概览页「启动服务」：服务没跑时一键拉起（macOS 踢 launchd，其它平台 spawn）
+    api.route('/service/start', async (req) => {
+      if (req.method !== 'POST') return { ok: false, code: 'METHOD_NOT_ALLOWED', message: '用 POST' }
+      try { return await startService() }
+      catch (error) { return { ok: false, code: 'SERVICE_START_FAILED', message: error.message || '音频服务起不来' } }
     })
     api.route('/song/status', async () => {
       const base = song.status()
@@ -358,13 +386,13 @@ export default {
       } catch (error) { return { ok: false, message: error.message } }
     })
     api.route('/song/account', async () => song.account())
-    // 导入音色：面板把文件原样传上来（.zip / .pth / .index），文件名放在 ?name= 里
+    // 导入音色：面板把文件原样传上来（.zip / .rar / .pth / .index），文件名放在 ?name= 里
     api.route('/song/import', async (req) => {
       const name = http.query(req).name || ''
       try {
         const buf = await http.raw(req, 1024 * 1024 * 1024)
         if (!buf.length) return { ok: false, message: '文件是空的' }
-        const r = song.importModels(name, buf)
+        const r = await song.importModels(name, buf)
         if (r.ok) api.log.info('导入音色：' + r.message)
         return r
       } catch (error) {

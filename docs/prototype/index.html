@@ -567,7 +567,7 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
       <div class="grid g2" id="ttsModelBody"><div class="card"><h3>正在读…</h3></div></div>
 
       <div class="grouphead"><h3>RVC 音色</h3><small>一个 .pth + 一个 .index；翻唱页下拉选的就是这里</small><div class="sp"></div>
-        <button class="btn sm" onclick="rvcImport()">导入音色（.pth / .zip）</button></div>
+        <button class="btn sm" onclick="rvcImport()">导入音色（.pth / .zip / .rar）</button></div>
       <div class="card" id="rvcBody"><p>连上 service 后显示本机音色。</p></div>
 
       <div class="grouphead"><h3>人声分离</h3><small>翻唱第一步：把人声和伴奏拆开</small></div>
@@ -1049,6 +1049,8 @@ function fmtBytes(n) {
 function go(v) {
   $$('.view').forEach(x => x.classList.toggle('on', x.id === 'v-' + v));
   $$('.nav button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  // 记住当前页：#wizard 这类深链能从插件面板直接跳进来
+  try { if (location.hash !== '#' + v) history.replaceState(null, '', '#' + v); } catch (e) {}
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (state.live) {
     if (v === 'models') refreshModelsLive().catch(() => {});
@@ -1624,7 +1626,7 @@ function renderRvc() {
   const rows = lib.items || [];
   const cur = lib.current || '';
   if (!rows.length) {
-    box.innerHTML = '<p>还没有音色。点「导入音色」，选一个 .pth（或打好的 .zip 包）。</p>';
+    box.innerHTML = '<p>还没有音色。点「导入音色」，选一个 .pth（或打好的 .zip / .rar 包）。</p>';
     return;
   }
   box.innerHTML = rows.map(v => {
@@ -2527,7 +2529,10 @@ function bindStatic() {
   renderAudioList();
   renderRvcSelect();
   setMode();
+  const startView = String(location.hash || '').replace(/^#/, '');
   autoConnect().then(ok => {
+    // 插件面板的「安装向导」走 #wizard 深链，连上后直接停在这一页
+    if (startView && $('#v-' + startView)) { state.step = 0; go(startView); renderWiz(); }
     if (!ok) {
       const hint = $('#demoHint'); if (hint) hint.style.display = 'block';
       const note = $('#connNote');

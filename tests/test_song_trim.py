@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from services.song import trim, window
+from services.song import cover_tools, trim, window
 
 
 def _wav(path: Path, lead_s: float, tone_s: float, rate: int = 16000):
@@ -43,6 +43,55 @@ def test_起唱点_纯静音返回0(tmp_path):
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
         w.writeframes(b"\x00" * 32000)
     assert trim.detect_start_seconds(p) == 0.0
+
+
+def test_起唱点_忽略孤立瞬态_锁定真唱(tmp_path):
+    p = tmp_path / "vocals.wav"
+    rate = 16000
+    frames = bytearray(b"\x00" * (int(rate * 1.0) * 2))
+    for i in range(int(rate * 0.08)):
+        frames += struct.pack("<h", int(28000 * math.sin(2 * math.pi * 600 * i / rate)))
+    frames += b"\x00" * (int(rate * 3.92) * 2)
+    for i in range(int(rate * 2.0)):
+        frames += struct.pack("<h", int(10000 * math.sin(2 * math.pi * 220 * i / rate)))
+    with wave.open(str(p), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+        w.writeframes(bytes(frames))
+    start = trim.detect_start_seconds(p)
+    assert 4.8 <= start <= 5.2, "0.08 秒的瞬态不该被当成开唱"
+
+
+def _rms_db(path: Path, begin: float, end: float, rate: int = 16000) -> float:
+    with wave.open(str(path), "rb") as w:
+        rate = w.getframerate()
+        w.setpos(int(begin * rate))
+        raw = w.readframes(int((end - begin) * rate))
+    samples = struct.unpack("<%dh" % (len(raw) // 2), raw)
+    rms = math.sqrt(sum(x * x for x in samples) / max(1, len(samples)))
+    return 20 * math.log10(max(rms, 1e-9) / 32768.0)
+
+
+def test_换声前软门限_压掉残留但保留真唱(tmp_path):
+    if not cover_tools.ffmpeg_exe():
+        pytest.skip("没有 ffmpeg")
+    src = tmp_path / "vocals.wav"
+    rate = 16000
+    frames = bytearray()
+    for i in range(int(rate * 1.0)):
+        frames += struct.pack("<h", int(100 * math.sin(2 * math.pi * 300 * i / rate)))
+    for i in range(int(rate * 1.5)):
+        frames += struct.pack("<h", int(10000 * math.sin(2 * math.pi * 220 * i / rate)))
+    with wave.open(str(src), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+        w.writeframes(bytes(frames))
+    dst = tmp_path / "vocals-gated.wav"
+    assert cover_tools.gate_low_level(src, dst) is not None
+    quiet_before = _rms_db(src, 0.3, 0.9)
+    quiet_after = _rms_db(dst, 0.3, 0.9)
+    loud_before = _rms_db(src, 1.2, 1.4)
+    loud_after = _rms_db(dst, 1.2, 1.4)
+    assert quiet_before - quiet_after >= 20.0, "残留没被压下去"
+    assert abs(loud_after - loud_before) <= 1.5, "真唱句不该被动"
 
 
 def test_trim_wav_三条轨用同一个起点_不产生错位(tmp_path):

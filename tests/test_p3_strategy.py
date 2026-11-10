@@ -264,6 +264,18 @@ def test_模式进指纹_换模式不吃旧缓存(cfg):
     assert a["fingerprint"] != b["fingerprint"]
 
 
+def test_清唱入口不同但听感一样_共用一个缓存键(cfg):
+    trim = strategy.resolve({"mode": "accompaniment-trim"}, cfg)
+    acapella = strategy.resolve({"mode": "acapella"}, cfg)
+    # 伴奏增益 0 时两者都只发人声、trim 都是 auto：不该因为入口不同各算一个键
+    assert strategy.cache_tag(trim, True) == strategy.cache_tag(acapella, True)
+    assert strategy.cache_tag(acapella, True) == acapella["fingerprint"]
+    # 带伴奏时仍按各自指纹走：保留前奏和裁掉前奏听感不同
+    assert strategy.cache_tag(trim, False) == trim["fingerprint"]
+    keep = strategy.resolve({"mode": "accompaniment"}, cfg)
+    assert strategy.cache_tag(keep, True) != strategy.cache_tag(acapella, True)
+
+
 def test_pipeline_伴奏保留前奏_不裁开头(tmp_path, cfg):
     pipe, _ = _pipeline(tmp_path, cfg)
     job = JobStore(tmp_path).create(kind="song", query="测试曲")

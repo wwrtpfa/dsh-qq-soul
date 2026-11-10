@@ -32,7 +32,7 @@ from .registry import ModelRegistry
 from .song import cover_tools
 from .song import strategy as strategy_mod
 from .song.cover_cache import CoverStore
-from .song.pipeline import SongPipeline
+from .song.pipeline import JobCancelled, SongPipeline
 from . import stack as stack_mod
 from . import tools as tools_mod
 from .tts.pipeline import TTSEngine
@@ -742,6 +742,8 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                 def run():
                     try:
                         result = ctx.song.request(body, job)
+                    except JobCancelled:
+                        return  # 面板 / 桥接层已经写过 cancelled，别再覆盖成失败
                     except Exception as exc:
                         result = {"ok": False, "code": "JOB_CRASHED", "message": str(exc) or type(exc).__name__}
                     if result.get("ok"):
@@ -766,7 +768,8 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                             float(result.get("durationSec") or 0),
                             "复用曲库" if result.get("cached") else "新渲染"))
                     else:
-                        job.fail(str(result.get("message") or "没做成"))
+                        job.fail(str(result.get("message") or "没做成"),
+                                 code=str(result.get("code") or ""))
                         tools_mod.add_log(ctx.cfg, "song", "失败 %s · %s" % (
                             job.query, result.get("message") or "没做成"))
 

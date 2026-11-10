@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto'
 import { dataDir, readJson, writeJson } from '../core/store.js'
 import { searchSongs, songUrl, account } from './netease.js'
 import { readZip } from './zip.js'
+import { readRar } from './rar.js'
 
 export const APPLIO_REPO = 'https://github.com/IAHispano/Applio.git'
 export const APPLIO_COMMIT = 'c817f1f83f689ef72e0dfeb1c17ae990b9248506'
@@ -278,21 +279,32 @@ export function looksLikePth(buf) {
 const safeName = (n) => basename(String(n).replace(/\\/g, '/')).replace(/[<>:"|?*\x00-\x1f]/g, '_').trim()
 
 /**
- * 导入音色：.pth / .index，或者装着它们的 zip。存进 models 目录。
- * zip 里只有一个音色时，index 自动改名成「音色名.index」配上。
- * @returns {{ok: boolean, added: string[], indexes: number, message: string}}
+ * 导入音色：.pth / .index，或者装着它们的 zip / rar。存进 models 目录。
+ * 压缩包里只有一个音色时，index 自动改名成「音色名.index」配上。
+ * rar 要解压，返回 Promise；其余格式同步返回。
+ * @returns {{ok: boolean, added: string[], indexes: number, message: string}|Promise<{ok: boolean, added: string[], indexes: number, message: string}>}
  */
 export function importModels(modelsDir, filename, buf) {
   const name = safeName(filename)
   const lower = name.toLowerCase()
+  if (lower.endsWith('.rar')) {
+    return readRar(buf, (n) => /\.(pth|index)$/i.test(n) && !n.includes('__MACOSX'))
+      .then((files) => saveModels(modelsDir, files.map((f) => ({ name: safeName(f.name), data: f.data }))))
+      .catch((error) => ({ ok: false, added: [], indexes: 0, message: '这个 rar 解不开：' + (error.message || error) }))
+  }
   let files
   if (lower.endsWith('.zip')) {
     files = readZip(buf, (n) => /\.(pth|index)$/i.test(n) && !n.includes('__MACOSX')).map((f) => ({ name: safeName(f.name), data: f.data }))
   } else if (lower.endsWith('.pth') || lower.endsWith('.index')) {
     files = [{ name, data: buf }]
   } else {
-    return { ok: false, added: [], indexes: 0, message: '只支持 .zip、.pth、.index 文件' }
+    return { ok: false, added: [], indexes: 0, message: '只支持 .zip、.rar、.pth、.index 文件' }
   }
+  return saveModels(modelsDir, files)
+}
+
+/** 校验并落盘已经解出来的音色文件。 */
+function saveModels(modelsDir, files) {
   const pths = files.filter((f) => f.name.toLowerCase().endsWith('.pth'))
   const idxs = files.filter((f) => f.name.toLowerCase().endsWith('.index'))
   if (!pths.length && !idxs.length) return { ok: false, added: [], indexes: 0, message: '里面没找到 .pth 模型' }
@@ -443,7 +455,7 @@ export function createSongStudio({ getConfig, log, sendVoiceFile, sendText, onSu
       current: current ? { ...current } : null,
       queue: queue.map((q) => ({ query: q.query, chatId: q.chatId })),
       history: history.slice(0, 10),
-      message: !voices.length ? '还没有音色：在下面「音色模型」里导入你有权使用的 RVC 模型（.pth 或 zip）' : ready ? (cfg().enabled ? '可以点歌了' : '准备好了，打开开关就能用') : '还差一些组件，点「一键安装」',
+      message: !voices.length ? '还没有音色：在下面「音色模型」里导入你有权使用的 RVC 模型（.pth 或 zip / rar）' : ready ? (cfg().enabled ? '可以点歌了' : '准备好了，打开开关就能用') : '还差一些组件，点「一键安装」',
     }
   }
 
@@ -734,7 +746,7 @@ export function createSongStudio({ getConfig, log, sendVoiceFile, sendText, onSu
     if (!existsSync(input)) throw new Error('要变声的音频不存在')
     const p = P()
     const voices = listVoices(p.models)
-    if (!voices.length) throw new Error('翻唱里还没有导入音色模型：面板「翻唱」页导入 .pth / zip')
+    if (!voices.length) throw new Error('翻唱里还没有导入音色模型：面板「翻唱」页导入 .pth / zip / rar')
     const v = (voice ? voices.find((x) => x.id === voice) : voices.find((x) => x.id === cfg().voice)) || voices[0]
     const dir = outDir || join(work(), 'speech-rvc')
     mkdirSync(dir, { recursive: true })

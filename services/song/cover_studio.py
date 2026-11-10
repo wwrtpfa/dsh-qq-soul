@@ -384,8 +384,11 @@ class CoverRenderer:
         vocal_only = (bool(self.config.get("vocal_only"))
                       or float(self.mix_options["accompaniment_gain"]) <= 0.001)
         voice_name = self._voice_name()
+        #: v2：起唱点改为「连续成立」+ 清唱换声前压底噪，旧成品开头/间隙的滋滋声
+        #: 不再复用；分离戳仍按原策略指纹走，不会因此重跑 demucs。
+        cache_tag = (target.cache_tag or "") + "|gate2"
         key = cover_cache.cache_key(
-            title, target.source_id, voice_name, vocal_only, target.cache_tag
+            title, target.source_id, voice_name, vocal_only, cache_tag
         )
 
         #: 同歌 + 同音色 + 同清唱/伴奏 + 同策略 → 直接放曲库里那一版。
@@ -477,7 +480,7 @@ class CoverRenderer:
         #: 用户输入可能是「晴天 周杰伦」，曲库里的歌名只有「晴天」。检索拿到真实
         #: 歌名 / 来源 id 后再算一次键，同一首歌换个写法也能直接复用。
         resolved_key = cover_cache.cache_key(
-            candidate.title, candidate.source_id, voice_name, vocal_only, target.cache_tag
+            candidate.title, candidate.source_id, voice_name, vocal_only, cache_tag
         )
         if resolved_key != key:
             key = resolved_key
@@ -527,7 +530,7 @@ class CoverRenderer:
         work = self.store.work_dir(song_key)
         work.mkdir(parents=True, exist_ok=True)
         #: 上一轮可能在换声/混音处失败：半截成品一律清掉，分离的干声尽量留着复用
-        for stale in ("vocal-converted.wav", "cover.mp3", "cover-raw.wav"):
+        for stale in ("vocal-converted.wav", "cover.mp3", "cover-raw.wav", "vocals-gated.wav"):
             try:
                 (work / stale).unlink()
             except OSError:
@@ -614,8 +617,16 @@ class CoverRenderer:
             _clock(eta),
             _clock(sep_elapsed),
         )
+        #: 清唱只留人声：分轨里没唱的地方剩下的伴奏泄漏 / 换气，RVC 会当气声
+        #: 「唱」出来（听感就是滋滋炸麦），所以换声前先按本曲电平压一道。
+        source_vocals = vocals
+        if vocal_only:
+            report(low, "压掉分离残留")
+            gated = cover_tools.gate_low_level(vocals, work / "vocals-gated.wav")
+            if gated is not None:
+                source_vocals = gated
         self._convert(
-            vocals,
+            source_vocals,
             raw,
             self._voice,
             engine_dir=self.config.get("engine_dir") or None,

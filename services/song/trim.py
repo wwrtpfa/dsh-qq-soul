@@ -36,12 +36,22 @@ def _rms_frames(path: Path, *, frame_ms: int = 20) -> tuple[list[float], int]:
     return values, rate
 
 
+def frame_rms_dbfs(path: Path, *, frame_ms: int = 20) -> list[float]:
+    """每帧 RMS 换成 dBFS；读不了 / 非 16-bit = 空列表。"""
+    values, _ = _rms_frames(Path(path), frame_ms=frame_ms)
+    return [20.0 * math.log10(max(v, 1e-9) / 32768.0) for v in values]
+
+
 def detect_start_seconds(path: Path, *, frame_ms: int = 20, padding_sec: float = 0.05,
-                         sensitivity: float = 0.5) -> float:
+                         sensitivity: float = 0.5, min_sustain_sec: float = 0.25) -> float:
     """返回第一句人声的起点（秒）；纯静音 / 读不了 = 0.0。
 
     阈值 = max(峰值 * 0.08, 底噪 * 4) / sensitivity，随素材自适应，
     不依赖任何权重文件。sensitivity 越大越容易提前触发。
+
+    必须连续 ``min_sustain_sec`` 都在阈值以上才算「开唱」：分轨残留里常有一两个
+    20ms 的瞬态（换气、鼓点泄漏），只按单帧判会把起唱点提前几十秒，把整段伴奏
+    残留送进 RVC，出来就是一片滋滋声。
     """
     values, rate = _rms_frames(Path(path), frame_ms=frame_ms)
     if not values:
@@ -52,10 +62,19 @@ def detect_start_seconds(path: Path, *, frame_ms: int = 20, padding_sec: float =
     floor = sorted(values[: max(1, min(10, len(values)))])[0]
     threshold = max(peak * 0.08, floor * 4.0) / max(0.1, float(sensitivity))
     threshold = min(threshold, peak * 0.9)
-    for i, value in enumerate(values):
-        if value > threshold:
+    hold = max(1, int(round(max(0.0, float(min_sustain_sec)) * 1000.0 / frame_ms)))
+    i = 0
+    while i < len(values):
+        if values[i] <= threshold:
+            i += 1
+            continue
+        j = i
+        while j < len(values) and values[j] > threshold:
+            j += 1
+        if j - i >= hold:
             t = i * frame_ms / 1000.0
             return round(max(0.0, t - padding_sec), 2)
+        i = j
     return 0.0
 
 

@@ -3,14 +3,15 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createSongBridge } from '../src/service/song-bridge.js'
 
-function rig({ jobs = [], exists = () => true, timeoutMs = 5000, requestSong } = {}) {
-  const calls = { sent: [], texts: [], sung: [], posted: [], downloaded: [] }
+function rig({ jobs = [], exists = () => true, timeoutMs = 5000, requestSong, job, stallMs, retries, startService } = {}) {
+  const calls = { sent: [], texts: [], sung: [], posted: [], downloaded: [], cancelled: [] }
   const service = {
     requestSong: requestSong || (async (payload) => {
       calls.posted.push(payload)
       return { ok: true, jobId: 'j1', status: 'queued' }
     }),
-    job: async (id) => (jobs.shift() || { done: true, result: { ok: true, file: '/tmp/a.mp3' } }),
+    job: job || (async () => (jobs.shift() || { done: true, result: { ok: true, file: '/tmp/a.mp3' } })),
+    cancelJob: async (id) => { calls.cancelled.push(id); return { ok: true } },
     fileUrl: (rel) => 'http://127.0.0.1:9876/files/' + rel,
   }
   const bridge = createSongBridge({
@@ -24,6 +25,9 @@ function rig({ jobs = [], exists = () => true, timeoutMs = 5000, requestSong } =
     delay: async () => {},
     pollMs: 0,
     timeoutMs,
+    ...(stallMs === undefined ? {} : { stallMs }),
+    ...(retries === undefined ? {} : { retries }),
+    ...(startService === undefined ? {} : { startService }),
   })
   return { bridge, calls }
 }
@@ -72,6 +76,86 @@ test('没给作业号 / 超时都有人话，不把异常甩给模型', async ()
   assert.equal((await b.bridge.request({ song: 'x' })).code, 'SONG_TIMEOUT')
 })
 
+test('服务重启打断作业：自动重提一次，不让用户白等', async () => {
+  let n = 0
+  const { bridge, calls } = rig({
+    requestSong: async (payload) => {
+      calls.posted.push(payload)
+      n += 1
+      return { ok: true, jobId: 'j' + n }
+    },
+    job: async (id) => (id === 'j1'
+      ? { done: true, result: { ok: false, code: 'SERVICE_RESTARTED', message: '音频服务重启了' } }
+      : { done: true, result: { ok: true, file: '/tmp/a.mp3', title: '樱花草' } }),
+  })
+  const out = await bridge.request({ song: '樱花草', chatId: 'private:1', mode: 'acapella' })
+  assert.equal(out.ok, true)
+  assert.equal(out.jobId, 'j2')
+  assert.equal(calls.posted.length, 2, '重启后重提一次')
+  assert.equal(calls.posted[0].mode, 'acapella')
+  assert.deepEqual(calls.sent[0], ['private:1', '/tmp/a.mp3', '樱花草'])
+})
+
+test('没有终态的作业（进程被杀）也按中断重提，而不是当成做完了', async () => {
+  let n = 0
+  const { bridge } = rig({
+    requestSong: async () => { n += 1; return { ok: true, jobId: 'j' + n } },
+    job: async (id) => (id === 'j1'
+      ? { done: false, interrupted: true, events: [{ stage: 'separate' }], result: {} }
+      : { done: true, result: { ok: true, file: '/tmp/a.mp3' } }),
+  })
+  const out = await bridge.request({ song: '樱花草', chatId: 'private:1' })
+  assert.equal(out.ok, true)
+  assert.equal(n, 2)
+})
+
+test('重启两次都打断：给一句明确人话，不发空语音条', async () => {
+  let n = 0
+  const { bridge, calls } = rig({
+    requestSong: async () => { n += 1; return { ok: true, jobId: 'j' + n } },
+    job: async () => ({ done: true, result: { ok: false, code: 'SERVICE_RESTARTED', message: '音频服务重启了' } }),
+  })
+  const out = await bridge.request({ song: '樱花草', chatId: 'private:1' })
+  assert.equal(out.ok, false)
+  assert.equal(out.code, 'SERVICE_RESTARTED')
+  assert.match(out.message, /重启/)
+  assert.equal(calls.sent.length, 0, '失败不发空语音条')
+  assert.equal(calls.texts.length, 1)
+})
+
+test('长时间没有新进度：判卡死、取消作业、回一句人话', async () => {
+  const { bridge, calls } = rig({
+    jobs: [{ done: false, events: [{ stage: 'separate', text: '分离人声 0%' }] }],
+    stallMs: 0,
+  })
+  const out = await bridge.request({ song: '樱花草', chatId: 'private:1' })
+  assert.equal(out.ok, false)
+  assert.equal(out.code, 'SONG_STALLED')
+  assert.match(out.message, /separate|某一步/)
+  assert.deepEqual(calls.cancelled, ['j1'])
+  assert.equal(calls.texts.length, 1)
+})
+
+test('轮询偶发断连不算失败，连续失败才报服务不可达', async () => {
+  let polls = 0
+  const flaky = rig({
+    job: async () => {
+      polls += 1
+      if (polls <= 2) { const e = new Error('ECONNREFUSED'); e.code = 'SERVICE_UNREACHABLE'; throw e }
+      return { done: true, result: { ok: true, file: '/tmp/a.mp3' } }
+    },
+  })
+  assert.equal((await flaky.bridge.request({ song: '晴天', chatId: 'private:1' })).ok, true)
+
+  const down = rig({
+    job: async () => { const e = new Error('ECONNREFUSED'); e.code = 'SERVICE_UNREACHABLE'; throw e },
+  })
+  const out = await down.bridge.request({ song: '晴天', chatId: 'private:1' })
+  assert.equal(out.ok, false)
+  assert.equal(out.code, 'SERVICE_UNREACHABLE')
+  assert.match(out.message, /断了|连不上/)
+})
+
 test('本机拿不到绝对路径时从 /files/ 下载成品', async () => {
   const { bridge, calls } = rig({
     exists: () => false,
@@ -83,11 +167,60 @@ test('本机拿不到绝对路径时从 /files/ 下载成品', async () => {
   assert.deepEqual(calls.downloaded, ['http://127.0.0.1:9876/files/audio/a.mp3'])
 })
 
-test('连不上 service 时错误 code 原样透传', async () => {
-  const { bridge } = rig({
+test('连不上 service：不抛异常，返回原 code + 一句启动提示', async () => {
+  const { bridge, calls } = rig({
     requestSong: async () => { const e = new Error('音频服务没连上'); e.code = 'SERVICE_UNREACHABLE'; throw e },
   })
-  await assert.rejects(bridge.request({ song: 'x' }), (e) => e.code === 'SERVICE_UNREACHABLE')
+  const out = await bridge.request({ song: 'x', chatId: 'private:1' })
+  assert.equal(out.ok, false)
+  assert.equal(out.code, 'SERVICE_UNREACHABLE')
+  assert.equal(calls.texts.length, 1)
+  assert.match(out.message, /启动服务/, '告诉用户面板上点哪')
+})
+
+test('连不上时先自动拉起服务，起来了就继续唱（不把 Applio 丢给用户）', async () => {
+  let boots = 0
+  let n = 0
+  const { bridge, calls } = rig({
+    startService: async () => { boots += 1; return { ok: true, started: true, message: '音频服务已启动' } },
+    requestSong: async (payload) => {
+      calls.posted.push(payload)
+      n += 1
+      if (n === 1) { const e = new Error('音频服务没连上'); e.code = 'SERVICE_UNREACHABLE'; throw e }
+      return { ok: true, jobId: 'j1' }
+    },
+  })
+  const out = await bridge.request({ song: '晴天', chatId: 'private:1' })
+  assert.equal(out.ok, true)
+  assert.equal(boots, 1, '只在第一次连不上时拉一次')
+  assert.equal(calls.posted.length, 2, '拉起来后重提作业')
+  assert.equal(calls.sent.length, 1)
+})
+
+test('自动拉起失败：回一句人话，指向面板「启动服务」而不是让用户手动开 Applio', async () => {
+  const { bridge, calls } = rig({
+    startService: async () => ({ ok: false, code: 'SERVICE_START_TIMEOUT', message: '20 秒内还没连上' }),
+    requestSong: async () => { const e = new Error('音频服务没连上'); e.code = 'SERVICE_UNREACHABLE'; throw e },
+  })
+  const out = await bridge.request({ song: '晴天', chatId: 'private:1' })
+  assert.equal(out.ok, false)
+  assert.equal(out.code, 'SERVICE_START_FAILED')
+  assert.match(out.message, /启动服务/)
+  assert.match(out.message, /20 秒/)
+  assert.doesNotMatch(out.message, /applio/i)
+  assert.equal(calls.texts.length, 1)
+})
+
+test('请求本身报错（服务在线但 4xx/5xx）不触发自动重启', async () => {
+  let boots = 0
+  const { bridge } = rig({
+    startService: async () => { boots += 1; return { ok: true } },
+    requestSong: async () => { const e = new Error('歌名不能为空'); e.code = 'BAD_REQUEST'; throw e },
+  })
+  const out = await bridge.request({ song: 'x' })
+  assert.equal(out.ok, false)
+  assert.equal(out.code, 'BAD_REQUEST')
+  assert.equal(boots, 0, '服务在线时不瞎重启')
 })
 
 test('搜不到 / 拿不到音频：失败也要在聊天里回一句，不再沉默', async () => {

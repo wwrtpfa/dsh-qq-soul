@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .trim import frame_rms_dbfs
+
 log = logging.getLogger("qqsoul")
 
 #: Applio（RVC 推理）的默认安装位置；它的 ``.venv`` 里同时装了 demucs
@@ -474,6 +476,90 @@ def tighten_audio(
         return target
     except (OSError, CoverToolError, subprocess.SubprocessError, TypeError, ValueError) as exc:
         log.info("清唱去空白跳过（%s）：%s", type(exc).__name__, exc)
+        return None
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
+GATE_RANGE_GAIN = 0.02
+GATE_RATIO = 6.0
+
+
+def gate_filter(
+    *,
+    threshold_db: float = -42.0,
+    range_gain: float = GATE_RANGE_GAIN,
+    ratio: float = GATE_RATIO,
+    attack_ms: float = 10.0,
+    release_ms: float = 250.0,
+) -> str:
+    """清唱换声前的下行扩展器（ffmpeg ``agate``），纯字符串便于单测。
+
+    阈值以下最多压到 ``range_gain``，阈值以上原样通过；起音/释放留了缓冲，
+    不会把句尾的尾音切成「咔」。
+    """
+    def bounded(value, low, high):
+        return max(low, min(high, float(value)))
+
+    threshold = 10.0 ** (bounded(threshold_db, -60.0, -20.0) / 20.0)
+    return (
+        "agate=threshold=%.6f:ratio=%.1f:range=%.4f:attack=%.1f:release=%.1f:detection=rms"
+        % (
+            threshold,
+            bounded(ratio, 1.0, 9000.0),
+            bounded(range_gain, 0.0, 1.0),
+            bounded(attack_ms, 0.01, 9000.0),
+            bounded(release_ms, 0.01, 9000.0),
+        )
+    )
+
+
+def gate_low_level(
+    src: str | Path,
+    dst: str | Path | None = None,
+    *,
+    threshold_db: float | None = None,
+    timeout: float = MIX_TIMEOUT_S,
+) -> Path | None:
+    """把分离残留压到 RVC 听不见的水平；失败返回 ``None``，不阻断做歌。
+
+    **只在清唱模式、换声之前用**：分轨里没唱的地方常剩下 -45 ~ -30 dB 的伴奏
+    泄漏和换气声，RVC 会把它们当气声「唱」出来（听感就是滋滋炸麦）。真唱句
+    通常比残留高 10 dB 以上，所以按本曲中位电平减 16 dB 定阈值，并夹在
+    [-52, -38] dBFS：整首本来就安静的歌不会被全压掉，很响的歌也不误伤真唱。
+    """
+    source = Path(src)
+    target = Path(dst) if dst is not None else source
+    if not source.is_file():
+        return None
+    if threshold_db is None:
+        levels = sorted(frame_rms_dbfs(source))
+        if not levels:
+            return None
+        threshold_db = max(-52.0, min(levels[len(levels) // 2] - 16.0, -38.0))
+    tmp = target.with_name(target.stem + ".gate.part" + (target.suffix or ".wav"))
+    try:
+        exe = ffmpeg_exe()
+        if not exe:
+            return None
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _run(
+            [exe, "-y", "-nostdin", "-v", "error", "-i", str(source),
+             "-vn", "-af", gate_filter(threshold_db=threshold_db),
+             "-c:a", "pcm_s16le", str(tmp)],
+            timeout=timeout, what="清唱压底噪",
+        )
+        if not tmp.is_file() or tmp.stat().st_size <= 1024:
+            log.info("清唱压底噪没产出有效音频，保留原干声：%s", source)
+            return None
+        os.replace(tmp, target)
+        log.info("清唱压底噪：阈值 %.1f dBFS → %s", threshold_db, target)
+        return target
+    except (OSError, CoverToolError, subprocess.SubprocessError, TypeError, ValueError) as exc:
+        log.info("清唱压底噪跳过（%s）：%s", type(exc).__name__, exc)
         return None
     finally:
         try:

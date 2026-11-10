@@ -42,6 +42,10 @@ def _stage_of(ratio: float, text: str) -> str:
     return STAGES[idx][0]
 
 
+class JobCancelled(Exception):
+    """面板 / 桥接层点了停止：下一个进度回调就退出，不再白跑几分钟。"""
+
+
 class SongPipeline:
     def __init__(self, cfg: ServiceConfig, *, renderer_factory=None, separate_fn=None,
                  toolchain_fn=None):
@@ -67,6 +71,13 @@ class SongPipeline:
         except ValueError as exc:
             return {"ok": False, "code": "BAD_STRATEGY", "message": str(exc)}
 
+        #: 作业日志第一眼就能看出这一首是清唱还是伴奏，排查「选了清唱却带伴奏」不用猜。
+        job.emit(stage="plan", ratio=0.0, mode=st["mode"], text={
+            "acapella": "清唱 · 只发人声",
+            "accompaniment": "伴奏 · 保留原曲前奏",
+            "accompaniment-trim": "伴奏 · 从人声第一句开始",
+        }.get(st["mode"], st["mode"]))
+
         # BS-RoFormer 是高质量离线档，需要用户自己配命令与权重；不假装已经实现。
         if st["separator"] != "htdemucs" and not str(
             self.cfg.song.get("roformerCommand") or self.cfg.paths.get("roformerCommand") or ""
@@ -82,7 +93,8 @@ class SongPipeline:
         song_cfg["index_rate"] = st["indexRate"]   # 每首可调，保存的默认策略也可调
         song_cfg["pitch"] = st["pitch"]
         song_cfg["mode"] = st["mode"]
-        song_cfg["vocal_only"] = st["mode"] == "acapella"
+        vocal_only = st["mode"] == "acapella"
+        song_cfg["vocal_only"] = vocal_only
         song_cfg["source_names"] = [
             str(item.get("name") or item.get("type") or "")
             for item in self.cfg.song_sources() if item.get("enabled", True)
@@ -95,6 +107,8 @@ class SongPipeline:
         store.ensure_dirs()
 
         def report(ratio, text, **_kw):
+            if getattr(job, "cancelled", False):
+                raise JobCancelled("已取消")
             job.emit(stage=_stage_of(float(ratio), str(text)), ratio=float(ratio), text=str(text))
 
         site = str(payload.get("site") or payload.get("source") or "").strip()
@@ -106,7 +120,7 @@ class SongPipeline:
             source="local" if local_file else (site or "txqq"),
             site=site,
             local_file=local_file,
-            cache_tag=st["fingerprint"],
+            cache_tag=strategy_mod.cache_tag(st, vocal_only),
             alternatives=tuple(
                 CoverCandidate(
                     title=str(row.get("title") or row.get("name") or ""),
@@ -187,6 +201,8 @@ class SongPipeline:
         except CoverUnavailable as exc:
             return {"ok": False, "code": str(getattr(exc, "reason", "") or "unavailable"),
                     "message": str(exc)}
+        except JobCancelled:
+            raise
         except Exception as exc:  # 失败也要给一句能转述的人话
             return {"ok": False, "code": "SONG_FAILED", "message": str(exc) or type(exc).__name__}
 

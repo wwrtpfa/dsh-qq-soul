@@ -225,6 +225,13 @@ class CoverEntry:
         )
 
 
+#: 同一进程里每个作业线程都会 new 一个 CoverStore，而清单是整文件重写。
+#: 各自持锁不够：两个作业同时完成时，后写的那个会拿自己那份旧快照覆盖掉
+#: 前一个刚写进去的条目（21:42 做好的雨爱就这样被 21:43 的小幸运挤掉，
+#: 成品文件还在、曲库里却没有这一条）。所以写之前必须在同一把锁里重读。
+_MANIFEST_LOCK = threading.RLock()
+
+
 class CoverStore:
     """磁盘上的翻唱曲库。**主线程与后台渲染线程都会碰**，所以每一步都拿锁。"""
 
@@ -439,7 +446,8 @@ class CoverStore:
                 continue  # 新条目只认精确键，别让换策略后误命中旧版
             if want_voice and voice_key(entry_voice(entry)) != want_voice:
                 continue
-            if acapella is not None and entry_accompaniment(entry) != bool(acapella):
+            #: ``acapella`` 是「要清唱」；条目记的是「成品里有没有伴奏」，两者相反才对得上。
+            if acapella is not None and entry_accompaniment(entry) == bool(acapella):
                 continue
             same_title = bool(want_title) and normalize_title(entry.title) == want_title
             same_sid = bool(want_sid) and _DIGITS.sub("", entry.source_id) == want_sid
@@ -513,8 +521,8 @@ class CoverStore:
 
     # ------------------------------------------------------------ 写入
     def save(self, entry: CoverEntry) -> CoverEntry:
-        with self._lock:
-            self._load()
+        with _MANIFEST_LOCK:
+            self.reload()
             self._entries[entry.slug] = entry
             self._dump()
         return entry
@@ -526,8 +534,8 @@ class CoverStore:
         旧成品（还会被贴上新的「-无伴奏」后缀，等于骗人）；摘掉之后渲染器能复用
         ``originals/`` 里的原曲重新分离/混音，做好再写回同一份清单。
         """
-        with self._lock:
-            self._load()
+        with _MANIFEST_LOCK:
+            self.reload()
             if self._entries.pop(str(slug or ""), None) is None:
                 return False
             self._dump()
@@ -550,8 +558,8 @@ class CoverStore:
         source_path = Path(src)
         if not source_path.is_file():
             raise FileNotFoundError(f"翻唱成品不存在：{source_path}")
-        with self._lock:
-            self._load()
+        with _MANIFEST_LOCK:
+            self.reload()
             slug = self.unique_slug(cover_stem(title, artist, "", False, time.time()))
             self.ensure_dirs()
             target = self.cover_path(slug)
@@ -574,8 +582,8 @@ class CoverStore:
         return entry
 
     def delete(self, slug: str) -> bool:
-        with self._lock:
-            self._load()
+        with _MANIFEST_LOCK:
+            self.reload()
             entry = self._entries.pop(str(slug or ""), None)
             if entry is None:
                 return False

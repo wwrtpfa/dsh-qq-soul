@@ -42,6 +42,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## node-unrar-js / unRAR — 读取 RAR 音色包（MIT + unRAR 授权）
+
+- 项目：<https://github.com/YuJianrong/node-unrar.js>（v2.0.2，MIT）
+- 内置位置：`src/vendor/unrar/`（只保留运行时 JS 与 `unrar.wasm`）
+- 用途：导入 `.rar` 音色包时解压出 `.pth` / `.index`，只读不写，不提供打包 / 压缩功能。
+- `unrar.wasm` 由 unRAR 6.1.7 源码编译：<https://www.rarlab.com/rar/unrarsrc-6.1.7.tar.gz>
+- unRAR 授权允许自由用于处理 RAR 压缩包并随软件分发，但不得用来开发 RAR 压缩器；
+  原文见 <https://www.rarlab.com/license.htm>。MIT 全文见 `src/vendor/unrar/LICENSE.md`。
+
 ## 其他
 
 - `README.md` 的「致谢」一节还列出了在 DSH 插件机制上参考过思路的其他插件（MIT），那些只参考了踩坑经验，未复制代码。

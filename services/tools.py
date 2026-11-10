@@ -662,7 +662,7 @@ def rvc_voices(cfg) -> dict:
             "current": current_pth, "currentIndex": current_index,
             "voiceName": str(cfg.song.get("voiceName") or ""),
             "message": ("%d 个音色，带蓝色点的是现在用的" % len(rows)) if rows
-                       else "还没有音色。点「导入音色」，选一个 .pth（或 .zip 包）。"}
+                       else "还没有音色。点「导入音色」，选一个 .pth（或 .zip / .rar 包）。"}
 
 
 def _find_pth(folder: Path) -> Path | None:
@@ -673,8 +673,47 @@ def _find_pth(folder: Path) -> Path | None:
     return hits[0] if hits else None
 
 
+def _extract_rar(src: Path, dest: Path) -> None:
+    """解 RAR 音色包：先试系统工具；同机部署时再用插件自带的 WASM 解压器兜底。
+
+    模型站常只发 .rar，不能因为本机没装 unrar 就把用户挡在外面。
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    errors: list[str] = []
+    for exe, args in (
+        ("unrar", ["x", "-o+", str(src), str(dest) + os.sep]),
+        ("7zz", ["x", "-y", "-o" + str(dest), str(src)]),
+        ("7z", ["x", "-y", "-o" + str(dest), str(src)]),
+        ("unar", ["-o", str(dest), str(src)]),
+        ("bsdtar", ["-xf", str(src), "-C", str(dest)]),
+    ):
+        tool = shutil.which(exe)
+        if not tool:
+            continue
+        try:
+            done = subprocess.run([tool, *args], capture_output=True, text=True, timeout=600)
+        except Exception as exc:  # noqa: BLE001 - 工具异常一律换下一个
+            errors.append("%s: %s" % (exe, exc))
+            continue
+        if done.returncode == 0:
+            return
+        tail = ((done.stderr or done.stdout or "").strip().splitlines() or [""])[-1]
+        errors.append("%s: %s" % (exe, tail))
+    # 系统工具都解不开：用插件里的 src/song/rar.js（service 和插件同机时一定在）
+    helper = Path(__file__).resolve().parent / "unrar_voice.mjs"
+    node = shutil.which("node")
+    if node and helper.is_file():
+        done = subprocess.run([node, str(helper), str(src), str(dest)],
+                              capture_output=True, text=True, timeout=600)
+        if done.returncode == 0:
+            return
+        errors.append("node: " + ((done.stderr or "").strip().splitlines() or [""])[-1])
+    detail = "；".join(e for e in errors if e)
+    raise ValueError("这个 rar 解不开" + ("：" + detail if detail else "：本机没有能解 rar 的工具"))
+
+
 def rvc_import(cfg, source: str, name: str = "") -> dict:
-    """导入音色：.pth 直接收，.zip 先解到 models/rvc/<包名> 再收；两个文件一起校验。"""
+    """导入音色：.pth 直接收，.zip / .rar 先解到 models/rvc/<包名> 再收；两个文件一起校验。"""
     src = Path(source).expanduser()
     if not src.exists():
         raise ValueError("这个路径不在了：%s" % src)
@@ -705,9 +744,15 @@ def rvc_import(cfg, source: str, name: str = "") -> dict:
                 with zf.open(member) as fh, target.open("wb") as out:
                     shutil.copyfileobj(fh, out)
         pth = _find_pth(dest)
+    elif src.suffix.lower() == ".rar":
+        dest = root / (label or src.stem)
+        if dest.exists():
+            dest = root / ("%s-%d" % (dest.name, int(time.time())))
+        _extract_rar(src, dest)
+        pth = _find_pth(dest)
     else:
         if src.suffix.lower() not in (".pth", ".pt"):
-            raise ValueError("音色只认 .pth / .pt，或者打包好的 .zip")
+            raise ValueError("音色只认 .pth / .pt，或者打包好的 .zip / .rar")
         voice_dir = root / (label or src.stem)
         voice_dir.mkdir(parents=True, exist_ok=True)
         pth = voice_dir / src.name

@@ -24,11 +24,14 @@ export function createSongBridge({
   hub,
   onSung = () => {},
   getConfig = () => ({}),
+  startService = null,
   exists = existsSync,
   download = defaultDownload,
   delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   pollMs = 800,
   timeoutMs = 10 * 60 * 1000,
+  stallMs = 5 * 60 * 1000,
+  retries = 1,
 } = {}) {
   const enabled = () => Boolean(getConfig()?.service?.enabled)
 
@@ -39,6 +42,37 @@ export function createSongBridge({
       try { await hub.sendText(args.chatId, message) } catch { /* 发送失败也不能吞掉原始错误 */ }
     }
     return { ok: false, code, message, ...extra }
+  }
+
+  // 长作业最怕两件事：服务重启把进程里的线程带走，或者卡住但查不到原因。
+  // 这里把「重启」「连不上」和「很久没有新进度」都变成终态，不让桥接层无限等。
+  async function waitForJob(jobId) {
+    const deadline = Date.now() + timeoutMs
+    let snap = null
+    let seen = 0
+    let lastProgressAt = Date.now()
+    let errors = 0
+    while (true) {
+      try {
+        snap = await service.job(jobId)
+        errors = 0
+      } catch (error) {
+        // 轮询偶发失败不等于服务死了：作业可能还在跑，连续三次才认断线
+        if (++errors <= 3) { await delay(pollMs); continue }
+        const err = new Error('和音频服务断了：' + (error.message || '连不上'))
+        err.code = error.code || 'SERVICE_UNREACHABLE'
+        throw err
+      }
+      const count = Array.isArray(snap?.events) ? snap.events.length : 0
+      if (count !== seen) { seen = count; lastProgressAt = Date.now() }
+      if (snap?.done || snap?.interrupted) return snap
+      if (Date.now() - lastProgressAt >= stallMs) {
+        try { await service.cancelJob?.(jobId) } catch { /* 服务没了就没什么可取消的 */ }
+        return { ...snap, done: true, stalled: true }
+      }
+      if (Date.now() >= deadline) return { ...(snap || {}), timedOut: true }
+      await delay(pollMs)
+    }
   }
 
   async function request(args = {}) {
@@ -71,26 +105,59 @@ export function createSongBridge({
     }
     if (args.voice) payload.voice = String(args.voice)
 
-    const made = await service.requestSong(payload)
-    const jobId = made?.jobId
-    if (!jobId) {
-      return fail(args, 'SERVICE_NO_JOB', '音频服务没给作业号：先确认音频服务已经启动（面板里能看到服务状态）')
+    let snap = null
+    let jobId = ''
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      let made
+      try {
+        made = await service.requestSong(payload)
+      } catch (error) {
+        // 服务真没跑就自动拉一次：Applio 由服务自己带起来，别让用户去手动开。
+        // 只对「连不上」生效；4xx/5xx 是请求或服务内部问题，重启救不了。
+        const offline = (error.code || 'SERVICE_UNREACHABLE') === 'SERVICE_UNREACHABLE'
+        if (offline && attempt === 0 && typeof startService === 'function') {
+          let boot = null
+          try { boot = await startService() } catch { /* 起不来就按原错误返回 */ }
+          if (boot?.ok) continue
+          return fail(args, 'SERVICE_START_FAILED',
+            `音频服务没在跑，自动启动也没成功（${boot?.message || '启动报错'}）。` +
+            '面板「概览 → 音频服务」点「启动服务」，或点「安装向导」检查依赖后再试')
+        }
+        return fail(args, error.code || 'SERVICE_UNREACHABLE',
+          `音频服务没启动或连不上，「${name}」没唱成。面板「概览 → 音频服务」点「启动服务」再点一次`)
+      }
+      jobId = made?.jobId || ''
+      if (!jobId) {
+        return fail(args, 'SERVICE_NO_JOB', '音频服务没给作业号：先确认音频服务已经启动（面板里能看到服务状态）')
+      }
+      try {
+        snap = await waitForJob(jobId)
+      } catch (error) {
+        return fail(args, error.code || 'SERVICE_UNREACHABLE',
+          `「${name}」做到一半和音频服务断了，再点一次就好（已下过的原曲还在缓存里）`, { jobId })
+      }
+
+      if (snap?.stalled) {
+        const stage = String(snap?.stage || snap?.events?.at?.(-1)?.stage || '某一步')
+        return fail(args, 'SONG_STALLED',
+          `「${name}」卡在「${stage}」超过 ${Math.max(1, Math.round(stallMs / 60000))} 分钟，已经停下。` +
+          '面板「翻唱 → 作业日志」能看到卡在哪一步', { jobId })
+      }
+      if (snap?.timedOut) {
+        return fail(args, 'SONG_TIMEOUT',
+          `「${name}」做得太久，先停一下再试（面板「翻唱 → 作业日志」能看到卡在哪一步）`, { jobId })
+      }
+
+      const result = snap?.result || {}
+      const interrupted = Boolean(snap?.interrupted) || result.code === 'SERVICE_RESTARTED'
+      if (!interrupted) break
+      // 重启把线程带走了：原曲已缓存，自动重提一次，不让用户白等
+      if (attempt < retries) continue
+      return fail(args, 'SERVICE_RESTARTED',
+        `音频服务刚重启，「${name}」被打断了。再点一次就好（原曲还在缓存里）`, { jobId })
     }
 
-    const deadline = Date.now() + timeoutMs
-    let snap
-    do {
-      snap = await service.job(jobId)
-      if (snap?.done) break
-      if (Date.now() >= deadline) break
-      await delay(pollMs)
-    } while (true)
-
-    if (!snap?.done) {
-      return fail(args, 'SONG_TIMEOUT',
-        `「${name}」做得太久，先停一下再试（面板「翻唱 → 作业日志」能看到卡在哪一步）`, { jobId })
-    }
-    const result = snap.result || {}
+    const result = snap?.result || {}
     if (!result.ok) {
       const code = result.code || 'SONG_FAILED'
       const why = result.message || '音频服务没给原因，去面板作业日志看失败阶段'

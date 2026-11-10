@@ -113,6 +113,23 @@ def resolve(payload: dict | None, cfg) -> dict:
     return st
 
 
+def cache_tag(st: dict, vocal_only: bool) -> str:
+    """进曲库的缓存指纹：清唱成品不看「从哪个入口点进来」。
+
+    ``accompaniment-trim`` + 伴奏增益 0 和 ``acapella`` 出来的是同一份人声
+    （两者 trim 都归一化成 auto），入口不同就各算一个键，会让面板做过的歌在
+    QQ 点歌时又重做一遍。带伴奏的成品不归一化：前奏裁法不同，听感真的不一样。
+    """
+    tag = str(st.get("fingerprint") or "")
+    if not tag or not vocal_only or st.get("mode") == "acapella":
+        return tag
+    core = {k: st.get(k) for k in ("mode", "separator", "trim", "window", "indexRate", "pitch")}
+    core["mode"] = "acapella"
+    return hashlib.sha1(
+        json.dumps(core, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:10]
+
+
 def wav_duration(path: Path) -> float:
     try:
         with wave.open(str(path), "rb") as w:

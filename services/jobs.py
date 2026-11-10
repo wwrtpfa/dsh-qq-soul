@@ -31,13 +31,16 @@ def _read_events(path: Path) -> list[dict]:
 
 #: 作业里能还原「这是哪首歌」的字段；``info`` 里也会带同一套（搜到歌那一刻）。
 _META_KEYS = (
-    "query", "title", "artist", "voice", "accompaniment", "acapella",
+    "query", "title", "artist", "voice", "accompaniment", "acapella", "mode",
     "durationSec", "sungSec", "clipStart", "fileUrl", "cached",
 )
 _RESULT_KEYS = (
     "file", "fileUrl", "title", "artist", "voice", "accompaniment",
-    "acapella", "durationSec", "clipStart", "cached",
+    "acapella", "mode", "durationSec", "clipStart", "cached",
 )
+
+#: 有终态的事件；没有这些事件 = 当时进程已经不在了（重启 / 被杀）。
+TERMINAL_STAGES = {"done", "failed", "cancelled"}
 
 
 def _meta(events: list[dict], fallback_query: str = "") -> dict:
@@ -75,6 +78,7 @@ def _meta_fields(meta: dict) -> dict:
         "voice": str(meta.get("voice") or "").strip(),
         "accompaniment": meta.get("accompaniment"),
         "acapella": meta.get("acapella"),
+        "mode": str(meta.get("mode") or ""),
         "durationSec": round(float(meta.get("durationSec") or 0.0), 1),
         "clipStart": round(float(meta.get("clipStart") or 0.0), 1),
         "fileUrl": str(meta.get("fileUrl") or ""),
@@ -128,6 +132,8 @@ class Job:
         return event
 
     def finish(self, result: dict | None = None, **extra) -> None:
+        if self.done:
+            return
         self.result = dict(result or {})
         # 成品地址也写进事件：作业跑完以后，历史记录里仍然能直接试听（不靠内存里的 result）
         self.emit(stage="done", ratio=1.0, text="做好了", level="ok", **extra)
@@ -136,9 +142,12 @@ class Job:
             for sub in list(self._subscribers):
                 sub.put_nowait({"__end__": True})
 
-    def fail(self, message: str) -> None:
-        self.result = {"ok": False, "message": message}
-        self.emit(stage="failed", ratio=1.0, text=message, level="error")
+    def fail(self, message: str, code: str = "") -> None:
+        if self.done:
+            return
+        self.result = {"ok": False, "code": code or "SONG_FAILED", "message": message}
+        self.emit(stage="failed", ratio=1.0, text=message, level="error",
+                  code=code or "SONG_FAILED")
         self.done = True
         with self.store._lock:
             for sub in list(self._subscribers):
@@ -185,6 +194,40 @@ class JobStore:
         self.keep_days = keep_days
         self._lock = threading.RLock()
         self._active: dict[str, Job] = {}
+        #: 上次进程留下的半截作业：线程已经没了，必须补终态，否则桥接层会一直等。
+        self.reconcile_interrupted()
+
+    def reconcile_interrupted(self) -> int:
+        """服务重启对账：给没有终态的作业补一条 failed(SERVICE_RESTARTED)。
+
+        作业线程是 daemon，进程退出就没了；jsonl 里只留下「分离人声 0%」这类中间态。
+        以前 ``snapshot()`` 对非内存作业一律报 done=True、result 却是空 meta，
+        桥接层只能回一句「音频服务没给原因」。现在失败原因和重试信号都是明确的。
+        """
+        fixed = 0
+        with self._lock:
+            for path in self.jobs_dir.glob("*.jsonl"):
+                events = _read_events(path)
+                last_stage = str(events[-1].get("stage") or "") if events else ""
+                if last_stage in TERMINAL_STAGES:
+                    continue
+                prev_ms = int(events[-1].get("elapsedMs") or 0) if events else 0
+                event = {
+                    "ts": round(time.time(), 3),
+                    "job": path.stem,
+                    "stage": "failed",
+                    "ratio": 1.0,
+                    "text": "音频服务重启了，这次任务中断，请重新点一次",
+                    "level": "error",
+                    "code": "SERVICE_RESTARTED",
+                    "elapsedMs": prev_ms,
+                    "sincePrevMs": 0,
+                    "restart": True,
+                }
+                with path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+                fixed += 1
+        return fixed
 
     def _path(self, job_id: str) -> Path:
         return self.jobs_dir / (job_id + ".jsonl")
@@ -212,8 +255,20 @@ class JobStore:
             return None
         events = _read_events(path)
         meta = _meta(events)
-        return {"ok": True, "id": job_id, "done": True, "events": events,
-                "result": {k: v for k, v in meta.items() if k in _RESULT_KEYS},
+        last = events[-1] if events else {}
+        stage = str(last.get("stage") or "")
+        done = stage in TERMINAL_STAGES
+        result = {k: v for k, v in meta.items() if k in _RESULT_KEYS}
+        if stage == "done":
+            result["ok"] = True
+        elif stage in ("failed", "cancelled"):
+            result["ok"] = False
+            result["code"] = str(last.get("code") or ("CANCELLED" if stage == "cancelled" else "SONG_FAILED"))
+            result["message"] = str(last.get("text") or "没做成")
+        return {"ok": True, "id": job_id, "done": done, "stage": stage,
+                # 没有终态说明写到一半进程就没了；桥接层据此重提一次
+                "interrupted": bool(events) and not done,
+                "events": events, "result": result,
                 "query": meta.get("query", ""), **meta}
 
     def list(self, *, limit: int = 30) -> list[dict]:
@@ -251,6 +306,7 @@ class JobStore:
                 "events": len(events),
                 "lastStage": str(last.get("stage") or ""),
                 "text": str(last.get("text") or ""),
+                "code": str(last.get("code") or ""),
                 "elapsedMs": int(last.get("elapsedMs") or 0),
                 "sincePrevMs": int(last.get("sincePrevMs") or 0),
                 "done": str(last.get("stage") or "") in {"done", "failed", "cancelled"},

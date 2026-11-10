@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import struct
 import time
@@ -10,7 +11,7 @@ import wave
 from pathlib import Path
 
 from services.jobs import JobStore
-from services.song.cover_cache import CoverStore, cache_key, cover_stem
+from services.song.cover_cache import CoverEntry, CoverStore, cache_key, cover_stem
 from services.song.cover_studio import CoverRenderer, CoverTarget
 
 
@@ -122,6 +123,60 @@ def test_换音色或清唱会重新做且文件名不同(tmp_path):
     assert len(store.entries()) == 3
     # 换音色不需要重新下载原曲：原曲缓存按「歌名 + 来源 id」复用
     assert counters["download"] == 1
+
+
+def _strip_keys(store: CoverStore) -> None:
+    """把清单降级成老版本：没有复用键，只能靠歌名 / 音色 / 伴奏兜底命中。"""
+    raw = json.loads(store.index_path.read_text(encoding="utf-8"))
+    for row in raw.get("entries") or []:
+        row["cache_key"] = ""
+    store.index_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+
+def test_老清单没有复用键也按歌名音色清唱直接复用(tmp_path):
+    counters = {"download": 0, "separate": 0, "convert": 0, "mix": 0}
+    store, renderer = _renderer(tmp_path, voice="d2-rvc", accompaniment_gain=0.0,
+                                counters=counters)
+    first = renderer.render(_target())
+    assert first.cached is False
+    _strip_keys(store)
+
+    # 重新打开曲库，确认不是内存里的旧对象在兜底
+    _, again = _renderer(tmp_path, voice="d2-rvc", accompaniment_gain=0.0,
+                         counters=counters, store=CoverStore(tmp_path / "music"))
+    second = again.render(_target())
+    assert second.cached is True
+    assert second.wav == first.wav
+    assert counters == {"download": 1, "separate": 1, "convert": 1, "mix": 1}
+
+
+def test_老清单兜底不会把伴奏成品当成清唱(tmp_path):
+    counters = {"download": 0, "separate": 0, "convert": 0, "mix": 0}
+    store, renderer = _renderer(tmp_path, voice="d2-rvc", counters=counters)
+    renderer.render(_target())  # 带伴奏
+    _strip_keys(store)
+
+    fresh = CoverStore(tmp_path / "music")
+    assert fresh.find_compatible(key="", title="晴天", source_id="2652820720",
+                                 voice="d2-rvc", acapella=True) is None
+    assert fresh.find_compatible(key="", title="晴天", source_id="2652820720",
+                                 voice="d2-rvc", acapella=False) is not None
+
+
+def test_两个作业先后完成不会互相覆盖曲库清单(tmp_path):
+    root = tmp_path / "music"
+    first = CoverStore(root)
+    first.ensure_dirs()
+    second = CoverStore(root)
+    # 两个作业各自在开工时读过清单（渲染要几分钟，读远早于写）
+    first.entries()
+    second.entries()
+
+    first.save(CoverEntry(slug="甲-清唱", title="甲", voice="d2"))
+    second.save(CoverEntry(slug="乙-清唱", title="乙", voice="d2"))
+
+    raw = json.loads((root / "index.json").read_text(encoding="utf-8"))
+    assert {row["slug"] for row in raw["entries"]} == {"甲-清唱", "乙-清唱"}
 
 
 def test_作业摘要带歌名音色时长而不是随机作业号(tmp_path):

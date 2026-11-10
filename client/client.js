@@ -1029,6 +1029,25 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           toast(r.ok ? '音频服务在线' + (r.version ? ' v' + r.version : '') : (r.message || '连不上音频服务'), r.ok ? 'ok' : 'err')
         } catch (e) { setHealth({ ok: false, message: e.message }); toast(e.message, 'err') } finally { setBusy(false) }
       }
+      // 一键拉起：macOS 踢已经装好的 launchd job，其它平台直接 spawn；Applio 由服务自己管理。
+      const boot = async () => {
+        setBusy(true)
+        try {
+          const r = await post('/service/start', {})
+          toast(r.message || (r.ok ? '音频服务已启动' : '启动失败'), r.ok ? 'ok' : 'err')
+          if (r.ok) { try { setHealth(await get('/service/health')) } catch (e) { /* 刚起来也可能还在初始化 */ } }
+          return r
+        } catch (e) { toast('启动失败：' + e.message, 'err'); return { ok: false, message: e.message } } finally { setBusy(false) }
+      }
+      // 运维大屏由 service 托管：没起来时页面根本打不开，所以先拉服务再跳。
+      const openPanel = async (hash) => {
+        try {
+          const h = await get('/service/health')
+          if (!h.ok) { const r = await boot(); if (!r.ok) return }
+          const r = await get('/song/service/panel')
+          window.open((r.url || (url + '/panel')) + (hash || ''), '_blank', 'noopener')
+        } catch (e) { toast('打不开运维大屏：' + e.message, 'err') }
+      }
       return h(Card, { title: '音频服务（说话 / 唱歌）', desc: '插件自己管聊天、人格、记忆；声音和翻唱交给本机的 9876 服务。打开后语音、翻唱、音色、混音都只读它这一份配置，桌面面板和运维大屏改的是同一处。' },
         h(Row, { label: '启用音频服务', hint: '先确认服务已经起来再打开；没起来时语音条会没声音' }, f.sw('service.enabled')),
         h(Row, { label: '服务地址', hint: '同机就是 http://127.0.0.1:9876；Docker / 另一台机器填容器能访问到的地址' },
@@ -1036,15 +1055,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         h(Row, { label: '接口 Token', hint: 'service 启动时设了 QQSOUL_SERVICE_TOKEN 才要填；只存在本机，不显示' },
           f.text('service.token', { type: 'password', size: 'wide', placeholder: (draft.service && draft.service.token) ? '已保存（不改就留空）' : '没设就留空' })),
         h('div', { className: 'ab-flex', style: { marginTop: 10, flexWrap: 'wrap' } },
-          h(Btn, { small: true, disabled: busy, onClick: test }, busy ? h(Fragment, null, h('i', { className: 'ab-spin' }), ' 测试中…') : '测试连接'),
-          h(Btn, { small: true, onClick: async () => {
-            try { const r = await get('/song/service/panel'); window.open(r.url || (url + '/panel'), '_blank', 'noopener') }
-            catch (e) { toast('打不开运维大屏：' + e.message, 'err') }
-          } }, '打开运维大屏'),
+          h(Btn, { small: true, kind: 'primary', disabled: busy, onClick: boot }, busy ? h(Fragment, null, h('i', { className: 'ab-spin' }), ' 处理中…') : '启动服务'),
+          h(Btn, { small: true, disabled: busy, onClick: test }, busy ? '测试中…' : '测试连接'),
+          h(Btn, { small: true, onClick: () => openPanel('#wizard') }, '安装向导'),
+          h(Btn, { small: true, onClick: () => openPanel('') }, '打开运维大屏'),
           health ? h('span', { className: 'ab-small', style: { color: health.ok ? 'var(--ab-ok)' : 'var(--ab-warn)' } },
             health.ok ? '在线 · 端口 ' + (health.port || '') + (health.version ? ' · v' + health.version : '') : (health.message || '连不上')) : null),
         h('div', { style: { marginTop: 10 } },
-          h('div', { className: 'ab-muted ab-small' }, '还没起来？在终端里跑这一行（命令里的目录就是本插件的位置）：'),
+          h('div', { className: 'ab-muted ab-small' }, '点「启动服务」就行（Applio 由服务自己带起来，不用单独开）。自动启动失败时，再在终端里跑这一行：'),
           h('div', { className: 'ab-flex', style: { marginTop: 4 } },
             h('code', { style: { flex: '1 1 320px', fontSize: 11.5, wordBreak: 'break-all' } }, cmd),
             h(Btn, { small: true, onClick: () => copy(cmd, toast, '命令复制好了') }, '复制'))),
@@ -3712,13 +3730,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         h(Btn, { small: true, kind: 'ghost', onClick: async () => { await post('/memory/delete', { id: m.id }); onChanged() } }, '忘掉'))
     }
 
-    /** 导入音色：把 .zip / .pth / .index 拖进来或点选，自动识别；下面列出已有的音色，可以删。 */
+    /** 导入音色：把 .zip / .rar / .pth / .index 拖进来或点选，自动识别；下面列出已有的音色，可以删。 */
     function VoiceImport({ s, toast, onChange }) {
       const [over, setOver] = useState(false)
       const [busy, setBusy] = useState('')
       const upload = async (files) => {
         for (const file of [...files]) {
-          if (!/\.(zip|pth|index|ckpt)$/i.test(file.name)) { toast('「' + file.name + '」不是 .zip / .pth / .index / .ckpt', 'err'); continue }
+          if (!/\.(zip|rar|pth|index|ckpt)$/i.test(file.name)) { toast('「' + file.name + '」不是 .zip / .rar / .pth / .index / .ckpt', 'err'); continue }
           setBusy('正在导入「' + file.name + '」（' + Math.round(file.size / 1024 / 1024) + 'MB）…')
           const r = await fetch(API + '/song/import?name=' + encodeURIComponent(file.name), { method: 'POST', body: file })
             .then((x) => x.json()).catch((e) => ({ ok: false, message: '上传失败：' + e.message }))
@@ -3731,17 +3749,17 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         const inp = document.createElement('input')
         inp.type = 'file'
         inp.multiple = true
-        inp.accept = '.zip,.pth,.index,.ckpt'
+        inp.accept = '.zip,.rar,.pth,.index,.ckpt'
         inp.onchange = () => inp.files && upload(inp.files)
         inp.click()
       }
-      return h(Card, { title: '音色模型', desc: '插件不自带音色。把你有权使用的 RVC 模型导进来：.pth（可以带 .index），或者装着它们的 zip。只存在本机。自己训练的是 so-vits-svc 之类别的模型、或者想用自己的推理参数？去「本地接口」页接「翻唱换声」。' },
+      return h(Card, { title: '音色模型', desc: '插件不自带音色。把你有权使用的 RVC 模型导进来：.pth（可以带 .index），或者装着它们的 zip / rar（模型站常发 rar，直接拖进来，不用自己解压）。只存在本机。自己训练的是 so-vits-svc 之类别的模型、或者想用自己的推理参数？去「本地接口」页接「翻唱换声」。' },
         h('div', {
           className: 'ab-drop' + (over ? ' over' : ''), role: 'button', tabIndex: 0,
           onClick: pick, onKeyDown: (e) => (e.key === 'Enter' || e.key === ' ') && pick(),
           onDragOver: (e) => { e.preventDefault(); setOver(true) }, onDragLeave: () => setOver(false),
           onDrop: (e) => { e.preventDefault(); setOver(false); upload(e.dataTransfer.files) },
-        }, busy ? h('span', null, h('i', { className: 'ab-spin' }), ' ' + busy) : h('span', null, '把 .zip / .pth / .index 拖到这里，或者点击选择文件')),
+        }, busy ? h('span', null, h('i', { className: 'ab-spin' }), ' ' + busy) : h('span', null, '把 .zip / .rar / .pth / .index 拖到这里，或者点击选择文件')),
         // 分离模型自动下载不动时：给几个地址，用浏览器或下载工具下好，拖进上面这个框
         s.parts && !s.parts.separatorModel && (s.separatorLinks || []).length ? h('div', { className: 'ab-note', style: { marginTop: 10 } },
           h('b', null, '人声分离模型下不动？'), ' 安装时会自动试好几个源（断了能接着下，太慢会换源）。实在不行，用浏览器或下载工具下好下面任一个（约 640 MB，是同一个文件），拖进上面这个框就行，插件会核对文件对不对：',
@@ -3852,7 +3870,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         const inp = document.createElement('input')
         inp.type = 'file'
         inp.multiple = true
-        inp.accept = '.zip,.pth,.index'
+        inp.accept = '.zip,.rar,.pth,.index'
         inp.onchange = () => inp.files && upload(inp.files)
         inp.click()
       }
@@ -3914,7 +3932,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h(Btn, { small: true, kind: 'ghost', onClick: () => choose(v.name) }, cur === v.name ? '已选' : '用这个'),
             h(Btn, { small: true, kind: 'ghost', onClick: () => setRen({ path: v.pth, name: v.name }) }, '改名'),
             h(Btn, { small: true, kind: 'ghost', onClick: () => openDir(v.dir, toast) }, '打开')))))
-          : h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } }, '还没有音色：把 .pth（可带 .index）或装着它们的 zip 拖进来。'))
+          : h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } }, '还没有音色：把 .pth（可带 .index）或装着它们的 zip / rar 拖进来。'))
     }
 
     /** 本机已有资源：扫描只读，导入是复制。 */
