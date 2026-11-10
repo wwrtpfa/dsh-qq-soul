@@ -87,7 +87,12 @@ export function assistantUsage (data) {
   const completion = n(u.outputTokens ?? u.completion_tokens)
   const total = n(u.totalTokens ?? u.total_tokens) || prompt + completion
   if (total <= 0) return null
-  return { prompt, completion, total }
+  // 命中缓存的输入：DSH 叫 cacheReadTokens，OpenAI 兼容层叫 prompt_tokens_details.cached_tokens。
+  // 都没有就从总数里减 —— DSH 的 totalTokens 是「未命中输入 + 命中输入 + 输出」三者之和。
+  const explicit = n(u.cacheReadTokens ?? u.cachedInputTokens ?? u.cache_read_input_tokens ??
+    (u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens))
+  const cached = explicit > 0 && explicit < total ? explicit : Math.max(0, total - prompt - completion)
+  return { prompt, completion, cached: cached > 0 && cached < total ? cached : 0, total }
 }
 
 export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildTools, contextProviders, onActivity, onUsage, memoryScore, onMemoryCommand, onCommand, isMuted, dislikes, random = Math.random, moodEffects, localApi, hooks, availableModels, toolsGeneration, capabilitiesOf }) {
@@ -248,7 +253,20 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     }
   }
   const sentIds = new Set()
-  const stats = { received: 0, sent: 0, voice: 0, stickers: 0, errors: 0, day: new Date().toDateString() }
+  // 今日计数以前只放内存：DSH / 插件一重启，「今天收到 / 今天发出」就全变 0，
+  // 看着像功能坏了。现在按天落盘，重启后接着数，跨天自动归零。
+  const statsFile = () => dataDir('stats.json')
+  const todayKey = () => new Date().toDateString()
+  const emptyStats = () => ({ received: 0, sent: 0, voice: 0, stickers: 0, errors: 0, day: todayKey() })
+  const loadStats = () => {
+    try {
+      const saved = readJson(statsFile(), null)
+      if (saved && saved.day === todayKey()) return { ...emptyStats(), ...saved, day: saved.day }
+    } catch (error) {}
+    return emptyStats()
+  }
+  const stats = loadStats()
+  let statsSavedAt = 0
   let selfId = ''
   let lastChatAt = 0
   let lastOwnerChatAt = 0
@@ -256,9 +274,15 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   let lastBotToOwner = { at: 0, text: '' } // 她在主人私聊里最后说的话
 
   function bump(k) {
-    const d = new Date().toDateString()
-    if (stats.day !== d) Object.assign(stats, { received: 0, sent: 0, voice: 0, stickers: 0, errors: 0, day: d })
+    const d = todayKey()
+    if (stats.day !== d) Object.assign(stats, emptyStats())
     stats[k]++
+    // 每秒最多落盘一次：连发几十条时不至于每条都写文件，但关掉面板再打开数字还在。
+    const now = Date.now()
+    if (now - statsSavedAt > 1000) {
+      statsSavedAt = now
+      try { writeJson(statsFile(), stats) } catch (error) {}
+    }
   }
 
   // ---------- 聊天流水（给空间日记、主动搭话、面板用） ----------
@@ -1104,9 +1128,10 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       // 一轮里可能有多步（工具调用前后各一条 assistant 消息），每步的 usage 都算这一轮的成本
       const used = assistantUsage(d)
       if (used) {
-        const sum = st.usage || { prompt: 0, completion: 0, total: 0 }
+        const sum = st.usage || { prompt: 0, completion: 0, cached: 0, total: 0 }
         sum.prompt += used.prompt
         sum.completion += used.completion
+        sum.cached += used.cached
         sum.total += used.total
         st.usage = sum
       }
@@ -1133,6 +1158,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       if (used && used.total > 0) {
         reportUsage({ purpose: 'chat', result: { usage: {
           prompt_tokens: used.prompt, completion_tokens: used.completion, total_tokens: used.total,
+          // 命中缓存的输入单独报：金额大头差在这里（命中价便宜两个数量级）
+          ...(used.cached ? { prompt_cache_hit_tokens: used.cached } : {}),
         } } })
       } else if (text) {
         reportUsage({ purpose: 'chat', text: [st.lastText, text].filter(Boolean).join('\n') })
@@ -2494,7 +2521,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     deleteChatLog,
     sessions: () => map().chats,
     groupName,
-    stats: () => ({ ...stats }),
+    // 读的时候顺手补一次落盘：bump 有 1 秒节流，最后一条计数可能还没写进去。
+    stats: () => { try { writeJson(statsFile(), stats) } catch (error) {} return { ...stats } },
     get lastChatAt() { return lastChatAt },
     get lastOwnerChatAt() { return lastOwnerChatAt },
     lastPrivateAt: (qq) => lastPrivateAt.get(String(qq)) || 0,

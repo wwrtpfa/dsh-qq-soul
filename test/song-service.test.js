@@ -3,8 +3,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createSongBridge } from '../src/service/song-bridge.js'
 
-function rig({ jobs = [], exists = () => true, timeoutMs = 5000, requestSong, job, stallMs, retries, startService } = {}) {
-  const calls = { sent: [], texts: [], sung: [], posted: [], downloaded: [], cancelled: [] }
+function rig({ jobs = [], exists = () => true, timeoutMs = 5000, requestSong, job, stallMs, retries, startService, coverById } = {}) {
+  const calls = { sent: [], texts: [], sung: [], posted: [], downloaded: [], cancelled: [], looked: [] }
   const service = {
     requestSong: requestSong || (async (payload) => {
       calls.posted.push(payload)
@@ -12,6 +12,12 @@ function rig({ jobs = [], exists = () => true, timeoutMs = 5000, requestSong, jo
     }),
     job: job || (async () => (jobs.shift() || { done: true, result: { ok: true, file: '/tmp/a.mp3' } })),
     cancelJob: async (id) => { calls.cancelled.push(id); return { ok: true } },
+    // 曲库指名取件：默认给一首现成的（模型拿 id 来换文件）
+    coverById: coverById || (async (id) => {
+      calls.looked.push(id)
+      return { ok: true, id, title: '樱花草', voice: 'd2', mode: '清唱',
+               file: '/tmp/樱花草-d2-清唱-20261109.mp3', durationSec: 41 }
+    }),
     fileUrl: (rel) => 'http://127.0.0.1:9876/files/' + rel,
   }
   const bridge = createSongBridge({
@@ -280,4 +286,44 @@ test('演唱模式随点歌请求一起交给 service', async () => {
   const { bridge: b2, calls: c2 } = rig({ jobs: [{ done: true, result: { ok: true, file: '/tmp/a.mp3' } }] })
   await b2.request({ song: '晴天', acapella: true, chatId: 'private:1' })
   assert.equal(c2.posted[0].acapella, true)
+})
+
+// 指名取件：模型在曲库里认出「就是这一首」（用户可能说错一个字），把 id 传回来。
+test('指名取件：给了 id 就直接放曲库那一版，不重新做', async () => {
+  const { bridge, calls } = rig({})
+  const out = await bridge.request({
+    song: '樱华草', reuse: '樱花草-Sweety-d2-清唱-20261109', chatId: 'private:1',
+  })
+  assert.equal(out.ok, true)
+  assert.equal(out.cached, true)
+  assert.equal(out.id, '樱花草-Sweety-d2-清唱-20261109')
+  assert.equal(out.title, '樱花草', '名字用曲库里的，不用用户说错的那个')
+  assert.deepEqual(calls.looked, ['樱花草-Sweety-d2-清唱-20261109'])
+  assert.equal(calls.posted.length, 0, '不能再去搜歌/排队做新的一首')
+  assert.deepEqual(calls.sent[0], ['private:1', '/tmp/樱花草-d2-清唱-20261109.mp3', '樱花草'])
+  assert.deepEqual(calls.sung[0], ['樱花草', 'private:1'])
+})
+
+test('指名取件：id 已经没了就回一句人话，不发空语音条', async () => {
+  const { bridge, calls } = rig({
+    coverById: async () => ({ ok: false, code: 'NOT_FOUND', message: '曲库里没有这一版了' }),
+  })
+  const out = await bridge.request({ song: '樱花草', reuse: 'x-20261109', chatId: 'private:1' })
+  assert.equal(out.ok, false)
+  assert.equal(out.code, 'NOT_FOUND')
+  assert.equal(calls.sent.length, 0)
+  assert.equal(calls.texts.length, 1)
+})
+
+test('指名取件：远程部署时按 /files/ 下载成品', async () => {
+  const { bridge, calls } = rig({
+    exists: () => false,
+    coverById: async (id) => ({ ok: true, id, title: '雨爱',
+                                file: '/remote/雨爱.mp3', downloadUrl: 'music/covers/雨爱.mp3' }),
+  })
+  const out = await bridge.request({ song: '雨爱', reuse: '雨爱-x', chatId: 'private:1' })
+  assert.equal(out.ok, true)
+  assert.deepEqual(calls.downloaded,
+    ['http://127.0.0.1:9876/files/music/covers/雨爱.mp3'])
+  assert.equal(calls.sent[0][1], '/tmp/downloaded.mp3')
 })

@@ -262,6 +262,10 @@ class ServiceConfig:
                 if k in st}
         self.song = dict(self.song)
         self.song["strategy"] = core
+        # 变调是「一个数」：说话换声（pipeline 读 song.pitch）和唱歌共用它。
+        # 只写 strategy.pitch 的话，面板上改了变调，说话那条链路根本不看，等于没生效。
+        if "pitch" in core:
+            self.song["pitch"] = core["pitch"]
         path = self.config_file_path()
         try:
             payload = json.loads(path.read_text(encoding="utf-8")) or {}
@@ -269,6 +273,8 @@ class ServiceConfig:
             payload = {}
         song = dict(payload.get("song") or {})
         song["strategy"] = core
+        if "pitch" in core:
+            song["pitch"] = core["pitch"]
         payload["song"] = song
         tmp = path.with_name(path.name + ".tmp")
         tmp.parent.mkdir(parents=True, exist_ok=True)

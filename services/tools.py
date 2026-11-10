@@ -606,10 +606,18 @@ def voices(cfg, engine: str) -> dict:
         return {"ok": True, "engine": engine, "items": items, "current": current or EDGE_VOICES[0][0],
                 "hint": "这里是声线；语速和音量在下面单独调。"}
     if engine == "breeze":
-        items = [{"id": "default", "label": "默认（服务端决定）"},
-                 {"id": "female-1", "label": "女声 1"}, {"id": "male-1", "label": "男声 1"}]
-        return {"ok": True, "engine": engine, "items": items, "current": current or "default",
-                "hint": "Breeze 的音色由它自己给；这里只是选一个别名。"}
+        # Breeze 没有公开的「列音色」接口（/v1/voices 直接 403），本机拿不到它的音色清单。
+        # 所以这里绝不能编 female-1 / male-1 这种别名：选中就会真的拼进 URL 发出去，
+        # 上游 404，用户看到的是「配了没生效」。只给两个一定能对上的选项：
+        # 「不指定」和「配置里已经存着的那个真实 id」。
+        breeze_voice = str(cfg.tts.get("breezeVoice") or "").strip()
+        items = [{"id": "", "label": "默认（不指定，交给 Breeze 服务端）"}]
+        if breeze_voice:
+            items.append({"id": breeze_voice, "label": "当前音色 · " + breeze_voice})
+        return {"ok": True, "engine": engine, "items": items, "current": breeze_voice,
+                "manual": True,
+                "hint": "男声 / 女声都是你在 Breeze 后台建出来的音色，建完会给你一个 voc_ 开头的 id；"
+                        "本机拿不到它的清单，只能选已经填过的，或者手动粘一个新的。"}
     files = refs(cfg)["items"]
     items = [{"id": f["path"], "label": f["name"]} for f in files]
     return {"ok": True, "engine": engine, "items": items,
@@ -1012,12 +1020,86 @@ def rvc_voices(cfg) -> dict:
                     add(entry, root)
         except OSError:
             continue
+    # 同一个名字在两处各有一份（服务的 models/rvc + 本机老目录）：只报一份，优先报服务目录那份。
+    # 以前两处都列出来，面板上就是「同一个音色显示两个」，选哪个还各不一样。
+    picked: dict[str, dict] = {}
+    dup: list[dict] = []
+    for row in rows:
+        cur = picked.get(row["name"])
+        if cur is None:
+            picked[row["name"]] = row
+            continue
+        keep, drop = (row, cur) if (row["managed"] and not cur["managed"]) else (cur, row)
+        picked[row["name"]] = keep
+        dup.append({"name": drop["name"], "pth": drop["pth"]})
+    rows = list(picked.values())
     rows.sort(key=lambda r: (not r["managed"], not r["valid"], r["name"].lower()))
     return {"ok": True, "dir": str(managed_root), "items": rows,
             "current": current_pth, "currentIndex": current_index,
+            "duplicates": dup,
             "voiceName": str(cfg.song.get("voiceName") or ""),
             "message": ("%d 个音色，带蓝色点的是现在用的" % len(rows)) if rows
                        else "还没有音色。点「导入音色」，选一个 .pth（或 .zip / .rar 包）。"}
+
+
+def adopt_voices(cfg, only: str = "") -> dict:
+    """把「库外」的音色搬进服务的 models/rvc —— 音色只放一个地方，面板上不再有「不在目录里」。
+
+    only 给了就只搬那一个（按 .pth 路径或音色名）；没给就全搬。
+    模型目录里已经有同名文件的不动（那是重复的一份，删哪个由主人决定）。
+    """
+    managed_root = dir_for(cfg, "models") / "rvc"
+    managed_root.mkdir(parents=True, exist_ok=True)
+    target = str(only or "").strip()
+    moved, skipped = [], []
+    cur_pth, cur_index = cfg.voice_model()
+    new_pth = new_index = ""
+    for row in rvc_voices(cfg)["items"]:
+        if row["managed"]:
+            continue
+        if target and target not in (row["pth"], row["name"]):
+            continue
+        src = Path(row["pth"])
+        if not src.is_file():
+            skipped.append({"name": row["name"], "reason": "文件已经不在了"})
+            continue
+        dest = managed_root / src.name
+        if dest.exists():
+            skipped.append({"name": row["name"], "reason": "模型目录里已经有同名的了"})
+            continue
+        try:
+            shutil.move(str(src), str(dest))
+        except OSError as error:
+            skipped.append({"name": row["name"], "reason": str(error)})
+            continue
+        index_dest = ""
+        if row.get("index"):
+            idx = Path(row["index"])
+            if idx.is_file():
+                want = dest.with_suffix(".index")
+                try:
+                    if not want.exists():
+                        shutil.move(str(idx), str(want))
+                    index_dest = str(want)
+                except OSError:
+                    index_dest = str(want)
+        moved.append({"name": row["name"], "pth": str(dest), "index": index_dest})
+        # 配置里指着搬走的那个文件的，跟着改到新位置，不然下一首就找不到音色了
+        if cur_pth and cur_pth == row["pth"]:
+            new_pth, new_index = str(dest), index_dest
+    if new_pth:
+        cfg.save_song_voice(pth=new_pth, index=new_index, voice_name=Path(new_pth).stem)
+    lib = rvc_voices(cfg)
+    if moved:
+        msg = "搬进模型目录了：%s" % "、".join(m["name"] for m in moved)
+        if skipped:
+            msg += "；%d 个没动（%s）" % (len(skipped), skipped[0]["reason"])
+    elif skipped:
+        msg = "没搬：%s" % skipped[0]["reason"]
+    else:
+        msg = "音色都已经在模型目录里了"
+    return {"ok": True, "moved": moved, "skipped": skipped, "voices": lib,
+            "dir": str(managed_root), "message": msg}
 
 
 def _find_pth(folder: Path) -> Path | None:

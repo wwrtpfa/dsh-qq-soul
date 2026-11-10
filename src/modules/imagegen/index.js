@@ -2,7 +2,7 @@
 
 import { readFileSync } from 'node:fs'
 import { createImageGen, drawResultBlocks, drawToolMessage, imageToolBlock, resolveDrawImage } from '../../features/imagegen.js'
-import { listPaintings, openPaintFolder, paintingPath, rememberPainting, removePainting, savePainting } from '../../features/paintings.js'
+import { listPaintings, openPaintFolder, openTestFolder, paintingPath, rememberPainting, removePainting, savePainting, saveTest, testDir } from '../../features/paintings.js'
 import { defineTool, str } from '../../tools/tools.js'
 import { dataDir } from '../../core/store.js'
 import { mimeOf } from '../../chat/inbound.js'
@@ -34,15 +34,18 @@ export default {
     }))
     api.route('/image/codex/cancel', accountAction(async () => ({ ok: true, ...auth.cancelLogin('已取消') })))
     api.route('/image/codex/logout', accountAction(async () => ({ ok: true, ...auth.logout() })))
-    // 本地 api-image：只读 Codex 配置的脱敏摘要；密钥不经过面板。
-    api.route('/image/api-image/status', async (req) => {
+    // 本机 Codex 配置：脱敏摘要 + 「一键填入」（面板里生图密钥是明文显示的，所以这里也回原文，
+    // 只在本机能打开面板的前提下有意义）。
+    const withDraftHome = (req) => {
       const ig = api.config().imageGen
       const q = api.core.http.query(req)
       // 面板把草稿里的目录带过来：没保存也能先检测；显式空值 = 用默认目录。
-      return gen.apiImage.status(Object.hasOwn(q, 'codexHome')
+      return Object.hasOwn(q, 'codexHome')
         ? { ...ig, apiImage: { ...(ig.apiImage || {}), codexHome: q.codexHome } }
-        : ig)
-    })
+        : ig
+    }
+    api.route('/image/api-image/status', async (req) => gen.apiImage.status(withDraftHome(req)))
+    api.route('/image/codex/fill', async (req) => gen.apiImage.fill(withDraftHome(req)))
 
     // 她的画作：面板底下的图库（直接读存图目录，可以单张删、开文件夹）
     api.route('/image/gallery', async (req) => {
@@ -63,26 +66,35 @@ export default {
     api.route('/image/open-folder', async () => openPaintFolder())
 
     // 面板自测：用当前已保存的配置画一张，只回面板预览，不发 QQ、不进图库。
+    // GET = 问「测试图存哪儿」；POST = 真画一张（顺手存一份到 imagegen/test/）。
     api.route('/image/test', async (req) => {
-      if (req.method !== 'POST') return { ok: false, message: '测试生图需要 POST 请求' }
+      if (req.method !== 'POST') return { ok: true, dir: testDir() }
       const b = await api.core.http.body(req).catch(() => ({}))
       const prompt = String((b && b.prompt) || '').trim().slice(0, 500) || '一只圆滚滚的大飞鱼，蓝色，圆眼睛，开心，干净背景'
-      const shape = ['square', 'portrait', 'landscape', 'wide'].includes(b && b.shape) ? b.shape : 'square'
+      // shape 留空 = 不指定构图 / 尺寸，完全按提示词和接口默认值来
+      const shape = ['square', 'portrait', 'landscape', 'wide'].includes(b && b.shape) ? b.shape : ''
       const startedAt = Date.now()
       try {
-        const buf = await gen.generate(prompt, { shape })
+        const buf = await gen.generate(prompt, shape ? { shape } : {})
         const mime = String(mimeOf(buf) || 'image/png')
+        const file = saveTest(buf, prompt)
         return {
           ok: true,
           prompt,
           shape,
+          file,
+          dir: testDir(),
           bytes: buf.length,
           elapsedMs: Date.now() - startedAt,
           dataUrl: `data:${mime};base64,${buf.toString('base64')}`,
         }
       } catch (error) {
-        return { ok: false, message: error.message, elapsedMs: Date.now() - startedAt }
+        return { ok: false, message: error.message, elapsedMs: Date.now() - startedAt, dir: testDir() }
       }
+    })
+    api.route('/image/test/folder', async (req) => {
+      if (req.method !== 'POST') return { ok: true, dir: testDir() }
+      return openTestFolder()
     })
 
     api.tool(({ chat, sessionId }) => (gen.enabled() && chat.kind !== 'system' ? defineTool({

@@ -105,14 +105,19 @@ test('运行记录接口可用；生图自测只接受 POST（不会误触发生
   const usage = await call('/panel/ops/usage')
   assert.equal(usage.ok, true)
   assert.ok(usage.daily && typeof usage.daily === 'object')
+  // 金额由后端算好（三档单价 + 缓存命中），面板只显示
+  assert.ok(usage.cost && typeof usage.cost.total === 'number', '要把金额一起给面板')
+  assert.ok(usage.cost.prices && typeof usage.cost.prices.hit === 'number')
 
   const timeline = await call('/panel/ops/timeline')
   assert.equal(timeline.ok, true)
   assert.ok(Array.isArray(timeline.merged))
 
+  // GET 只是问「测试图存哪儿」，不该真画一张
   const img = await call('/image/test')
-  assert.equal(img.ok, false)
-  assert.match(img.message, /POST/)
+  assert.equal(img.ok, true)
+  assert.match(String(img.dir || ''), /imagegen/)
+  assert.equal(img.dataUrl, undefined)
 })
 
 test('时间线合并包含聊天收发，并按日期 / 关键字筛选', async () => {

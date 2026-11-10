@@ -305,6 +305,8 @@ class JobStore:
                 "stageMs": stage_ms,
                 "events": len(events),
                 "lastStage": str(last.get("stage") or ""),
+                # 真实进度来自服务端 emit(ratio=…)，看盘直接画，不用前端猜百分比
+                "ratio": float(last.get("ratio") or 0.0),
                 "text": str(last.get("text") or ""),
                 "code": str(last.get("code") or ""),
                 "elapsedMs": int(last.get("elapsedMs") or 0),

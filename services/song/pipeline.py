@@ -63,6 +63,11 @@ class SongPipeline:
 
         try:
             wanted = dict(payload.get("strategy") or {})
+            #: 用户到底有没有点名清唱 / 伴奏：没点名时才允许「另一模式」兜底复用。
+            #: 后台默认模式不算点名——点歌只说「翻唱《樱花草》」时，曲库里有清唱
+            #: 就该直接放清唱，不该按默认伴奏再重做一遍。
+            mode_explicit = bool(payload.get("mode") or payload.get("acapella")
+                                 or wanted.get("mode"))
             if payload.get("mode"):
                 wanted["mode"] = str(payload["mode"])
             if payload.get("acapella"):
@@ -121,6 +126,7 @@ class SongPipeline:
             site=site,
             local_file=local_file,
             cache_tag=strategy_mod.cache_tag(st, vocal_only),
+            mode_explicit=mode_explicit,
             alternatives=tuple(
                 CoverCandidate(
                     title=str(row.get("title") or row.get("name") or ""),

@@ -75,8 +75,55 @@ export function createSongBridge({
     }
   }
 
+  // 指名取件：模型看过曲库清单后，把那一行的 id 传回来就直接放这一版。
+  // 名字写错、带不带歌手都不参与判断——判断已经由模型做完了，这里只负责发文件。
+  async function reuseCover(id, args, name) {
+    let hit = null
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        hit = await service.coverById(id)
+        break
+      } catch (error) {
+        const offline = (error.code || 'SERVICE_UNREACHABLE') === 'SERVICE_UNREACHABLE'
+        if (offline && attempt === 0 && typeof startService === 'function') {
+          const boot = await startService().catch(() => null)
+          if (boot?.ok) continue
+          return fail(args, 'SERVICE_START_FAILED',
+            `音频服务没在跑，自动启动也没成功（${boot?.message || '启动报错'}）。` +
+            '面板「概览 → 音频服务」点「启动服务」再点一次')
+        }
+        return fail(args, error.code || 'SERVICE_UNREACHABLE',
+          `曲库没取到：「${name || id}」——${error.message || '音频服务连不上'}`)
+      }
+    }
+    if (!hit || hit.ok === false) {
+      return fail(args, hit?.code || 'COVER_NOT_FOUND',
+        hit?.message || `曲库里没有「${name || id}」这一版了，重新点一次吧`)
+    }
+
+    let file = String(hit.file || '')
+    if (file && !exists(file)) {
+      const relative = String(hit.downloadUrl || '').replace(/^\/+/, '')
+      file = relative ? await download(service.fileUrl(relative)) : ''
+    }
+    if (!file) {
+      return fail(args, 'SONG_FILE_MISSING',
+        '曲库里有这一版但文件拿不到：确认音频服务和插件在同一台机器，或配好 service.url')
+    }
+    const title = String(hit.title || name || '')
+    if (args.chatId) await hub.sendVoiceFile(args.chatId, file, title)
+    onSung(title, args.chatId)
+    return {
+      ok: true, cached: true, id: hit.id || id, file, title,
+      voice: hit.voice || '', mode: hit.mode || '',
+      durationSec: hit.durationSec ?? 0,
+    }
+  }
+
   async function request(args = {}) {
     const name = String(args.song || args.query || '').trim()
+    const reuseId = String(args.reuse || args.coverId || '').trim()
+    if (reuseId) return reuseCover(reuseId, args, name)
     const payload = { query: name, chatId: args.chatId }
     if (args.pitch !== undefined && args.pitch !== null) {
       payload.strategy = { pitch: Number(args.pitch) }

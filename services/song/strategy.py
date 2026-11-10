@@ -87,7 +87,8 @@ def resolve(payload: dict | None, cfg) -> dict:
     if t["mode"] not in TRIM_MODES:
         raise ValueError("不认识的前奏处理：%s" % t["mode"])
     #: 模式决定前奏怎么处理：带伴奏保前奏 = 不裁；其余两档默认从人声起点开始。
-    #: 后台显式选的 off / fixed 仍然优先，方便手工控制。
+    #: 后台显式选的 off / fixed 仍然优先，方便手工控制（面板上已经不提供 off 了：
+    #: 「清唱 / 去前奏」配「不裁」自相矛盾，会在开头留一段没人声的静音）。
     if st["mode"] == "accompaniment":
         t["mode"] = "off"
     t["sensitivity"] = _clamp(t.get("sensitivity", 0.5), 0.1, 2.0)

@@ -99,7 +99,9 @@ export function apply(ctx) {
   const rulesOpts = (kind) => (mods ? { off: mods.builtinOff(), extra: mods.rules(kind) } : {})
   // 扩展模块能整段改写人格和规则（同步：提示词变量不能等）
   const rewrite = (event, text, ...args) => { const r = mods ? mods.filterSync(event, text, ...args) : text; return typeof r === 'string' ? r : r === null ? '' : text }
-  variable('aurabot_persona', () => rewrite('persona', currentPersonaText(cfg.persona.current, cfg.persona.mutedBy?.[cfg.persona.current])))
+  variable('aurabot_persona', () => (cfg.persona.enabled === false
+    ? '' // 人格总开关关着：整段提示词都不给模型，只靠规则和上下文
+    : rewrite('persona', currentPersonaText(cfg.persona.current, cfg.persona.mutedBy?.[cfg.persona.current]))))
   variable('aurabot_rules_private', () => {
     const base = rewrite('rules', rulesText('private', cfg, rulesOpts('private')), 'private')
     // 危险命令确认开着时补一句：被拦下要如实告诉主人，别绕着写
@@ -1276,7 +1278,7 @@ export function apply(ctx) {
     }
   }
   /**
-   * 面板「启动 QQ」：跨平台启动带 NapCat 的 QQ。
+   * 面板「启动 QQ 与网关」：跨平台启动带 NapCat 的 QQ（唯一入口）。
    * Windows 找 NapCat 启动脚本 / NapCatWinBootMain.exe 注入器，macOS 走 LaunchServices，
    * 详见 src/setup/launcher.js。QQ 已在跑且网关端口已监听时不重复开第二个。
    */
@@ -1292,6 +1294,16 @@ export function apply(ctx) {
     return { ...state, ok: true, healthy: state.ok }
   })
   route('/setup/start-qq', async () => startQQApp())
+  /**
+   * 离线安装引导的入口信息：/panel 和 /install-guide 都由 9876 托管，服务没起来时
+   * 打不开，而「安装」恰恰发生在那之前。这页是纯静态 HTML，面板把本机绝对路径
+   * 交给用户双击即可（服务起来后也能直接开在线那份）。
+   */
+  route('/setup/guide', async () => {
+    const file = join(ROOT, 'docs', 'install.html')
+    const base = String(cfg?.service?.url || 'http://127.0.0.1:9876').replace(/\/+$/, '')
+    return { ok: true, file, url: base + '/install-guide', exists: existsSync(file) }
+  })
   /**
    * 面板「声音」页：服务没连上时，选渠道前先把音频服务拉起来。
    * 端口已监听就直接复用（不重复起第二个）；Windows 用 python，macOS / Linux 用 python3。
@@ -1376,7 +1388,27 @@ export function apply(ctx) {
       .sort((a, b) => a.name.localeCompare(b.name))
     return { ok: true, list, off: [...off] }
   })
-  route('/panel/ops/usage', async () => ({ ok: true, ...ops.usage.summary() }))
+  // 金额按主人填的单价算（命中缓存 / 未命中 / 输出三档，峰时自动翻倍）。
+  // 单价放在 cost 段，和峰谷省钱模式同一个地方，主人改一处就够。
+  route('/panel/ops/usage', async () => {
+    const c = getConfig() || {}
+    const cost = c.cost || {}
+    const custom = cost.priceCustom === true
+      ? {
+          hit: Number(cost.priceHit) || 0,
+          miss: Number(cost.priceMiss) || 0,
+          out: Number(cost.priceOut) || 0,
+        }
+      : null
+    return {
+      ok: true,
+      ...ops.usage.summary({
+        model: String(cost.priceModel || 'deepseek-flash'),
+        prices: custom,
+        holidays: Array.isArray(cost.offPeakHolidays) ? cost.offPeakHolidays : [],
+      }),
+    }
+  })
   route('/panel/ops/timeline', async (req) => {
     const q = query(req)
     const opts = {

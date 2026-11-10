@@ -182,6 +182,32 @@ test('超时不重试（可能已经发出去了，重试会重复）', async ()
   } finally { h.restore() }
 })
 
+test('只读接口（retryTimeout）超时会重试一次', async () => {
+  let n = 0
+  const h = client(async () => {
+    n++
+    if (n === 1) throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+    return new Response(JSON.stringify({ status: 'ok', data: { msglist: [] } }), { status: 200 })
+  })
+  try {
+    const data = await h.c.call('get_qzone_msg_list', {}, { retryTimeout: true, retries: 1 })
+    assert.deepEqual(data, { msglist: [] })
+    assert.equal(h.calls.length, 2)
+  } finally { h.restore() }
+})
+
+test('只读接口重试用完还超时：报超时，不多试', async () => {
+  const h = client(async () => { throw Object.assign(new Error('aborted'), { name: 'AbortError' }) })
+  try {
+    await assert.rejects(() => h.c.call('get_qzone_msg_list', {}, { retryTimeout: true, retries: 1 }), (err) => {
+      assert.equal(err.uncertain, true)
+      assert.match(err.message, /超时/)
+      return true
+    })
+    assert.equal(h.calls.length, 2, '初始 + 1 次重试')
+  } finally { h.restore() }
+})
+
 test('读取 HTTP 回执时超时仍然报告超时，不按业务失败处理', async () => {
   const h = client(async () => ({ status: 200, json: async () => { throw Object.assign(new Error('aborted'), { name: 'AbortError' }) } }))
   try {

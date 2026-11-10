@@ -84,6 +84,7 @@ export default {
           }
         })
       started.pending = running
+      if (args.reuse) return { ok: true, message: '好，曲库里有这一版，这就放给你听（做好了不用重做）。' }
       return { ok: true, message: '好，交给音频服务去做了（面板「翻唱 → 作业日志」能看每一步；做好了发你）' }
     }
 
@@ -95,21 +96,54 @@ export default {
         return Boolean(c.song.ownerOnly) && !hub.turnSendersAllOwner(sessionId)
       }
       return [
+        // 曲库索引：只有真正点歌时才查，不占普通聊天的上下文。
+        // 清单**不写进工具描述**——描述每轮都会发一遍，歌越多越贵。
+        defineTool({
+          name: 'qq_song_library',
+          description: '查已翻唱的成品清单：歌名、音色、清唱还是伴奏、哪天做的，每行带一个 id。点歌前先查一次：看到同一首（哪怕名字差个字、带不带歌手）、音色也是当前这个，就把那一行的 id 填进 qq_song_cover 的 reuse，直接放那一版，不用重做。song 不填就返回最近做好的。',
+          properties: {
+            song: str('只查这首歌（歌名，可带歌手）；不填返回最近做好的'),
+            limit: int('最多返回几首，默认 20'),
+          },
+          required: [],
+          execute: async ({ song: name, limit }) => {
+            if (!service.enabled()) return { ok: false, message: '曲库要走音频服务：先在面板「概览 → 音频服务」打开并保存' }
+            try {
+              const r = await withService(() => service.catalog(String(name || '').trim(), Number(limit) || 20))
+              const items = (r.items || []).map((it) => ({
+                id: it.id || '',
+                song: it.title,
+                artist: it.artist || '',
+                voice: it.voice || '',
+                mode: it.mode || '',
+                date: it.date || '',
+                currentVoice: Boolean(it.current),
+              }))
+              return { ok: r.ok !== false, voice: r.voice || '', total: r.total ?? items.length, items, message: r.message || (items.length ? `曲库里 ${items.length} 首` : '曲库里还没有这一首') }
+            } catch (error) {
+              return { ok: false, code: error.code || 'SERVICE_ERROR', message: error.message, items: [] }
+            }
+          },
+        }),
         defineTool({
           name: 'qq_song_cover',
-          description: '用你自己的声音翻唱一首歌，做好后自动以语音条发到当前聊天（要两三分钟，调用后先简单回一句「等我一下」就好）。song 写歌名，最好带上歌手，比如「小幸运 田馥甄」。pitch 是变调半音：你是女声，原唱是男声时一般 +12，原唱是女声时 0。用户要清唱、不要伴奏时 mode 填 acapella；要伴奏时填 accompaniment（保留原曲前奏）或 accompaniment-trim（从人声开始，去掉开头没人声的空白）；不填就跟随后台默认。如果先用 qq_music_download 下好了歌，把落盘路径填到 file，翻唱就直接用它，不再自己搜。音频服务没跑时插件会自动拉起，不用叫用户手动开 service 或 Applio；如果它自己起不来，就让用户去面板「概览 → 音频服务」点「启动服务」或「安装向导」。',
+          description: '用你自己的声音翻唱一首歌，做好后自动以语音条发到当前聊天（要两三分钟，调用后先简单回一句「等我一下」就好）。**点歌前先调 qq_song_library 查一下**：曲库里有这一版（歌名差不多个字、带不带歌手都算同一首，只要音色是当前这个），就把那一行的 id 填进 reuse，直接放成品，不用重做、也不用填 song；没有才按下面的参数新做。song 写歌名，最好带上歌手，比如「小幸运 田馥甄」。pitch 是变调半音：你是女声，原唱是男声时一般 +12，原唱是女声时 0。用户要清唱、不要伴奏时 mode 填 acapella；要伴奏时填 accompaniment（保留原曲前奏）或 accompaniment-trim（从人声开始，去掉开头没人声的空白）；不填就跟随后台默认。如果先用 qq_music_download 下好了歌，把落盘路径填到 file，翻唱就直接用它，不再自己搜。音频服务没跑时插件会自动拉起，不用叫用户手动开 service 或 Applio；如果它自己起不来，就让用户去面板「概览 → 音频服务」点「启动服务」或「安装向导」。',
           properties: {
-            song: str('歌名（可以带歌手）'),
+            song: str('歌名（可以带歌手）；用 reuse 复用曲库时可以不填'),
+            reuse: str('曲库里那一版的 id（qq_song_library 返回的 id）：填了就直接放这一版，不重做'),
             pitch: int('变调半音：原唱男声 +12，女声 0'),
             mode: str('演唱模式：acapella=清唱；accompaniment=伴奏（保留前奏）；accompaniment-trim=伴奏（去掉开头没人声的空白）。不填跟随后台设置'),
             acapella: bool('旧参数：清唱（等同于 mode=acapella）'),
             file: str('可选：qq_music_download 返回的本地文件路径'),
           },
-          required: ['song'],
+          required: [],
           slow: '好，我这就去弄，稍等一会儿（做好了发你）。',
-          execute: async ({ song: name, pitch, mode, acapella, file }) => {
+          execute: async ({ song: name, reuse, pitch, mode, acapella, file }) => {
             if (ownerOnly()) return { ok: false, message: '只有主人能点歌' }
-            return startSong({ song: name, pitch, mode, acapella, localFile: file, chatId: chat.chatId })
+            if (!String(reuse || '').trim() && !String(name || '').trim()) {
+              return { ok: false, message: '要唱哪首？给我个歌名，或者用 reuse 指定曲库里已有的那一版' }
+            }
+            return startSong({ song: name, reuse, pitch, mode, acapella, localFile: file, chatId: chat.chatId })
           },
         }),
         // 搜索和下载拆成两个工具：搜到的不一定下、下的也不一定唱。
@@ -205,8 +239,12 @@ export default {
       try {
         if (req.method === 'POST') {
           const body = await http.body(req)
+          // service.save_song_audio 支持 5 个字段；以前这里只转发前两个，桌面上的
+          // 「轻混响 / 高频修正 / 拉齐响度」滑了半天其实没写进 config.json。
           const saved = await service.saveSongAudio({
             vocal_gain: body.vocal_gain, accompaniment_gain: body.accompaniment_gain,
+            reverb: body.reverb, treble_db: body.treble_db,
+            two_pass_loudnorm: body.two_pass_loudnorm,
           })
           return { ok: true, source: 'service', ...saved }
         }
@@ -229,7 +267,7 @@ export default {
     })
     // 本机启停（QQ / NapCat）：Windows 走 NapCat 启动脚本，macOS / Linux 走 qq-stack.sh
     api.route('/song/stack', async (req) => {
-      if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开，启停不可用；只想启动 QQ 的话用「连接体检」里的「启动 QQ」' }
+      if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开，高级启停不可用；只想启动 QQ 的话用「连接」页「本机服务」里的「启动 QQ 与网关」' }
       try {
         if (req.method === 'POST') return { ok: true, ...(await service.stackAction(String((await http.body(req)).action || 'status'))) }
         return { ok: true, ...(await service.stackStatus()) }
@@ -246,6 +284,16 @@ export default {
       if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开：选择框由 service 调系统弹' }
       try { return { ok: true, ...(await service.pick(await http.body(req))) } }
       catch (error) { return { ok: false, code: error.code || 'SERVICE_ERROR', message: error.message } }
+    })
+    // 「打开文件夹」：模型装在哪要能直接翻出来看，别只给一串路径让人自己找
+    api.route('/song/reveal', async (req) => {
+      if (req.method !== 'POST') return { ok: false, message: '打开文件夹需要 POST 请求' }
+      if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开，打不开文件夹' }
+      try {
+        const path = String((await http.body(req)).path || '')
+        if (!path) return { ok: false, message: '没给路径' }
+        return { ok: true, ...(await service.reveal(path)) }
+      } catch (error) { return { ok: false, code: error.code || 'SERVICE_ERROR', message: error.message } }
     })
     api.route('/song/refs', async (req) => {
       if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开' }
@@ -269,6 +317,25 @@ export default {
           return { ok: true, source: 'service', ...saved }
         }
         return { ok: true, source: 'service', ...(await service.ttsConfig()) }
+      } catch (error) { return { ok: false, message: error.message } }
+    })
+    // 渠道音色列表：桌面「声音」卡片按当前引擎拉真实可选音色，别让用户手打 id
+    api.route('/song/tts/voices', async (req) => {
+      if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开' }
+      try {
+        const q = new URL(req.url || '/', 'http://localhost').searchParams
+        return { ok: true, ...(await service.ttsVoices(q.get('engine') || '')) }
+      } catch (error) { return { ok: false, message: error.message } }
+    })
+    // 换声音色：说话（服务端统一换声）和唱歌共用同一份 RVC 音色库，桌面「声音」页直接选
+    api.route('/song/tts/rvc', async (req) => {
+      if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开' }
+      try {
+        if (req.method === 'POST') {
+          const name = String((await http.body(req)).name || '')
+          return { ok: true, ...(await service.selectRvc(name)) }
+        }
+        return { ok: true, ...(await service.rvcVoices()) }
       } catch (error) { return { ok: false, message: error.message } }
     })
     api.route('/song/latest', async () => {

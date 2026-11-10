@@ -165,12 +165,16 @@ class TTSEngine:
         if not _rvc_on(self.cfg):
             return out, False
         try:
+            from .. import tools as tools_mod
             from ..song import cover_tools
 
             voice = cover_tools.resolve_voice(self.cfg.song_config())
             if voice is None:
+                tools_mod.add_log(self.cfg, "tts", "统一换声跳过：服务里没选好 RVC 音色")
                 return out, False
-            work = self.cfg.data_dir / "voice-rvc"
+            # 换声成品跟原声放同一个目录（试听目录）：面板「语音试听」点开
+            # 就是它，不会再出现「文件落在 voice-rvc、面板指着一个空目录」。
+            work = out.parent
             work.mkdir(parents=True, exist_ok=True)
             target = work / (out.stem + "-rvc.wav")
             cover_tools.convert(
@@ -184,8 +188,16 @@ class TTSEngine:
             )
             if target.is_file() and target.stat().st_size > 0:
                 return target, True
-        except Exception:  # noqa: BLE001 —— 换声失败不能让整句语音消失
-            pass
+            tools_mod.add_log(self.cfg, "tts", "统一换声没产出文件，回退原声")
+        except Exception as exc:  # noqa: BLE001 —— 换声失败不能让整句语音消失
+            # 旧版在这里静默 pass：服务没换成功 → 插件端又换一次，于是
+            # 「面板一个声音、QQ 另一个声音」且日志里查不到原因。这里必须留痕。
+            try:
+                from .. import tools as tools_mod
+                tools_mod.add_log(self.cfg, "tts", "统一换声失败，回退原声：%s" % (
+                    str(exc) or type(exc).__name__))
+            except Exception:  # noqa: BLE001 —— 记日志本身不该影响出声
+                pass
         return out, False
 
     def speak(self, payload: dict) -> dict:

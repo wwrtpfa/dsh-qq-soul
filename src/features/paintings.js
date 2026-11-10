@@ -187,4 +187,45 @@ export function openPaintFolder ({ run = spawn, platform = process.platform } = 
   }
 }
 
+// ---------- 测试生图 ----------
+//
+// 面板上「画一张大飞鱼」是自测，不进图库（图库是发出去过的画）。
+// 但主人也得能找回来看看：单独放 imagegen/test/，面板上显示目录 + 一键打开。
+
+export function testDir () {
+  return join(dir(), 'test')
+}
+
+/** 存一张测试图，返回文件路径；存失败返回 ''。 */
+export function saveTest (buf, prompt, { now = new Date() } = {}) {
+  try {
+    const d = testDir()
+    mkdirSync(d, { recursive: true })
+    const p = (n) => String(n).padStart(2, '0')
+    const stamp = `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`
+    const slug = String(prompt || 'test').replace(/[\\/:*?"<>|\s]+/g, '-').slice(0, 20)
+    const ext = mimeOf(buf) === 'image/jpeg' ? 'jpg' : 'png'
+    const file = join(d, `${stamp}-${slug}.${ext}`)
+    writeFileSync(file, buf)
+    return file
+  } catch (error) {
+    return ''
+  }
+}
+
+/** 打开测试生图目录（没有就建一个，免得点开是「目录不存在」）。 */
+export function openTestFolder ({ run = spawn, platform = process.platform } = {}) {
+  const d = testDir()
+  try {
+    ensureDir(d)
+    const opts = { detached: true, stdio: 'ignore' }
+    if (platform === 'win32') run('explorer.exe', [d], opts).unref()
+    else if (platform === 'darwin') run('open', [d], opts).unref()
+    else run('xdg-open', [d], opts).unref()
+    return { ok: true, message: '打开了：' + d, path: d }
+  } catch (error) {
+    return { ok: false, message: '打不开文件夹：' + error.message, path: d }
+  }
+}
+
 export const paintDir = dir

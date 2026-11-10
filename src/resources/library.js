@@ -11,7 +11,8 @@ import {
 } from 'node:fs'
 import { basename, extname, join, resolve, sep, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
-import { dataDir, dshHome } from '../core/store.js'
+import { dataDir } from '../core/store.js'
+import { serviceDataDir, voiceOutDir } from '../voice/out.js'
 import { readZip } from '../song/zip.js'
 import { readRar } from '../song/rar.js'
 
@@ -87,11 +88,8 @@ function listFiles(dir, exts, { depth = 1, cap = 400 } = {}) {
 
 const uniq = (list) => [...new Set(list.filter(Boolean).map((p) => String(p)))]
 
-/** service 的数据目录（它自己也是按 DSH_HOME 放的）。 */
-export function serviceDataDir() {
-  const p = join(dshHome(), 'plugins-data', 'qqsoul', 'service')
-  return existsSync(p) ? p : ''
-}
+// service 的数据目录见 voice/out.js：语音试听和它共用同一份判断，不会再各算各的。
+export { serviceDataDir }
 
 /** 老项目留下的参考音频目录：有就扫，没有就跳过（不写死成必需）。 */
 function legacyRefDirs() {
@@ -117,7 +115,8 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
       songRoot,
       music,
       refs: dataDir('refs'),
-      ttsOut: String(rcfg().voiceOutDir || dataDir('audio')),
+      // 语音试听：和「语音」页试听、只读大屏的试听目录是同一个地方（见 voice/out.js）
+      ttsOut: voiceOutDir(conf()),
       models: dataDir('models'),
       rvc: join(dataDir('models'), 'rvc'),
       tts: join(dataDir('models'), 'tts'),
@@ -134,10 +133,16 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
     ...legacyRefDirs(),
   ])
 
+  // 音色库：插件自己管的那一份（导入 / 改名 / 删除都写这里）。
+  // 音频服务那边还有一份 models/rvc —— 真正唱歌的是它，所以它也算「库里」，
+  // 不然服务里的音色在面板上永远显示「不在音色库」，看着像放错了地方。
+  const rvcLibrary = () => roots().rvc
+  const rvcHomes = () => uniq([roots().rvc, roots().service ? join(roots().service, 'models', 'rvc') : ''])
+
   const rvcDirs = () => uniq([
+    rvcLibrary(),
     roots().rvc,
     roots().songs,
-    roots().service ? join(roots().service, 'models', 'rvc') : '',
     // 本机常见的「模型都放这」目录：只读扫描，有就列出来
     join(homedir(), 'tools', 'models'),
     join(homedir(), 'models'),
@@ -152,7 +157,8 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
   ])
 
   /** 受管目录：删除 / 改名只在这里面做。 */
-  const managedRoots = () => uniq([roots().data, roots().songRoot, roots().music])
+  // 音色库目录（服务的 models/rvc 或插件自己的）也算受管：改名 / 删除只在这里面做
+  const managedRoots = () => uniq([roots().data, roots().songRoot, roots().music, rvcLibrary()])
 
   const canTouch = (p) => managedRoots().some((r) => inside(r, p))
 
@@ -162,8 +168,8 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
     const rows = [
       ['数据根目录', r.data, '插件自己写的一切都在这下面'],
       ['参考音频', r.refs, '3–10 秒干净人声，本地 TTS 的音色就是它'],
-      ['语音试听', r.ttsOut, 'TTS 试听与发出去的语音条'],
-      ['RVC 音色', r.rvc, '.pth 权重 + .index 索引；翻唱和语音变声都用这里'],
+      ['语音试听', r.ttsOut, 'TTS 试听与发出去的语音条；「语音」页试听、只读大屏的试听目录就是这里'],
+      ['RVC 音色', rvcLibrary(), '.pth 权重 + .index 索引；翻唱和语音变声都用这里'],
       ['TTS 模型', r.tts, '本地 TTS 权重（千问 / GPT-SoVITS 等）'],
       ['翻唱曲库', r.music, '音频服务写在这里：原曲、成品、中间产物与索引'],
       ['原曲缓存', join(r.music, 'originals'), '下载过的原曲，同一首下次直接复用'],
@@ -225,8 +231,9 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
   // ---------------------------------------------------------------- RVC 音色
   /** 扫所有候选目录，按 .pth 配对同目录下同前缀的 .index。 */
   function listRvc() {
+    const lib = rvcLibrary()
     const seen = new Set()
-    const out = []
+    const raw = []
     for (const dir of rvcDirs()) {
       const pths = listFiles(dir, ['.pth'], { depth: 2, cap: 200 })
       const idxs = listFiles(dir, ['.index'], { depth: 2, cap: 200 })
@@ -237,7 +244,7 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
         const id = f.name.slice(0, -4)
         const parent = resolve(f.path, '..')
         const idx = idxs.find((x) => resolve(x.path, '..') === parent && basename(x.name).toLowerCase().startsWith(id.toLowerCase()))
-        out.push({
+        raw.push({
           id,
           name: id,
           pth: f.path,
@@ -246,12 +253,28 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
           dir: parent,
           bytes: f.bytes,
           mtime: f.mtime,
-          managed: inside(roots().rvc, f.path),
+          managed: rvcHomes().some((h) => inside(h, f.path)),
         })
       }
     }
+    // 同名音色在多处各有一份：只列「库里」那份，其余记进 duplicates（面板给「收进音色库」用）。
+    // 以前按路径去重，同一个音色会显示两个、选哪个还各不一样。
+    const byName = new Map()
+    const duplicates = []
+    for (const it of raw) {
+      const cur = byName.get(it.name)
+      if (!cur) { byName.set(it.name, it); continue }
+      const [keep, drop] = (it.managed && !cur.managed) ? [it, cur] : [cur, it]
+      byName.set(it.name, keep)
+      duplicates.push({ name: drop.name, pth: drop.pth })
+    }
+    const out = [...byName.values()]
     out.sort((a, b) => (b.managed - a.managed) || a.name.localeCompare(b.name))
-    return { ok: true, dir: roots().rvc, dirs: rvcDirs(), items: out, current: String(conf().song?.voice || '') }
+    return {
+      ok: true, dir: lib, dirs: rvcDirs(), items: out, duplicates,
+      homes: rvcHomes(),
+      current: String(conf().song?.voice || ''),
+    }
   }
 
   /** 认不认得出是 RVC 权重：PyTorch 存的要么 zip（PK），要么老 pickle（0x80）。 */
@@ -296,7 +319,7 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
 
   function saveRvc(files) {
     const { pths, idxs } = pairZip(files)
-    const dir = roots().rvc
+    const dir = rvcLibrary()
     // 只传了一个 .index：按同名配到已有的 .pth 上（用户常见的「补一个索引」）
     if (!pths.length && idxs.length) {
       mkdirSync(dir, { recursive: true })
@@ -375,7 +398,7 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
       return { ok: true, path: dest, index: destIdx, name: base, message: `改名成「${base}」`, rvc: listRvc() }
     }
     // 外来文件：复制进受管目录，原文件保留
-    const dir = roots().rvc
+    const dir = rvcLibrary()
     mkdirSync(dir, { recursive: true })
     const dest = join(dir, base + '.pth')
     if (existsSync(dest)) return { ok: false, message: `受管目录里已经有「${base}」了` }
@@ -390,7 +413,7 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
 
   function deleteRvc(path) {
     const p = String(path || '')
-    if (!p || !inside(roots().rvc, p)) return { ok: false, message: '只能删受管目录里的音色（本机别处的请自己删）' }
+    if (!p || !inside(rvcLibrary(), p)) return { ok: false, message: '只能删受管目录里的音色（本机别处的请自己删）' }
     const item = listRvc().items.find((x) => resolve(x.pth) === resolve(p))
     if (!item) return { ok: false, message: '没有这个音色' }
     rmSync(item.pth, { force: true })
@@ -484,7 +507,7 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
     const modelSeen = new Set()
     for (const dir of modelCands) {
       for (const f of listFiles(dir, ['.pth'], { depth: 3, cap: 120 })) {
-        if (modelSeen.has(f.path) || inside(roots().rvc, f.path)) continue
+        if (modelSeen.has(f.path) || inside(rvcLibrary(), f.path)) continue
         modelSeen.add(f.path)
         const pthDir = resolve(f.path, '..')
         const id = basename(f.name).slice(0, -4)
@@ -503,7 +526,7 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
   function adopt(kind, path) {
     const src = String(path || '')
     if (!existsSync(src)) return { ok: false, message: '这个文件已经不在了' }
-    const dir = kind === 'model' ? roots().rvc : roots().refs
+    const dir = kind === 'model' ? rvcLibrary() : roots().refs
     mkdirSync(dir, { recursive: true })
     const name = clean(basename(src))
     let dest = join(dir, name)

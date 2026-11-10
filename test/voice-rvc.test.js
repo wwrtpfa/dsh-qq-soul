@@ -35,6 +35,16 @@ test('选了翻唱音色时，用对应音色和变调调 RVC，返回变声后�
   assert.deepEqual(calls, [{ file: '/tmp/a.wav', opts: { voice: 'my-voice', pitch: 12, outDir: '/tmp/data/voice-rvc' } }])
 })
 
+test('变声成品默认落在 dataDir(voice-rvc)，也可以由调用方指定目录', async () => {
+  const calls = []
+  const song = { convertSpeech: async (file, opts) => { calls.push(opts); return '/tmp/out.wav' } }
+  // 不传 outDir：老行为不变
+  await createSongVoice({ getConfig: () => ({ voice: { songVoice: 'v' } }), getSong: () => song, dataDir: (s) => '/tmp/data/' + s })('/tmp/a.wav')
+  // 传了 outDir：听调用方的（语音模块用这个把成品放进「语音试听」目录）
+  await createSongVoice({ getConfig: () => ({ voice: { songVoice: 'v' } }), getSong: () => song, dataDir: () => '/tmp/never', outDir: () => '/tmp/audio' })('/tmp/a.wav')
+  assert.deepEqual(calls.map((o) => o.outDir), ['/tmp/data/voice-rvc', '/tmp/audio'])
+})
+
 test('变声出错会抛出（由 tts 层兜底用原声），不会静默返回错误文件', async () => {
   const conv = createSongVoice({
     getConfig: () => ({ voice: { songVoice: 'my-voice' } }),

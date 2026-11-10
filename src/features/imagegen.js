@@ -1,7 +1,9 @@
-// 生图：OpenAI 兼容、自定义接口、本地 Codex 配置（api-image），以及实验性 Codex 订阅接法。
-//   ① openai —— 兼容 OpenAI /v1/images/generations 的服务（硅基流动、通义万相兼容层、本地 ComfyUI / SD WebUI 的 OpenAI 代理……）
-//   ② custom —— 自己填接口：GET / POST、URL 模板（{prompt} 占位）、自定义参数名、从返回 JSON 里按路径取图
-//   ③ apiimage —— 读 ~/.codex/config.toml（或 CODEX_HOME）当前 provider 的地址与 token，规则同 api-image skill
+// 生图：自己填接口（标准 OpenAI 生图接口 / URL 模板），以及实验性 Codex 订阅接法。
+//   ① openai —— 标准 /images/generations（参考图走 /images/edits）：填「接口地址 + API Key + 模型」就能用，
+//                硅基流动、通义万相兼容层、本地 ComfyUI / SD WebUI 的 OpenAI 代理、官方 OpenAI 都是这一种。
+//                地址或密钥留空时，读本机 Codex 配置（~/.codex/config.toml）里的那份 —— 以前单列的「本地 api-image」。
+//   ② url    —— 自己拼接口：GET / POST、URL 模板（{prompt} 占位）、自定义参数名、从返回 JSON 里按路径取图
+//   ③ codex  —— 实验性订阅接法（登录 ChatGPT）
 // 地址和密钥由主人在面板里填；生成结果统一成 Buffer 交给 QQ 发出。
 
 import { lstatSync, readFileSync } from 'node:fs'
@@ -9,7 +11,7 @@ import { fetchImage } from '../core/net.js'
 import { paintingPath } from './paintings.js'
 import { createCodexAuth } from './codex-auth.js'
 import { createCodexImage } from './codex-image.js'
-import { createApiImage } from './api-image.js'
+import { AUTO_MODELS, QUALITIES, codexProvider, createApiImage, isModelUnavailable } from './api-image.js'
 import { mimeOf } from '../chat/inbound.js'
 import { imageToolBlock } from '../core/img.js'
 import { imageSizeFor } from './image-shape.js'
@@ -78,10 +80,17 @@ export async function resolveDrawImage(image, { hub, chat }) {
 }
 
 const UNSUPPORTED_REFERENCE = '这个生图服务不支持参考图'
-function serviceError(status, message, image) {
+function serviceError(status, message, image, body) {
   const unsupported = [404, 405, 415, 501].includes(status)
     || ([400, 422].includes(status) && /(?:(?:unsupported|not support|does not support|not available|unknown|unrecognized).*(?:image|edit|model)|(?:image|edit|model).*(?:unsupported|not support|does not support|not available)|不支持.*(?:图|编辑|模型)|(?:图|编辑|模型).*不支持)/i.test(message))
-  return new Error(image && unsupported ? UNSUPPORTED_REFERENCE : message)
+  // 把状态码和响应体带上：上层要靠它判断「是模型不可用，换一个再试」
+  return Object.assign(new Error(image && unsupported ? UNSUPPORTED_REFERENCE : message), { status, body })
+}
+
+/** 这次生图走哪条路：codex（订阅接法）/ url（自己拼 URL 模板）/ openai（标准生图接口）。 */
+export function routeOf (imageGen = {}) {
+  if (imageGen.provider === 'codex') return 'codex'
+  return (imageGen.custom && imageGen.custom.kind) === 'url' ? 'url' : 'openai'
 }
 
 /**
@@ -148,53 +157,94 @@ export function createImageGen({ getConfig, log, local, fetchImpl, codexAuth, ap
     if (local?.active('image')) {
       const { toImageBuffer } = await import('../local/local.js')
       const t = Date.now()
-      const buf = await toImageBuffer(await local.call('image', { prompt: [c.stylePrompt, prompt].filter(Boolean).join('，'), size: c.size, ...(image ? { image: image.toString('base64') } : {}) }))
+      const buf = await toImageBuffer(await local.call('image', { prompt: [c.stylePrompt, prompt].filter(Boolean).join('，'), ...(c.size ? { size: c.size } : {}), ...(image ? { image: image.toString('base64') } : {}) }))
       log.info(`本地画好了一张图（${Math.round(buf.length / 1024)}KB，${Math.round((Date.now() - t) / 1000)}s）：${prompt.slice(0, 40)}`)
       return buf
     }
     if (!c.enabled) throw new Error('生图还没开启')
     const full = [c.stylePrompt, prompt].filter(Boolean).join('，')
     const t = Date.now()
-    const buf = c.provider === 'codex' ? await viaCodex(c, full, { shape, image })
-      : c.provider === 'apiimage' ? await viaApiImage.generate(c, full, { image })
-        : c.provider === 'custom' ? await viaCustom(c, full, image) : await viaOpenAI(c, full, image)
+    const route = routeOf(c)
+    const buf = route === 'codex' ? await viaCodex(c, full, { shape, image })
+      : route === 'url' ? await viaCustom(c, full, image)
+        : await viaOpenAI(c, full, image)
     if (!buf || !buf.length) throw new Error('生图接口没有返回图片')
     if (!String(mimeOf(buf)).startsWith('image/')) throw new Error('生图接口返回的不是图片')
     log.info(`画好了一张图（${Math.round(buf.length / 1024)}KB，${Math.round((Date.now() - t) / 1000)}s）：${prompt.slice(0, 40)}`)
     return buf
   }
 
-  /** OpenAI 兼容接口。 */
+  /**
+   * 标准 OpenAI 生图接口：POST /images/generations，有参考图走 /images/edits。
+   * 接口地址 / 密钥留空时用本机 Codex 配置里的那份（原来是单列的「本地 api-image」）。
+   */
   async function viaOpenAI (c, prompt, image) {
-    const base = String(c.baseUrl || '').replace(/\/+$/, '')
-    if (!base || !c.model) throw new Error('还没填生图服务地址或模型')
-    const headers = image ? {} : { 'content-type': 'application/json' }
-    if (c.apiKey) headers.authorization = `Bearer ${c.apiKey}`
-    // response_format、image_size 不是每家都认（官方 OpenAI 就不认）：被拒了去掉再发。被拒的请求没出图，重发不会多画
-    const body = { model: c.model, prompt, size: c.size, n: 1, response_format: 'b64_json', image_size: c.size }
-    let requestBody
-    if (image) {
-      requestBody = new FormData()
-      requestBody.append('image', new Blob([image], { type: mimeOf(image) }), 'reference.' + mimeOf(image).split('/')[1])
-      for (const [key, value] of Object.entries({ prompt, model: c.model, size: c.size })) requestBody.append(key, value)
+    let base = String(c.baseUrl || '').trim().replace(/\/+$/, '')
+    let key = String(c.apiKey || '').trim()
+    if (!base || !key) {
+      const p = codexProvider(c.apiImage || {})
+      if (p) { base = base || p.baseUrl; key = key || p.apiKey }
     }
+    if (!base) throw new Error('还没填生图接口地址（也可以留空，用本机 Codex 配置里的）')
+    const configured = String(c.model || '').trim()
+    // 模型留空或填 auto：依次试几个常见模型名，只在「模型不可用」时换下一个
+    const models = !configured || configured === 'auto' ? AUTO_MODELS : [configured]
+    const quality = QUALITIES.includes(c.quality) && c.quality !== 'auto' ? c.quality : ''
+    let last
+    for (let i = 0; i < models.length; i++) {
+      try {
+        const buf = await openaiOnce({ base, key, model: models[i], quality, prompt, image, size: c.size })
+        log.info('生图接口画好了（模型：' + models[i] + '）')
+        return buf
+      } catch (error) {
+        last = error
+        if (models.length === 1 || i === models.length - 1 || !isModelUnavailable(error)) throw error
+        log.warn('生图模型 ' + models[i] + ' 不可用，换 ' + models[i + 1] + '：' + error.message)
+      }
+    }
+    throw last
+  }
+
+  async function openaiOnce ({ base, key, model, quality, prompt, image, size }) {
+    const endpoint = `${base}/images/${image ? 'edits' : 'generations'}`
+    // 没选尺寸就一个尺寸参数都不发：让接口按提示词自己定（有些服务收到不认识的 size 直接报错）
+    const body = { model, prompt, n: 1, response_format: 'b64_json', ...(size ? { size, image_size: size } : {}) }
+    if (quality) body.quality = quality
+    // 参考图的字段名各家不一样：OpenAI 官方是 image，不少代理只认 image[]
+    let field = 'image[]'
     let r, j
     for (;;) {
-      r = await fetch(`${base}/images/${image ? 'edits' : 'generations'}`, { method: 'POST', headers, body: requestBody || JSON.stringify(body), signal: AbortSignal.timeout(180000) })
+      const headers = key ? { authorization: `Bearer ${key}` } : {}
+      let payload
+      if (image) {
+        const form = new FormData()
+        for (const [k, v] of Object.entries({ model, prompt, ...(size ? { size } : {}), n: 1, ...(quality ? { quality } : {}) })) form.append(k, String(v))
+        const type = String(mimeOf(image))
+        form.append(field, new Blob([image], { type }), 'reference.' + (type.split('/')[1] || 'png'))
+        payload = form
+      } else {
+        headers['content-type'] = 'application/json'
+        payload = JSON.stringify(body)
+      }
+      r = await fetch(endpoint, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(180000) })
       j = await r.json().catch(() => ({}))
       if (r.ok) break
       const message = j?.error?.message || j?.message || `HTTP ${r.status}`
-      const bad = !image && r.status === 400 && ['response_format', 'image_size'].find((k) => k in body && message.includes(k))
-      if (!bad) throw serviceError(r.status, message, image)
-      delete body[bad]
+      // response_format / image_size / quality 不是每家都认（官方 OpenAI 就不认）：被拒了去掉再发。
+      // 被拒的请求没出图，重发不会多画
+      const bad = !image && r.status === 400 && ['response_format', 'image_size', 'quality'].find((k) => k in body && message.includes(k))
+      if (bad) { delete body[bad]; continue }
+      // 参考图字段名不认（服务说「缺少 image」这种）：换另一种写法再试一次。
+      // 只说「不支持参考图 / 不认这个参数」的不重试 —— 那是服务压根不支持，换名字也没用
+      const missingField = [400, 422].includes(r.status) && /image/i.test(message) && /(missing|required|缺少|必须)/i.test(message)
+      if (image && field === 'image[]' && missingField) { field = 'image'; continue }
+      throw serviceError(r.status, message, image, j)
     }
     const item = (j.data || j.images || [])[0] || {}
-    let buf
-    if (item.b64_json) buf = Buffer.from(item.b64_json, 'base64')
+    if (item.b64_json) return Buffer.from(item.b64_json, 'base64')
     // 有的服务返回 CDN 链接，下载可能要几十秒（实测 22 秒），默认 20 秒会误判成失败
-    else if (item.url) buf = await fetchImage(item.url, { maxBytes: 20 * 1024 * 1024, allowLocal: false, timeoutMs: 120000 })
-    else throw new Error('生图服务没有返回图片')
-    return buf
+    if (item.url) return fetchImage(item.url, { maxBytes: 20 * 1024 * 1024, allowLocal: false, timeoutMs: 120000 })
+    throw new Error('生图服务没有返回图片')
   }
 
   /** 自定义接口：GET 直接把参数拼在地址上，POST 放进 JSON / 表单。 */
@@ -228,8 +278,9 @@ export function createImageGen({ getConfig, log, local, fetchImpl, codexAuth, ap
     const c = getConfig().imageGen
     if (!c.enabled) return false
     if (c.provider === 'codex') return auth.status().loggedIn
-    if (c.provider === 'apiimage') return viaApiImage.status(c).ok
-    return c.provider === 'custom' ? Boolean(c.custom && c.custom.url) : Boolean(c.baseUrl && c.model)
+    if (c.custom && c.custom.kind === 'url') return Boolean(c.custom.url)
+    // 标准生图接口：地址填了就能用；留空时看本机 Codex 配置里有没有
+    return Boolean(String(c.baseUrl || '').trim() || codexProvider(c.apiImage || {}))
   }
 
   return { generate, enabled, codexAuth: auth, apiImage: viaApiImage, dispose: () => auth.dispose?.() }

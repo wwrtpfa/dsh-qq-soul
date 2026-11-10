@@ -126,9 +126,25 @@ const isUnsupportedEffort = (error) => {
   return /UNSUPPORTED_REASONING_EFFORT|does not support reasoning effort|reasoning effort/i.test(msg)
 }
 
+/**
+ * 这次失败是不是「过一会儿自己会好」的。
+ * 典型：网络抖了一下、代理换了出口 IP、上游 502/503/504、被限流。
+ * 这些重试一次基本就过去了；而「模型不存在」「余额不足」「内容被拒」重试只会白等。
+ */
+const isTransient = (error) => {
+  const msg = String((error && (error.message || error.code)) || '')
+  const code = String((error && error.code) || '')
+  return /transport failed|socket hang up|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|ENOTFOUND|network|fetch failed|aborted|timeout|timed out|overloaded|rate.?limit|too many requests|temporar|unavailable|bad gateway|service unavailable|gateway timeout|\b(429|500|502|503|504)\b/i.test(msg + ' ' + code)
+}
+export const isTransientModelError = isTransient
+
 /** 最近一次模型一个字没写时流里有什么：排查「模型没返回内容」用。 */
 let lastEmpty = ''
 export const lastEmptyInfo = () => lastEmpty
+
+// 网络类失败重试几次、每次等多久。代理轮换出口 IP 时一次抖动大约 1 秒内能连上新的出口
+const TRANSIENT_RETRIES = 2
+const TRANSIENT_BACKOFF_MS = [600, 1800]
 
 async function runStream (llm, params) {
   let out = ''
@@ -180,6 +196,7 @@ export async function askModel (dsh, o) {
   }
   let effort = await pickReasoningEffort(dsh, t.provider, t.model, o.reasoningEffort === undefined ? 'low' : o.reasoningEffort)
   let widened = false
+  let retried = 0
   for (let attempt = 0; ; attempt++) {
     try {
       const out = await runStream(llm, effort ? { ...base, reasoningEffort: effort } : base)
@@ -192,6 +209,15 @@ export async function askModel (dsh, o) {
       if (attempt === 0 && effort && isUnsupportedEffort(error)) {
         cacheReasoning(t.provider, t.model, null)
         effort = undefined
+        continue
+      }
+      // 网络抖动 / 代理换出口 / 上游 502：等一小会儿重来，别把整轮任务判死。
+      // 流里已经写出来的字不会发出去（这里是攒完才返回），重试不会重复。
+      if (retried < TRANSIENT_RETRIES && isTransient(error)) {
+        const wait = TRANSIENT_BACKOFF_MS[retried] || 1200
+        retried++
+        console.warn('[aurabot] 模型请求失败（' + (error.message || error.code) + '），' + wait + 'ms 后重试 ' + retried + '/' + TRANSIENT_RETRIES)
+        await new Promise((r) => setTimeout(r, wait))
         continue
       }
       throw error

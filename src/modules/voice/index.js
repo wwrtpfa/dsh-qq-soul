@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { textToSpeech, edgeInstalled, installEdge, voiceConverters } from '../../voice/tts.js'
 import { createServiceClient } from '../../service/client.js'
 import { createSongVoice } from '../../voice/rvc.js'
+import { voiceOutDir, keepInOutDir } from '../../voice/out.js'
 import { toMono16k } from '../../voice/wav.js'
 import { fileOf } from '../../local/local.js'
 
@@ -42,7 +43,8 @@ export default {
       if (api.config().service?.enabled) {
         try {
           const buf = await service.convertVoice(readFileSync(file), { pitch })
-          const dir = api.dataDir('voice-rvc')
+          // 换声成品和试听放同一个目录：面板上那条「语音试听」路径点开就能看到它
+          const dir = voiceOutDir(api.config())
           mkdirSync(dir, { recursive: true })
           const out = join(dir, 'speech-' + Date.now().toString(36) + '.wav')
           writeFileSync(out, buf)
@@ -55,7 +57,7 @@ export default {
       const song = api.use('song')
       if (!song || typeof song.convertSpeech !== 'function') return file
       try {
-        return (await song.convertSpeech(file, { voice, pitch, outDir: api.dataDir('voice-rvc') })) || file
+        return (await song.convertSpeech(file, { voice, pitch, outDir: voiceOutDir(api.config()) })) || file
       } catch (error) {
         api.log.warn('语音条变声失败，用原声：', error.message)
         return file
@@ -79,6 +81,9 @@ export default {
           }
         } catch (error) {
           api.log.warn('音频服务合成失败，改用本机语音：', error.message)
+          // 面板里把「本机备用渠道」关了：服务不行就直接认输，让上层改发文字。
+          // 不然用户明明关了备用，还是会听到一个不一样的声音。
+          if (cfg.voice.fallback === false) throw new Error('音频服务没合成出来，本机备用渠道已关：' + error.message)
         }
       }
       // 本地接口接管语音合成；出错退回内置
@@ -97,6 +102,7 @@ export default {
       getConfig: api.config,
       getSong: () => api.use('song'),
       dataDir: api.dataDir,
+      outDir: () => voiceOutDir(api.config()),
       convert: (file, opts) => convertSpeech(file, opts.voice, opts.pitch),
       log: api.log,
     })
@@ -122,7 +128,14 @@ export default {
       const b = await http.body(req)
       const { file, engine } = await speak(String(b.text || '你好呀，我是大肥鱼'))
       const buf = readFileSync(file)
-      return { ok: true, engine, mime: file.endsWith('.wav') ? 'audio/wav' : 'audio/mpeg', data: buf.toString('base64') }
+      // 试听文件也留一份在「语音试听」目录：面板上那条路径就是目录里的文件，
+      // 点「打开文件夹」能直接看到它。以前这里回的是 TTS 缓存 / 服务目录里的临时
+      // 文件，和面板显示的「语音试听」目录对不上，看着像「两个目录不同步」。
+      const { file: out, dir } = keepInOutDir(file, voiceOutDir(api.config()))
+      return {
+        ok: true, engine, mime: out.endsWith('.wav') ? 'audio/wav' : 'audio/mpeg',
+        data: buf.toString('base64'), file: out, dir,
+      }
     })
     api.route('/voice/install', async () => installEdge(api.log))
 

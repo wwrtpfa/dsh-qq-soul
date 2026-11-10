@@ -19,7 +19,8 @@ const baseGen = (custom, extra = {}) => ({
   model: '',
   size: '1080x1920',
   stylePrompt: '',
-  custom,
+  // 走「URL 模板」那条路（生产环境里配置会先过 normalize 补上 kind）
+  custom: { kind: 'url', ...custom },
   ...extra,
 })
 
@@ -134,12 +135,12 @@ test('接口回了别的东西：报错而不是发一张坏图', async () => {
 })
 
 test('enabled()：自定义模式看地址有没有填', () => {
-  const cfg = (custom) => ({ imageGen: { enabled: true, provider: 'custom', custom } })
+  const cfg = (custom) => ({ imageGen: { enabled: true, provider: 'custom', custom: { kind: 'url', ...custom } } })
   const gen = (custom) => createImageGen({ getConfig: () => cfg(custom), log, local: null })
   assert.equal(gen({ url: 'https://x.test/{prompt}' }).enabled(), true)
   assert.equal(gen({ url: '' }).enabled(), false, '没填地址就当没开')
   assert.equal(gen({}).enabled(), false)
   // 关掉总开关时不管填没填都不行
-  const off = createImageGen({ getConfig: () => ({ imageGen: { enabled: false, provider: 'custom', custom: { url: 'https://x.test/{prompt}' } } }), log, local: null })
+  const off = createImageGen({ getConfig: () => ({ imageGen: { enabled: false, provider: 'custom', custom: { kind: 'url', url: 'https://x.test/{prompt}' } } }), log, local: null })
   assert.equal(off.enabled(), false)
 })

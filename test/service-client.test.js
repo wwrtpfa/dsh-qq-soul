@@ -140,3 +140,16 @@ test('convertVoice 上传原始音频并拿回 WAV 字节', async () => {
     assert.deepEqual([...out], [0x52, 0x49, 0x46, 0x46])
   })
 })
+
+test('rvcVoices / selectRvc：换声音色读 /models/rvc，选中用 action=select', async () => {
+  await withServer((_req, res) => reply(res, 200, { ok: true, items: [], current: '' }), async (url, seen) => {
+    const client = createServiceClient({ getConfig: () => ({ service: { enabled: true, url } }) })
+    await client.rvcVoices()
+    await client.selectRvc('FeiyuVoice-RVC-v1')
+    assert.deepEqual(seen.map((r) => [r.method, r.url]), [
+      ['GET', '/models/rvc'],
+      ['POST', '/models/rvc'],
+    ])
+    assert.deepEqual(JSON.parse(seen[1].body), { action: 'select', name: 'FeiyuVoice-RVC-v1' })
+  })
+})

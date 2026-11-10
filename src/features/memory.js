@@ -14,7 +14,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { dataDir, readJson, writeJson } from '../core/store.js'
-import { askModel, lastEmptyInfo } from '../core/llm.js'
+import { askModel, isTransientModelError, lastEmptyInfo } from '../core/llm.js'
 import { clipText } from '../core/text.js'
 import { createVectorIndex } from './memory-vector.js'
 import { createMemoryStorage } from './memory-store.js'
@@ -1153,8 +1153,22 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
 
   function timeline({ kind = '', platform = '', chatId = '', level = '', about = '' } = {}) {
     const seen = list('').filter((m) => m.source === 'event' && m.kind === 'seen')
-    return [...gists({ chatId, level, about }), ...seen.filter((m) => (!chatId || m.chatId === chatId) && !level && (!about || m.about === about))]
-      .map((m) => ({ ...m, displayText: eventText(m), platforms: [...new Set([m.meta?.platform, ...(Array.isArray(m.via) ? m.via : m.via ? [m.via] : [])].filter(Boolean))] }))
+    // 以前时间轴只放「压缩过的梗概」和「看过的内容」：刚聊没几天、还没压出梗概时，
+    // 明明记着一堆事，时间轴却是空的。现在把记忆条目本身也放进来（kind='fact'），
+    // 有记忆就一定有时间轴，不用等压缩。
+    const facts = list('').filter((m) => m.source !== 'event' && m.kind !== 'gist' && isCurrent(m))
+      .slice(-400)
+    return [
+      ...gists({ chatId, level, about }),
+      ...seen.filter((m) => (!chatId || m.chatId === chatId) && !level && (!about || m.about === about)),
+      ...facts.filter((m) => (!chatId || m.chatId === chatId) && !level && (!about || String(m.about || '') === String(about))),
+    ]
+      .map((m) => ({
+        ...m,
+        kind: m.kind === 'gist' || m.kind === 'seen' ? m.kind : 'fact',
+        displayText: m.kind === 'gist' || m.kind === 'seen' ? eventText(m) : (m.displayText || m.text),
+        platforms: [...new Set([m.meta?.platform, ...(Array.isArray(m.via) ? m.via : m.via ? [m.via] : [])].filter(Boolean))],
+      }))
       .filter((m) => (!kind || m.kind === kind) && (!platform || m.platforms.includes(platform)))
       .sort((a, b) => (saidTime(b) || 0) - (saidTime(a) || 0))
   }
@@ -1617,7 +1631,8 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
       }
       return { ok: true, added: n, insights: ins }
     } catch (error) {
-      log.warn('提炼记忆失败：', error.message)
+      // 网络抖动（代理换出口、上游 502）会自己好：说清楚「稍后接着提炼」，别让人以为是配置坏了
+      log.warn('提炼记忆失败：', error.message, isTransientModelError(error) ? '（网络抖了一下，进度已保存，稍后会自动接着提炼）' : '')
       return { ok: false, message: error.message, added: 0, insights: 0 }
     }
   }
@@ -2408,7 +2423,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
       }
       return { ok: true, batches }
     } catch (error) {
-      log.warn('空闲提炼失败：', error.message)
+      log.warn('空闲提炼失败：', error.message, isTransientModelError(error) ? '（网络抖了一下，稍后会自动接着提炼）' : '')
       return { ok: false, message: error.message }
     } finally {
       try { if (batches) await refreshProfiles(startedAt) }

@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -45,6 +46,48 @@ def _rate_arg(value) -> str:
     if percent == 0:
         return "+0%"
     return ("+%d%%" % percent) if percent > 0 else ("%d%%" % percent)
+
+
+def _timeout_for(text: str, *, cap: int = 120) -> int:
+    """单段合成的等待上限：按字数给够，但不让卡死的连接把聊天挂几分钟。"""
+    return max(45, min(cap, 25 + len(text or "")))
+
+
+def _http_hint(code: int) -> tuple[str, str]:
+    if code in (401, 403):
+        return "TTS_AUTH", "语音服务的 key 不对或过期了，去设置里换一个"
+    if code == 429:
+        return "TTS_BUSY", "语音服务说请求太频繁，等一会儿再试"
+    return "TTS_HTTP_%d" % code, "语音服务这次没合成出来（HTTP %d），等会儿再试" % code
+
+
+def _fetch_audio(req, *, timeout: float, attempts: int = 2) -> bytes:
+    """拿音频字节：超时或连接断了一次就重试（合成本身是幂等的）。
+
+    最后一次失败翻译成人话，日志里别再冒出 ``The read operation timed out``
+    这种主人看不懂、模型也只能照念的英文。
+    """
+    last: ServiceError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read()
+        except urllib.error.HTTPError as exc:
+            code, message = _http_hint(exc.code)
+            if exc.code != 429 and exc.code < 500:
+                raise ServiceError(code, message) from exc
+            last = ServiceError(code, message)
+        except OSError as exc:  # URLError / 超时 / 连接被重置都在这条线上
+            timed_out = isinstance(exc, TimeoutError) or "timed out" in str(exc).lower()
+            last = ServiceError(
+                "TTS_TIMEOUT" if timed_out else "TTS_UNREACHABLE",
+                "在线语音服务这次没回音（超时），等会儿再试或换个渠道" if timed_out
+                else "连不上在线语音服务，检查下网络或换个渠道",
+            )
+        if attempt < attempts:
+            time.sleep(0.8)
+    assert last is not None
+    raise last
 
 
 def _volume_arg(value) -> str:
@@ -123,8 +166,10 @@ class BreezeProvider(BaseProvider):
             url, data=json.dumps({"text": text}).encode("utf-8"), method="POST",
             headers={"Content-Type": "application/json", "xi-api-key": key},
         )
-        with urllib.request.urlopen(req, timeout=180) as r:
-            Path(out).write_bytes(r.read())
+        data = _fetch_audio(req, timeout=_timeout_for(text))
+        if not data:
+            raise ServiceError("TTS_EMPTY", "语音服务返回了空音频，等会儿再试")
+        Path(out).write_bytes(data)
         return Path(out)
 
 
@@ -226,8 +271,10 @@ class HttpProvider(BaseProvider):
             url, data=json.dumps({"text": text, "voice": voice}).encode("utf-8"),
             method="POST", headers=headers,
         )
-        with urllib.request.urlopen(req, timeout=180) as r:
-            Path(out).write_bytes(r.read())
+        data = _fetch_audio(req, timeout=_timeout_for(text))
+        if not data:
+            raise ServiceError("TTS_EMPTY", "语音服务返回了空音频，等会儿再试")
+        Path(out).write_bytes(data)
         return Path(out)
 
 

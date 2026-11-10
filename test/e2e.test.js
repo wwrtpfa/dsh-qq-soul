@@ -829,8 +829,8 @@ test('生图：主人让她画图，调生图服务并把图发出去', async ()
   assert.equal(body.model, 'test-model')
   assert.match(body.prompt, /可爱风.*一只蓝色小鲸鱼/)
   const st = (await fake.call('/state')).json()
-  assert.equal(st.config.imageGen.apiKey, '', '生图密钥不回传')
-  assert.equal(st.config.imageGen.apiKeySet, true)
+  // 生图密钥改成明文回传面板（自己配的 Key，要能在面板里核对 / 复制）
+  assert.equal(st.config.imageGen.apiKey, 'img-key-123456', '生图密钥要明文回传，面板里直接显示')
 })
 
 test('生图工具结果：能看图时带 image 块，纯文本模型只给文字（#37）', async () => {

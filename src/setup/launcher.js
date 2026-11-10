@@ -1,4 +1,4 @@
-// 跨平台「启动 QQ」：面板「连接」页那个按钮背后的实现。
+// 跨平台「启动 QQ 与网关」：面板「连接」页那个按钮背后的唯一实现。
 //
 // 旧版只有 macOS 分支（open -a QQ + LaunchServices），Windows 上点按钮直接返回
 // 「只有 macOS 能一键启动」。Windows 真正要起来的是「带 NapCat 注入的 QQ」：
@@ -12,7 +12,7 @@
 
 import { existsSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, extname, join, resolve } from 'node:path'
+import { win32 } from 'node:path'
 import { spawn, execFile } from 'node:child_process'
 import { platformOf, qqAppPath, napCatDir, napCatFlag } from './doctor.js'
 
@@ -23,17 +23,19 @@ export function napCatRoots({ home = homedir(), env = process.env, exists = exis
   add(String(env.QQSOUL_NAPCAT_DIR || '').trim().replace(/[\\/]+$/, ''))
   const config = napCatDir('win', home)
   if (config) {
-    add(dirname(dirname(config)))  // D:\NapCat\napcat\config → D:\NapCat
-    add(dirname(config))           // D:\NapCat\napcat
+    // 本函数拼的全是 Windows 路径：统一用 win32 语义，别让宿主 OS 决定分隔符。
+    // 否则在 macOS 上跑（纯函数注入测试、跨端诊断）会拼出 'D:\NapCat/napcat' 这种废路径。
+    add(win32.dirname(win32.dirname(config)))  // D:\NapCat\napcat\config → D:\NapCat
+    add(win32.dirname(config))                 // D:\NapCat\napcat
   }
-  for (const d of ['D:\\NapCat', 'C:\\NapCat', join(home, 'NapCat'),
-                   join(String(env.LOCALAPPDATA || ''), 'NapCat'),
-                   join(home, 'Documents', 'NapCat')]) add(d)
+  for (const d of ['D:\\NapCat', 'C:\\NapCat', win32.join(home, 'NapCat'),
+                   win32.join(String(env.LOCALAPPDATA || ''), 'NapCat'),
+                   win32.join(home, 'Documents', 'NapCat')]) add(d)
   return out.filter((d) => exists(d))
 }
 
 function scriptKind(file) {
-  const e = extname(String(file || '')).toLowerCase()
+  const e = win32.extname(String(file || '')).toLowerCase()
   if (e === '.ps1') return 'ps1'
   if (e === '.lnk') return 'lnk'
   if (e === '.exe') return 'exe'
@@ -44,11 +46,11 @@ function scriptKind(file) {
 /** NapCatWinBootMain.exe 需要的环境变量（和官方 launcher-*.bat / start-napcat.bat 一致）。 */
 export function napCatBootEnv(napcat) {
   return {
-    NAPCAT_PATCH_PACKAGE: join(napcat, 'qqnt.json'),
-    NAPCAT_LOAD_PATH: join(napcat, 'loadNapCat.js'),
-    NAPCAT_INJECT_PATH: join(napcat, 'NapCatWinBootHook.dll'),
-    NAPCAT_LAUNCHER_PATH: join(napcat, 'NapCatWinBootMain.exe'),
-    NAPCAT_MAIN_PATH: join(napcat, 'napcat.mjs'),
+    NAPCAT_PATCH_PACKAGE: win32.join(napcat, 'qqnt.json'),
+    NAPCAT_LOAD_PATH: win32.join(napcat, 'loadNapCat.js'),
+    NAPCAT_INJECT_PATH: win32.join(napcat, 'NapCatWinBootHook.dll'),
+    NAPCAT_LAUNCHER_PATH: win32.join(napcat, 'NapCatWinBootMain.exe'),
+    NAPCAT_MAIN_PATH: win32.join(napcat, 'napcat.mjs'),
   }
 }
 
@@ -61,7 +63,7 @@ export function qqLauncherCandidates({ platform = process.platform, home = homed
   const out = []
   const add = (file, kind, label, extra = {}) => {
     if (!file || out.some((x) => x.path === file) || !exists(file)) return
-    out.push({ path: file, kind, label, cwd: dirname(file), ...extra })
+    out.push({ path: file, kind, label, cwd: win32.dirname(file), ...extra })
   }
   if (p === 'mac') {
     add('/Applications/QQ.app', 'mac-app', 'QQ.app（LaunchServices）')
@@ -73,8 +75,8 @@ export function qqLauncherCandidates({ platform = process.platform, home = homed
   // 本机实测 start-napcat.bat（NapCatWinBootMain.exe 注入器）带不起 6099/6700。
   // 环境变量若还指着它，忽略掉，让官方 napcat.bat 排第一——用户要求「启动 QQ」
   // 一律走 napcat.bat，扫码/快速登录后 6700 正向 WS 才会监听。
-  if (explicit && !/^start-napcat\.(bat|cmd|ps1)$/i.test(basename(explicit))) {
-    add(resolve(explicit), scriptKind(explicit), '自定义 QQ 启动器')
+  if (explicit && !/^start-napcat\.(bat|cmd|ps1)$/i.test(win32.basename(explicit))) {
+    add(win32.resolve(explicit), scriptKind(explicit), '自定义 QQ 启动器')
   }
 
   const quick = String(account || env.QQSOUL_QQ_ACCOUNT || '').trim()
@@ -82,19 +84,19 @@ export function qqLauncherCandidates({ platform = process.platform, home = homed
     // NapCat.Shell 官方入口 napcat.bat（= node.exe index.js）。本机实测只有它
     // 能同时带起 6099 WebUI 和 6700 正向 WS；注入器 start-napcat.bat 在这台
     // 机器上没起来，所以官方入口排第一。-q 复用本机登录态，免去每次扫码。
-    add(join(root, 'napcat.bat'), 'bat', 'NapCat 官方 napcat.bat',
+    add(win32.join(root, 'napcat.bat'), 'bat', 'NapCat 官方 napcat.bat',
       quick ? { args: ['-q', quick], note: `已带 -q ${quick} 快速登录，不用扫码` } : {})
     for (const name of ['start-napcat.bat', 'start-napcat.cmd', 'start-napcat.ps1',
                         '启动NapCat.bat', 'launch-napcat.bat', 'napcat-start.bat']) {
-      add(join(root, name), scriptKind(name), 'NapCat 启动脚本')
+      add(win32.join(root, name), scriptKind(name), 'NapCat 启动脚本')
     }
-    const nc = join(root, 'napcat')
+    const nc = win32.join(root, 'napcat')
     for (const name of ['launcher-user.bat', 'launcher-win10-user.bat', 'launcher.bat', 'launcher-win10.bat']) {
-      add(join(nc, name), 'bat', 'NapCat 官方启动脚本',
+      add(win32.join(nc, name), 'bat', 'NapCat 官方启动脚本',
         { note: '官方脚本结尾有 pause，启动后会留一个控制台窗口，关掉它不影响 QQ。' })
     }
-    const boot = join(nc, 'NapCatWinBootMain.exe')
-    const hook = join(nc, 'NapCatWinBootHook.dll')
+    const boot = win32.join(nc, 'NapCatWinBootMain.exe')
+    const hook = win32.join(nc, 'NapCatWinBootHook.dll')
     const qq = qqAppPath('win', home)
     if (exists(boot) && exists(hook) && qq && exists(qq)) {
       add(boot, 'boot', 'NapCat 注入启动器', { args: [qq, hook], cwd: nc, env: napCatBootEnv(nc) })
@@ -126,7 +128,7 @@ export function planQQLaunch(options = {}) {
 /** 把 plan 变成一条 spawn 命令（不执行）。 */
 export function launchCommand(plan, { env = process.env } = {}) {
   const base = {
-    cwd: plan.cwd || dirname(plan.path),
+    cwd: plan.cwd || win32.dirname(plan.path),
     detached: true,
     stdio: 'ignore',
     env: { ...env, ...(plan.env || {}) },
@@ -177,7 +179,7 @@ export function qqProcessRunning(platform = process.platform, { exec = execFile 
 }
 
 /**
- * 面板「启动 QQ」按钮的总入口。
+ * 面板「启动 QQ 与网关」按钮的总入口。
  * portOpen 是可选的异步探测：QQ 已在跑且网关端口已监听时，不重复开第二个 QQ。
  */
 export async function startQQ({

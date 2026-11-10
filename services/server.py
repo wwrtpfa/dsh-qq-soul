@@ -12,8 +12,10 @@ import mimetypes
 import os
 import queue
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,7 +34,13 @@ from . import selfcheck as selfcheck_mod
 from .registry import ModelRegistry
 from .song import cover_tools
 from .song import strategy as strategy_mod
-from .song.cover_cache import CoverStore
+from .song.cover_cache import (
+    CoverStore,
+    entry_voice,
+    mode_label,
+    normalize_title,
+    voice_key,
+)
 from .song.pipeline import JobCancelled, SongPipeline
 from . import stack as stack_mod
 from . import tools as tools_mod
@@ -41,6 +49,9 @@ from .tts.providers import ServiceError
 
 PANEL_HTML = Path(__file__).resolve().parents[1] / "docs" / "prototype" / "index.html"
 INSTALL_DOC = Path(__file__).resolve().parents[1] / "docs" / "INSTALL-WITH-AI.md"
+#: 独立安装引导：纯静态、双击可用，不依赖 service。/panel 里的向导页只链到它，
+#: 免得「装服务」这一步的说明反而要等服务起来才看得到。
+INSTALL_GUIDE_HTML = Path(__file__).resolve().parents[1] / "docs" / "install.html"
 
 #: 打包后 docs 可能被裁剪，兜底给一段最短可用的提示词，面板永远有东西可复制。
 PROMPT_FALLBACK = """我要在我的电脑上装一个叫「懂你的QQ大肥鱼」的 DSH 插件。
@@ -50,6 +61,16 @@ PROMPT_FALLBACK = """我要在我的电脑上装一个叫「懂你的QQ大肥鱼
 3) 在左侧栏找到「懂你的QQ大肥鱼」打开面板走向导；4) 装 QQ 网关（macOS NapCat / Windows SnowLuma 完整版）并开正向 WebSocket；
 5) 起音频服务（Windows 用 python -m services --serve，macOS / Linux 用 python3），打开 http://127.0.0.1:9876/panel 跑五步自检；6) 告诉我哪几步红了、怎么修。
 每一步做完用一句话说明「做了什么、现在什么状态、下一步干嘛」。"""
+
+
+def _title_hit(want: str, row: dict) -> bool:
+    """点歌输入「樱花草 Sweety」也要能查到曲库里的「樱花草」。"""
+    q = normalize_title(want)
+    title = normalize_title(row.get("title"))
+    artist = normalize_title(row.get("artist"))
+    if not q or not title:
+        return False
+    return title in q or q in title or bool(artist and artist in q)
 
 
 def _platform_name() -> str:
@@ -340,6 +361,14 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                                             "message": "找不到面板文件：" + str(PANEL_HTML)})
                 return self._bytes(200, PANEL_HTML.read_bytes(), "text/html; charset=utf-8")
 
+            # 安装引导的在线入口。文件本身就是离线页，这里只是让 /panel 能链过去；
+            # 服务没起来时用户仍可直接双击 docs/install.html 看同一份内容。
+            if method == "GET" and path == "/install-guide":
+                if not INSTALL_GUIDE_HTML.is_file():
+                    return self._json(404, {"ok": False, "code": "GUIDE_MISSING",
+                                            "message": "找不到安装引导：" + str(INSTALL_GUIDE_HTML)})
+                return self._bytes(200, INSTALL_GUIDE_HTML.read_bytes(), "text/html; charset=utf-8")
+
             if method == "GET" and path == "/song/strategy":
                 return self._json(200, {"ok": True,
                                         "strategy": strategy_mod.resolve(None, ctx.cfg)})
@@ -446,6 +475,9 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                                                                str(body.get("newName") or "")))
                 if action == "delete":
                     return self._json(200, tools_mod.rvc_delete(ctx.cfg, str(body.get("name") or "")))
+                if action == "adopt":
+                    # 把「库外」的音色搬进服务的 models/rvc：音色只放一处，面板上不再有「不在目录里」
+                    return self._json(200, tools_mod.adopt_voices(ctx.cfg, str(body.get("path") or body.get("name") or "")))
                 return self._json(200, tools_mod.rvc_select(ctx.cfg, str(body.get("name") or "")))
 
             # TTS 模型库：千问 / GPT-SoVITS 各自一个目录，可导入、可删
@@ -491,6 +523,60 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                                         "dirs": ctx.cfg.music_dirs(),
                                         "message": ("曲库里 %d 首" % len(rows)) if rows
                                                    else "还没有做好的翻唱。搜一首点下去，做好后会留在这里。"})
+
+            # 给大模型看的曲库索引：只有「歌名 / 音色 / 清唱或伴奏 / 日期」。
+            # 点歌前查一次就能决定复用哪一版；不带路径和 slug，省 token。
+            if method == "GET" and path == "/song/catalog":
+                store = CoverStore(ctx.cfg.data_dir / "music")
+                rows = store.catalog()
+                want = str((query.get("song") or [""])[0] or "").strip()
+                if want:
+                    rows = [row for row in rows if _title_hit(want, row)]
+                else:
+                    rows.sort(key=lambda row: float(row.get("created_at") or 0), reverse=True)
+                total = len(rows)
+                try:
+                    limit = int((query.get("limit") or ["20"])[0] or 20)
+                except ValueError:
+                    limit = 20
+                limit = max(1, min(50, limit))
+                current = str(ctx.cfg.song_config().get("voice_name") or "")
+                items = [{
+                    "id": str(row.get("id") or ""),
+                    "title": str(row.get("title") or ""),
+                    "artist": str(row.get("artist") or ""),
+                    "voice": str(row.get("voice") or ""),
+                    "mode": "伴奏" if str(row.get("accompaniment") or "") == "伴奏" else "清唱",
+                    "date": time.strftime("%Y-%m-%d",
+                                          time.localtime(float(row.get("created_at") or 0))),
+                    "current": bool(current) and voice_key(row.get("voice")) == voice_key(current),
+                } for row in rows[:limit]]
+                return self._json(200, {
+                    "ok": True, "voice": current, "total": total, "items": items,
+                    "message": ("曲库里 %d 首" % total) if total else "曲库里还没有这一首",
+                })
+
+            # 指名取件：大模型看过曲库清单后，把那一行的 id 传回来就直接放这一版。
+            # 名字对不对、带不带歌手都不参与判断——判断已经由模型做完了。
+            if method == "GET" and path == "/song/cover":
+                slug = str((query.get("id") or [""])[0] or "").strip()
+                store = CoverStore(ctx.cfg.data_dir / "music")
+                entry = store.get(slug) if slug else None
+                if entry is None:
+                    return self._json(404, {
+                        "ok": False, "code": "NOT_FOUND",
+                        "message": "曲库里没有这一版了（可能被删了）：让用户重新点一次，或先查 qq_song_library",
+                    })
+                rel = _relative_file(ctx, str(store.cover_path(entry.slug)))
+                return self._json(200, {
+                    "ok": True, "id": entry.slug, "title": entry.title,
+                    "artist": entry.artist, "voice": entry_voice(entry),
+                    "mode": "伴奏" if mode_label(entry) == "伴奏" else "清唱",
+                    "file": str(store.cover_path(entry.slug)),
+                    "downloadUrl": rel,  # 和作业结果一致：相对路径，桥接层自己拼 /files/
+                    "durationSec": round(float(entry.clip_duration or entry.duration or 0.0), 1),
+                    "cached": True,
+                })
 
             if method == "POST" and path == "/song/covers/delete":
                 slug = str(self._body().get("slug") or "").strip()
@@ -670,10 +756,10 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                                       "语音条变声 · 已关闭，保留参考音频原声")
                     return self._bytes(200, data, "audio/wav")
                 # 幂等：/tts/speak 与 /tts/say 现在都返回「已换声」成品
-                # （voice-rvc/*-rvc.wav）。旧版插件不认识 rvcApplied，还会把这段
+                # （audio/*-rvc.wav）。旧版插件不认识 rvcApplied，还会把这段
                 # 成品再传回来换一次；服务端 index_rate=0.15、此端点 0.5，两遍
                 # 之后 QQ 听到的就不是面板里那个声音了。命中直接回原字节。
-                done_dir = ctx.cfg.data_dir / "voice-rvc"
+                done_dir = ctx.cfg.data_dir / "audio"
                 if done_dir.is_dir():
                     try:
                         same_size = [p for p in done_dir.glob("*-rvc.wav")
@@ -694,8 +780,9 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                 if voice is None:
                     return self._json(409, {"ok": False, "code": "VOICE_MISSING",
                                             "message": "音频服务里还没选好换声音色（.pth + .index）"})
-                work = ctx.cfg.data_dir / "voice-rvc"
-                work.mkdir(parents=True, exist_ok=True)
+                # 中间产物（上传的原始字节、未换声的 wav）只活在系统临时目录里，
+                # 不再在数据目录下开一个 voice-rvc 摊着；成品字节直接回给插件。
+                work = Path(tempfile.mkdtemp(prefix="qqsoul-rvc-"))
                 stamp = str(time.time_ns())
                 uploaded = work / ("speech-" + stamp + ".upload")
                 src = work / ("speech-" + stamp + ".wav")
@@ -727,16 +814,20 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                     return self._json(500, {"ok": False, "code": "RVC_FAILED",
                                             "message": str(exc) or type(exc).__name__})
                 finally:
-                    for path_ in (uploaded, src, out):
-                        try:
-                            path_.unlink()
-                        except OSError:
-                            pass
+                    shutil.rmtree(work, ignore_errors=True)
 
             if method == "POST" and path == "/tts/speak":
                 body = self._body()
                 started = time.time()
-                result = dict(ctx.tts.speak(body))
+                try:
+                    result = dict(ctx.tts.speak(body))
+                except Exception as exc:  # 失败也留一条：日志里能看出是哪个渠道、卡了多久
+                    code = str(getattr(exc, "code", "") or "INTERNAL")
+                    message = str(getattr(exc, "message", "") or exc or type(exc).__name__)
+                    tools_mod.add_log(ctx.cfg, "tts", "合成失败 · %s · %d 字 · %.1fs · %s（%s）" % (
+                        str(body.get("engine") or ctx.cfg.tts_engine or "?"),
+                        len(str(body.get("text") or "")), time.time() - started, message, code))
+                    raise
                 rel = _relative_file(ctx, result.get("file") or "")
                 if rel:
                     result["fileUrl"] = "/files/" + rel

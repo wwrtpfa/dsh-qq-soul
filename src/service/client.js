@@ -93,7 +93,11 @@ export function createServiceClient({ getConfig = () => ({}), fetchImpl = global
     musicSearch: (q, limit = 10, source = '') => call('/music/search?q=' + encodeURIComponent(q || '') + '&limit=' + encodeURIComponent(limit) + (source === '' || source == null ? '' : '&source=' + encodeURIComponent(source))),
     musicDownload: (payload) => call('/music/download', { method: 'POST', body: payload }),
     ttsConfig: () => call('/tts/config'),
+    ttsVoices: (engine) => call('/tts/voices?engine=' + encodeURIComponent(engine || '')),
     saveTtsConfig: (payload) => call('/tts/config', { method: 'POST', body: payload }),
+    // RVC 音色库：说话换声用哪个音色，跟唱歌是同一份（cfg.song.voiceName）
+    rvcVoices: () => call('/models/rvc'),
+    selectRvc: (name) => call('/models/rvc', { method: 'POST', body: { action: 'select', name } }),
     stackStatus: () => call('/stack'),
     stackAction: (action) => call('/stack', { method: 'POST', body: { action } }),
     paths: () => call('/paths'),
@@ -106,6 +110,9 @@ export function createServiceClient({ getConfig = () => ({}), fetchImpl = global
     logs: (source, level) => call('/logs?source=' + encodeURIComponent(source || 'service') + (level ? '&level=' + level : '')),
     latestSong: () => call('/song/latest'),
     covers: () => call('/song/covers'),
+    catalog: (song, limit) => call('/song/catalog?song=' + encodeURIComponent(song || '')
+      + '&limit=' + encodeURIComponent(String(limit || 20))),
+    coverById: (id) => call('/song/cover?id=' + encodeURIComponent(String(id || ''))),
     deleteCover: (slug) => call('/song/covers/delete', { method: 'POST', body: { slug } }),
     reveal: (path) => call('/reveal', { method: 'POST', body: { path } }),
     job: (id) => call('/song/jobs/' + encodeURIComponent(id)),

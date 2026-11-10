@@ -1,11 +1,12 @@
-// 本地 api-image：复用 Codex 的 provider 配置生图。
+// 读本机 Codex 的 provider 配置：$CODEX_HOME/config.toml（默认 ~/.codex）里 model_provider
+// 指向的 base_url + experimental_bearer_token；没有 token 时依次看 OPENAI_API_KEY 环境变量
+// 和 auth.json。
 //
-// 和 api-image skill 读同一份东西：$CODEX_HOME/config.toml（默认 ~/.codex）里
-// model_provider 指向的 base_url + experimental_bearer_token；没有 token 时
-// 依次看 OPENAI_API_KEY 环境变量和 auth.json。密钥只用于这一次请求，
-// 不写回配置、不写日志、不回传给面板。
+// 它不再是面板里单独的一种「接口格式」（以前叫「本地 api-image」）：面板里就是
+// 「自定义接口 → OpenAI 兼容接口」，地址和密钥自己填；留空时才读这里兜底，
+// 或者点一下「从本机 Codex 配置填入」把地址和密钥抄进表单。
 //
-// 端点与 skill 一致：纯文生图走 /images/generations，有参考图走 /images/edits
+// 端点与 OpenAI 一致：纯文生图走 /images/generations，有参考图走 /images/edits
 // （multipart 的 image[] 字段）。model=auto 时只在模型不可用时回落。
 
 import { existsSync, readFileSync } from 'node:fs'
@@ -164,6 +165,25 @@ function resolveProvider (apiCfg = {}, env = process.env) {
   return { home, configFile, provider: providerName, baseUrl, apiKey, keySource: keySourceLabel(keySource) }
 }
 
+/** 这个错误是不是「模型不可用」（换下一个模型再试）。 */
+export function isModelUnavailable (error) {
+  if (![400, 404, 422].includes(error?.status)) return false
+  const body = error.body && typeof error.body === 'object' ? error.body : {}
+  const issue = body.error && typeof body.error === 'object' ? body.error : body
+  const code = String(issue.code || '').toLowerCase()
+  const message = String(issue.message || error.message || '').toLowerCase()
+  if (MODEL_UNAVAILABLE_CODES.has(code)) return true
+  return /model/.test(message) && /(not found|not support|unsupported|unavailable|does not exist|invalid)/.test(message)
+}
+
+/**
+ * 读本机 Codex 配置里的地址和密钥（地址 / 密钥留空时用它兜底）。
+ * 读不到就回 null —— 调用方自己决定是报错还是走别的路。
+ */
+export function codexProvider (apiCfg = {}, env = process.env) {
+  try { return resolveProvider(apiCfg, env) } catch { return null }
+}
+
 export function createApiImage ({ fetchImpl, log, env = process.env, downloadImage = fetchImage } = {}) {
   const fetch = fetchImpl || ((...args) => globalThis.fetch(...args))
 
@@ -186,15 +206,20 @@ export function createApiImage ({ fetchImpl, log, env = process.env, downloadIma
     }
   }
 
-  function modelUnavailable (error) {
-    if (![400, 404, 422].includes(error?.status)) return false
-    const body = error.body && typeof error.body === 'object' ? error.body : {}
-    const issue = body.error && typeof body.error === 'object' ? body.error : body
-    const code = String(issue.code || '').toLowerCase()
-    const message = String(issue.message || error.message || '').toLowerCase()
-    if (MODEL_UNAVAILABLE_CODES.has(code)) return true
-    return /model/.test(message) && /(not found|not support|unsupported|unavailable|does not exist|invalid)/.test(message)
+  /** 面板「从本机 Codex 配置填入」：把地址、密钥、模型一次给全（面板要明文显示密钥）。 */
+  function fill (imageGen = {}) {
+    const apiCfg = imageGen.apiImage || {}
+    const p = codexProvider(apiCfg, env)
+    if (!p) return status(imageGen)
+    return {
+      ok: true, home: p.home, configFile: p.configFile, provider: p.provider,
+      baseUrl: p.baseUrl, apiKey: p.apiKey, keySource: p.keySource,
+      model: String(apiCfg.model || 'auto').trim() || 'auto',
+      quality: QUALITIES.includes(apiCfg.quality) ? apiCfg.quality : 'high',
+    }
   }
+
+  const modelUnavailable = isModelUnavailable
 
   async function request (provider, { model, prompt, size, quality, image }) {
     const headers = { authorization: `Bearer ${provider.apiKey}` }
@@ -253,7 +278,7 @@ export function createApiImage ({ fetchImpl, log, env = process.env, downloadIma
     throw last
   }
 
-  return { status, generate }
+  return { status, fill, generate }
 }
 
 export default createApiImage

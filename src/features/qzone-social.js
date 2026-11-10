@@ -83,14 +83,17 @@ export function createQzoneSocial({ getConfig, onebot, hub, log, memory }) {
     return true
   }
 
+  /** 读接口超时可以安全重试（不会重复发东西），写接口仍然不重试。 */
+  const readOpts = { timeoutMs: 25000, retries: 1, retryTimeout: true }
+
   /** 回复自己说说下别人的新评论。 */
   async function replyOwn(s, budget) {
     let done = 0
-    const list = await onebot.call('get_qzone_msg_list', { num: 5 }, { timeoutMs: 20000 })
+    const list = await onebot.call('get_qzone_msg_list', { num: 5 }, readOpts)
     for (const m of list?.msglist || []) {
       if (done >= budget) break
       if (!(m.comment_num > 0) || Date.now() / 1000 - m.time > 3 * 86400) continue
-      const d = await onebot.call('get_qzone_msg_detail', { tid: m.tid, num: 30 }, { timeoutMs: 20000 })
+      const d = await onebot.call('get_qzone_msg_detail', { tid: m.tid, num: 30 }, { ...readOpts, timeoutMs: 20000 })
       const handled = new Set(s.replied[m.tid] || [])
       for (const c of d?.comments || []) {
         if (done >= budget) break
@@ -124,7 +127,7 @@ export function createQzoneSocial({ getConfig, onebot, hub, log, memory }) {
   async function browseFriends(s, budget) {
     const c = getConfig().qzoneSocial
     let done = 0
-    const res = await onebot.call('get_qzone_feeds', { count: 15 }, { timeoutMs: 20000 })
+    const res = await onebot.call('get_qzone_feeds', { count: 15 }, readOpts)
     const seen = new Set(s.seen)
     for (const f of pickFeeds(res?.feeds, self())) {
       if (done >= budget) break
@@ -177,8 +180,27 @@ export function createQzoneSocial({ getConfig, onebot, hub, log, memory }) {
     try {
       const left = Math.max(0, c.maxPerDay - s.count)
       if (!left) return { ok: true, message: '今天互动够多了', replies: 0, comments: 0 }
-      const replies = c.replyOwn ? await replyOwn(s, Math.min(3, left)) : 0
-      const comments = c.commentFriends ? await browseFriends(s, Math.min(2, Math.max(0, c.maxPerDay - s.count))) : 0
+      // 两个阶段互不牵连：自己的评论列表拉不到，也照常去逛好友动态
+      const errors = []
+      let replies = 0
+      if (c.replyOwn) {
+        try {
+          replies = await replyOwn(s, Math.min(3, left))
+        } catch (error) {
+          errors.push('回评论：' + error.message)
+          log.warn('回复空间评论失败，跳过：', error.message)
+        }
+      }
+      let comments = 0
+      if (c.commentFriends) {
+        try {
+          comments = await browseFriends(s, Math.min(2, Math.max(0, c.maxPerDay - s.count)))
+        } catch (error) {
+          errors.push('逛动态：' + error.message)
+          log.warn('逛好友动态失败，跳过：', error.message)
+        }
+      }
+      if (errors.length) return { ok: false, message: `${errors.join('；')}（这次已回 ${replies} 条、评 ${comments} 条）`, replies, comments }
       return { ok: true, message: `回了 ${replies} 条评论，评了 ${comments} 条好友说说`, replies, comments }
     } catch (error) {
       log.warn('逛空间出错：', error.message)

@@ -74,6 +74,25 @@ test('本地接口同样收到所选尺寸，默认行为和提示词保持兼�
   assert.deepEqual(seen, [{ prompt: '水彩，猫', size: '1536x1024' }, { prompt: '水彩，猫', size: '768x1024' }])
 })
 
+test('构图选「不指定」时一个尺寸参数都不发', async (t) => {
+  const seen = [], c = config({ shape: 'none' })
+  t.mock.method(globalThis, 'fetch', async (_url, init) => {
+    seen.push(JSON.parse(init.body))
+    return new Response(JSON.stringify({ data: [{ b64_json: PNG.toString('base64') }] }))
+  })
+  const gen = createImageGen({ getConfig: () => c, log })
+  assert.equal(c.imageGen.shape, 'none')
+  assert.equal(imageSizeFor('none', c.imageGen), '')
+  await gen.generate('猫')
+  assert.ok(!('size' in seen.at(-1)), '面板默认选了不指定，就不该发 size')
+  assert.ok(!('image_size' in seen.at(-1)))
+  await gen.generate('猫', { shape: 'none' })
+  assert.ok(!('size' in seen.at(-1)), '本次显式不指定，也不发 size')
+  // 指定了构图就照常发
+  await gen.generate('猫', { shape: 'wide' })
+  assert.equal(seen.at(-1).size, '1536x864')
+})
+
 test('服务拒绝尺寸时透传错误，不静默重试成另一种构图', async (t) => {
   let calls = 0
   t.mock.method(globalThis, 'fetch', async () => { calls++; return new Response(JSON.stringify({ error: { message: 'unsupported size 1536x864' } }), { status: 400 }) })

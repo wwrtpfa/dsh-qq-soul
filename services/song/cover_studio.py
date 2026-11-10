@@ -54,7 +54,13 @@ from pathlib import Path
 from typing import Callable
 
 from services.song import cover_cache, cover_silence, cover_tools, cover_weights
-from services.song.cover_cache import CoverEntry, CoverStore, entry_voice, slugify
+from services.song.cover_cache import (
+    CoverEntry,
+    CoverStore,
+    entry_accompaniment,
+    entry_voice,
+    slugify,
+)
 from services.song.cover_source import (
     CoverCandidate,
     CoverDownloadError,
@@ -230,6 +236,9 @@ class CoverTarget:
     #: 翻唱策略指纹：换取窗/裁剪/推理参数必须落到不同曲库条目与不同工作目录，
     #: 否则会命中上一次的旧成品或旧分离戳，「保存即生效」就成了假话。
     cache_tag: str = ""
+    #: 这次是不是用户点名了清唱 / 伴奏。``False`` 时才允许「同一版另一模式」兜底复用；
+    #: 默认 ``True``（直接调渲染器的老调用方保持原来的严格匹配）。
+    mode_explicit: bool = True
 
     @property
     def slug(self) -> str:
@@ -402,7 +411,9 @@ class CoverRenderer:
         #: 不再复用；分离戳仍按原策略指纹走，不会因此重跑 demucs。
         #: |mdx2：启用 MDX 真分离后，旧成品（整曲直喂 RVC）全部作废，
         #: 再点同一首歌会重新分离 + 换声 + 混音，而不是放回音质差的旧文件。
-        cache_tag = (target.cache_tag or "") + "|gate2|mdx4"
+        #: ``|mdx4`` 只加在真正有 MDX 的机器上（见 ``separation_cache_tag``）：
+        #: macOS / Linux 一直用 demucs，不能因为 Windows 的升级把它们的成品作废。
+        cache_tag = (target.cache_tag or "") + "|gate2" + cover_tools.separation_cache_tag()
         key = cover_cache.cache_key(
             title, target.source_id, voice_name, vocal_only, cache_tag
         )
@@ -419,6 +430,21 @@ class CoverRenderer:
             report(1.0, "曲库里已有这一版，直接放")
             return _result(cached, self.store.cover_path(cached.slug),
                            probe=self._duration, cached=True)
+        #: 用户没说清唱还是伴奏时，「同一首歌 + 当前音色」的另一模式也算命中。
+        #: 点歌只说「翻唱《樱花草》」时，不该因为后台默认是伴奏就重做一首清唱。
+        if not target.mode_explicit:
+            alt_key = cover_cache.cache_key(
+                title, target.source_id, voice_name, not vocal_only, cache_tag
+            )
+            alt = self.store.find_compatible(
+                key=alt_key, title=title, source_id=target.source_id,
+                voice=voice_name, acapella=not vocal_only,
+            )
+            if alt is not None:
+                alt = cover_silence.tighten_cached(alt, self.store)
+                report(1.0, f"曲库里已有这一版（{_mode_word(alt)}），直接放")
+                return _result(alt, self.store.cover_path(alt.slug),
+                               probe=self._duration, cached=True)
 
         problem = self.problem()
         if problem:
@@ -504,6 +530,15 @@ class CoverRenderer:
                 key=key, title=candidate.title, source_id=candidate.source_id,
                 voice=voice_name, acapella=vocal_only,
             )
+            if hit is None and not target.mode_explicit:
+                hit = self.store.find_compatible(
+                    key=cover_cache.cache_key(
+                        candidate.title, candidate.source_id, voice_name,
+                        not vocal_only, cache_tag,
+                    ),
+                    title=candidate.title, source_id=candidate.source_id,
+                    voice=voice_name, acapella=not vocal_only,
+                )
             if hit is not None:
                 hit = cover_silence.tighten_cached(hit, self.store)
                 report(1.0, "曲库里已有这一版，直接放")
@@ -892,6 +927,11 @@ class CoverRenderer:
         except Exception:  # noqa: BLE001 —— 换版本的兜底不该自己抛错
             return []
         return self._rank_candidates(chosen, hits)
+
+
+def _mode_word(entry) -> str:
+    """成品到底带不带伴奏，给作业日志和提示语用。"""
+    return "伴奏" if entry_accompaniment(entry) else "清唱"
 
 
 def _result(entry: CoverEntry, path: Path, *, probe=None, cached: bool = False) -> CoverResult:

@@ -105,7 +105,7 @@ export function createQzone({ getConfig, onebot, hub, log, onDiary, pickImage, c
         // 并以「没有新 id / 没有新页」作为停止条件，不假设网关一定按请求页大小给。
         const PAGE = 30
         for (let pages = 0; pages < 200; pages++) {
-          const page = await onebot.call('get_qzone_msg_list', { pos, num: PAGE }, { timeoutMs: 12000 })
+          const page = await onebot.call('get_qzone_msg_list', { pos, num: PAGE }, { timeoutMs: 20000, retries: 1, retryTimeout: true })
           if (!Array.isArray(page?.msglist) || !Number.isInteger(page.total) || page.total < 0) throw new Error('空间列表格式不完整')
           if (total !== null && total !== page.total) throw new Error('空间列表正在变化，请稍后刷新')
           total = page.total

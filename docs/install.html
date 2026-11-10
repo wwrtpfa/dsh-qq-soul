@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>装「懂你的QQ大肥鱼」 · 离线安装引导</title>
+<!--
+  独立安装引导：不依赖 127.0.0.1:9876，双击本文件（file://）就能看全部步骤。
+  运维大屏 /panel 和安装提示词接口 /install/prompt 都要服务起来才有，而「安装」
+  恰恰发生在服务起来之前——所以这一页必须是纯静态的。
+
+  权威提示词在 docs/INSTALL-WITH-AI.md 的代码块里（服务端 /install/prompt 读它）。
+  本页为离线可用内嵌了一份，改提示词时记得同步两处。
+-->
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --line:#e5e8ee; --ink:#1b2230; --muted:#6b7484;
+    --brand:#3b6cf6; --brand-soft:#eaf0ff; --ok:#1a9c6b; --warn:#c8791b;
+    --shadow:0 2px 10px rgba(22,34,60,.05); --code:#f2f4f8;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#14181f; --card:#1c222c; --line:#2c3442; --ink:#e8ecf3; --muted:#98a3b5;
+      --brand:#7b9dff; --brand-soft:#232f4d; --ok:#4bd19b; --warn:#e5aa55;
+      --shadow:0 2px 14px rgba(0,0,0,.25); --code:#242c39; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:900px;margin:0 auto;padding:32px 20px 72px}
+  .head{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+  .head h1{font-size:26px;margin:0 0 4px;letter-spacing:-.4px}
+  .head p{margin:0;color:var(--muted);font-size:14px}
+  .spacer{flex:1}
+  .offline{display:inline-flex;align-items:center;gap:7px;background:var(--brand-soft);
+    color:var(--brand);border-radius:999px;padding:6px 13px;font-size:12px;font-weight:600;white-space:nowrap}
+  .offline i{width:7px;height:7px;border-radius:50%;background:currentColor}
+  .status{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--card);
+    border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow);margin-bottom:26px}
+  .status .dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}
+  .status .dot.on{background:var(--ok)} .status .dot.off{background:var(--warn)}
+  .status b{font-size:14px} .status small{color:var(--muted);display:block;font-size:12.5px}
+  button{font:inherit;cursor:pointer;border-radius:9px;border:1px solid var(--line);
+    background:var(--card);color:var(--ink);padding:7px 13px;font-size:13px;transition:.15s}
+  button:hover{border-color:var(--brand);color:var(--brand)}
+  button.primary{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+  button.primary:hover{filter:brightness(1.08);color:#fff}
+  button:disabled{opacity:.5;cursor:default}
+  a{color:var(--brand);text-decoration:none} a:hover{text-decoration:underline}
+  h2{font-size:17px;margin:30px 0 12px;display:flex;align-items:center;gap:9px}
+  h2 .n{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+    border-radius:7px;background:var(--brand-soft);color:var(--brand);font-size:12px}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:18px 20px;box-shadow:var(--shadow);margin-bottom:12px}
+  .step h3{margin:0 0 6px;font-size:16px;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .where{font-size:11.5px;color:var(--muted);border:1px solid var(--line);
+    border-radius:6px;padding:1px 7px;font-weight:500}
+  .step p{margin:0 0 10px;color:var(--muted);font-size:13.5px}
+  .step ul{margin:0 0 10px;padding-left:20px;font-size:13.5px} .step li{margin:3px 0}
+  .cmd{display:flex;align-items:center;gap:8px;background:var(--code);border-radius:9px;
+    padding:9px 11px;margin:8px 0;flex-wrap:wrap}
+  code{font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all}
+  .cmd code{flex:1 1 300px}
+  .note{background:var(--brand-soft);border-radius:10px;padding:11px 14px;
+    font-size:13px;color:var(--ink);margin:10px 0 0}
+  .note b{color:var(--brand)}
+  .checks{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+  .checks div{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:13px 15px;font-size:13.5px}
+  .checks b{display:block;margin-bottom:3px} .checks span{color:var(--muted);font-size:12.5px}
+  details{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:12px 16px;margin-bottom:9px}
+  summary{cursor:pointer;font-weight:600;font-size:14px} details p{margin:9px 0 0;color:var(--muted);font-size:13.5px}
+  .prompt{white-space:pre-wrap;background:var(--code);border-radius:10px;padding:14px 16px;
+    font:12.5px/1.75 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;max-height:300px;overflow:auto;margin:12px 0}
+  .foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);
+    color:var(--muted);font-size:12.5px;display:flex;gap:12px;flex-wrap:wrap}
+  .tag{display:inline-block;background:var(--code);border-radius:5px;padding:0 6px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <div>
+      <h1>装「懂你的QQ大肥鱼」</h1>
+      <p>五步走完就能在 QQ 里跟她说话。每一步只做一件事，做完再往下走。</p>
+    </div>
+    <div class="spacer"></div>
+    <span class="offline"><i></i> 离线可看 · 不依赖音频服务</span>
+  </div>
+
+  <div class="status">
+    <span class="dot" id="svcDot"></span>
+    <div>
+      <b id="svcTitle">正在检测音频服务…</b>
+      <small id="svcDesc">这页本身不需要它；检测只是告诉你装到哪一步了。</small>
+    </div>
+    <div class="spacer"></div>
+    <button id="svcRetry">重新检测</button>
+    <a id="panelLink" href="http://127.0.0.1:9876/panel" target="_blank" rel="noopener" hidden>打开运维大屏 ↗</a>
+  </div>
+
+  <h2><span class="n">!</span> 动手之前，先确认 3 件事</h2>
+  <div class="checks">
+    <div><b>① 机器人号必须是小号</b><span>主号拿去当机器人，你自己就没法正常用了。</span></div>
+    <div><b>② 别装上游 Aurabot</b><span>两者挂载 ID、配置目录完全相同，会撞车、双份回复。</span></div>
+    <div><b>③ 安装包不带大模型</b><span>默认说话走在线渠道，零下载；本地音色按需再装。</span></div>
+  </div>
+
+  <h2><span class="n">1</span> 装插件</h2>
+  <div class="step">
+    <h3>用本地目录安装 <span class="where">DSH</span></h3>
+    <p>在 DSH 里选「本地目录安装」，指向这个项目文件夹，<b>不要填 GitHub 地址</b>。装完重启 DSH，左侧栏会出现「懂你的QQ大肥鱼」。</p>
+    <div class="note">这一步不需要音频服务，也不需要开终端。</div>
+  </div>
+
+  <h2><span class="n">2</span> 装 QQ 网关</h2>
+  <div class="step">
+    <h3 id="gwTitle">让机器人号上线 <span class="where" id="gwWhere">QQ / 桌面端</span></h3>
+    <div id="gwMac">
+      <ul>
+        <li>macOS 用 <b>NapCat</b>，装在 QQ 里；扫码登录走它自己的 <code>http://127.0.0.1:6099</code>。</li>
+        <li>QQ 更新会覆盖 NapCat 的注入文件，更新后要重装一次。</li>
+      </ul>
+    </div>
+    <div id="gwWin" hidden>
+      <ul>
+        <li>Windows 用 <b>SnowLuma 完整版</b>（不是 lite），自己下载、自己点同意用户协议。</li>
+        <li>解压到<b>纯英文目录</b>，例如 <code>C:\qq-soul\snowluma</code>。</li>
+      </ul>
+    </div>
+    <p>关键是开「<b>正向 WebSocket</b>」：本机推荐 <code>6700</code>（NapCat 默认可能是 3001，以它实际监听的为准）。装回面板后，在「连接」页把地址填进去。</p>
+    <div class="note"><b>在哪点：</b>桌面端「连接」页 →「本机服务（QQ / 网关 / 语音）」→「启动 QQ 与网关」。这一处就够了，不用再找第二个启动按钮。</div>
+  </div>
+
+  <h2><span class="n">3</span> 起音频服务</h2>
+  <div class="step">
+    <h3>声音和翻唱交给本机的 9876 服务 <span class="where">终端 / 桌面端</span></h3>
+    <p>最简单：桌面端「概览」→「音频服务」卡片点「<b>启动服务</b>」。没起来时，在终端里跑下面这一行：</p>
+    <div class="cmd"><code id="serveCmd">python3 -m services --serve</code><button data-copy="serveCmd">复制</button></div>
+    <p>然后回桌面端「概览」，打开「<b>启用音频服务</b>」开关。</p>
+    <div class="note" id="pyNote">macOS / Linux 用 <code>python3</code>；Windows 用 <code>python</code>。</div>
+  </div>
+
+  <h2><span class="n">4</span> 试一句、点一首</h2>
+  <div class="step">
+    <h3>在桌面端确认能说能唱 <span class="where">桌面端</span></h3>
+    <ul>
+      <li>「语音」页点一次<b>试听</b>；生成的文件路径会直接显示在卡片里，不用猜存哪了。</li>
+      <li>「音乐源」卡片用「<b>测试搜索</b>」搜一首歌名，能搜出来就说明后面 AI 点歌也能搜。</li>
+      <li>「翻唱」页点一首歌；进度、耗时、成品目录都能在网页大屏的「运行看盘」里看。</li>
+    </ul>
+    <div class="note">所有<b>配置、导入、启停、点歌</b>都在桌面端完成；网页大屏是<b>只读看盘</b>，两边读同一份数据。</div>
+  </div>
+
+  <h2><span class="n">5</span> 跑一遍自检</h2>
+  <div class="step">
+    <h3>五步全绿就能用了 <span class="where">桌面端 / 运维大屏</span></h3>
+    <p>桌面端「连接」页的「连接体检」，或运维大屏「引导与原理 → 依赖体检」。看 <code>service / deps / gateway / tts / song</code> 五步。</p>
+    <div class="note">有红的，把那一步的报错原文复制给 AI 就行。</div>
+  </div>
+
+  <h2><span class="n">AI</span> 不想一步步看？整段复制给 AI</h2>
+  <div class="step">
+    <h3>让它带着你装 <span class="where">任意 AI</span></h3>
+    <p>把下面这段粘给 DSH 里的 AI，它会一步一步问你、帮你做，每次只让你做一件事。</p>
+    <div class="prompt" id="promptText"></div>
+    <button class="primary" id="copyPrompt">复制这段提示词</button>
+    <span id="copyTip" style="margin-left:10px;color:var(--muted);font-size:12.5px"></span>
+    <div class="note">权威版在 <code>docs/INSTALL-WITH-AI.md</code>；服务起来后 <code>/install/prompt</code> 会直接读那份文档，系统名会自动填好。</div>
+  </div>
+
+  <h2><span class="n">?</span> 卡住了？</h2>
+  <details><summary>DSH 每隔几分钟自己重启</summary><p>多半是旧桥留下的守护进程在杀它。macOS 上检查 <code>~/Library/LaunchAgents/</code> 里有没有 <code>com.merzlin.dsh-qq-supervisor.plist</code>，有就移走。</p></details>
+  <details><summary>面板显示「已就绪」，但 QQ 连不上</summary><p>看网关 6700 有没有在听、插件有没有连上。桌面端「连接」页的「连接状态」会写清楚是没启动、没连上，还是登录的不是机器人号。</p></details>
+  <details><summary>她一次回两条</summary><p>NapCat 里还留着反向连 6700 的旧桥配置。删掉它，只保留正向 WebSocket。</p></details>
+  <details><summary>网页大屏和桌面端看到的数不一样</summary><p>两边读同一份配置，但分工不同：桌面端是<b>唯一的写入口</b>，网页只做日志、用量、作业进度、成品目录、模型库浏览。网页里的写按钮都被收起来了，看到「去桌面端」就回面板找对应卡片。</p></details>
+
+  <div class="foot">
+    <span>离线页：<span class="tag">docs/install.html</span></span>
+    <span>提示词源：<span class="tag">docs/INSTALL-WITH-AI.md</span></span>
+    <span>服务起来后也可访问 <a href="http://127.0.0.1:9876/install-guide" target="_blank" rel="noopener">/install-guide</a></span>
+    <span>配置与操作在桌面端 · 网页大屏只读</span>
+  </div>
+</div>
+
+<script>
+(function () {
+  var isWin = /Win/i.test(navigator.platform || navigator.userAgent || '');
+  var osName = isWin ? 'Windows' : (/Mac/i.test(navigator.platform || navigator.userAgent || '') ? 'macOS' : 'Linux');
+  var $ = function (id) { return document.getElementById(id); };
+
+  // 平台差异：只切文案和命令，步骤结构保持一致。
+  $('gwMac').hidden = isWin;
+  $('gwWin').hidden = !isWin;
+  $('gwWhere').textContent = isWin ? 'QQ / 桌面端' : 'QQ / 桌面端';
+  $('serveCmd').textContent = isWin ? 'cd "<插件目录>"; python -m services --serve'
+                                    : 'cd "<插件目录>" && python3 -m services --serve';
+
+  // 与 docs/INSTALL-WITH-AI.md 的代码块保持一致；离线页不能 fetch 本地 md，只能内嵌一份。
+  var prompt = [
+    '我要在我的电脑上装一个叫「懂你的QQ大肥鱼」的 DSH 插件。',
+    '我不懂技术，请你一步一步带我装，每次只让我做一件事，做完等我说「好了」再继续。',
+    '',
+    '我的情况：',
+    '- 系统：' + osName,
+    '- 插件目录：（贴你放这个插件的文件夹路径）',
+    '- 机器人 QQ 号（小号）：（填）',
+    '- 我自己的 QQ 号（主人号）：（填）',
+    '',
+    '请按这个顺序带我（就五步）：',
+    '1. 装插件：用本地目录安装（不要用 github 地址），装完重启 DSH。',
+    '2. 重启后让我在 DSH 左侧栏找到「懂你的QQ大肥鱼」，打开面板。',
+    '3. 装 QQ 网关（macOS 用 NapCat，Windows 用 SnowLuma 完整版），',
+    '   关键是开「正向 WebSocket」：本机推荐 6700，NapCat 自己默认可能是 3001，填它实际监听的端口；',
+    '   然后回桌面端「连接」页，在「本机服务」卡片点一次「启动 QQ 与网关」。',
+    '4. 起音频服务：macOS / Linux 用 `cd "<插件目录>" && python3 -m services --serve`，',
+    '   Windows 用 `cd "<插件目录>"; python -m services --serve`；也可以在桌面端「概览」点「启动服务」，',
+    '   然后打开「启用音频服务」。接着在「语音」页试听一句、「音乐源」点「测试搜索」。',
+    '5. 跑一遍自检（桌面端「连接体检」或运维大屏「依赖体检」），看 service / deps / gateway / tts / song 五步，',
+    '   全绿就上线；说话渠道先用在线的零下载跑通，要本地音色再在「语音」页切换。',
+    '',
+    '每一步做完，请用一句话告诉我「刚才做了什么、现在是什么状态、下一步要干嘛」。',
+    '遇到要我在电脑上手动点的（同意协议、选文件/选目录），直接告诉我去点哪里，别让我手打路径。'
+  ].join('\n');
+  $('promptText').textContent = prompt;
+
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+    return new Promise(function (resolve, reject) {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy') ? resolve() : reject(new Error('copy failed')); }
+      catch (e) { reject(e) } finally { document.body.removeChild(ta); }
+    });
+  }
+  function flash(el, msg) {
+    var old = el.textContent; el.textContent = msg;
+    setTimeout(function () { el.textContent = old; }, 1800);
+  }
+  document.querySelectorAll('[data-copy]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      copyText($(b.dataset.copy).textContent).then(function () { flash(b, '已复制'); },
+        function () { flash(b, '手动选中复制'); });
+    });
+  });
+  $('copyPrompt').addEventListener('click', function () {
+    copyText(prompt).then(function () { $('copyTip').textContent = '已复制 ' + prompt.length + ' 字，粘给 AI 就行'; },
+      function () { $('copyTip').textContent = '复制失败，手动选中上面的文字吧'; });
+  });
+
+  // 可选探测：服务没起来也不影响本页，失败就当「还没装到第 3 步」。
+  function probe() {
+    var dot = $('svcDot'), title = $('svcTitle'), desc = $('svcDesc'), link = $('panelLink');
+    dot.className = 'dot'; title.textContent = '正在检测音频服务…';
+    desc.textContent = '这页本身不需要它；检测只是告诉你装到哪一步了。';
+    link.hidden = true;
+    var done = false;
+    var timer = setTimeout(function () { if (!done) finish(false); }, 2200);
+    function finish(ok, version) {
+      if (done) return; done = true; clearTimeout(timer);
+      dot.className = 'dot ' + (ok ? 'on' : 'off');
+      title.textContent = ok ? ('音频服务已启动' + (version ? '（v' + version + '）' : '')) : '音频服务还没启动';
+      desc.textContent = ok ? '第 3 步做完了，可以去看运行看盘；配置和启停仍只在桌面端。'
+                            : '正常：先看第 1、2 步。这一页不需要服务也能看，装到第 3 步再来检测。';
+      link.hidden = !ok;
+    }
+    try {
+      var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      if (ctl) setTimeout(function () { ctl.abort(); }, 2200);
+      fetch('http://127.0.0.1:9876/healthz', { mode: 'cors', signal: ctl ? ctl.signal : undefined })
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('offline')); })
+        .then(function (d) { finish(true, d && d.version); })
+        .catch(function () { finish(false); });
+    } catch (e) { finish(false); }
+  }
+  $('svcRetry').addEventListener('click', probe);
+  probe();
+})();
+</script>
+</body>
+</html>

@@ -89,11 +89,23 @@ test('面板：模型页有峰谷开关和节假日输入（源码契约）', as
 
 test('config normalize：cost 默认关、老配置不受影响、脏值清洗', () => {
   const base = normalize({})
-  assert.deepEqual(base.cost, { offPeak: false, offPeakHolidays: [] }, '默认关 + 空节假日')
+  assert.deepEqual(base.cost, {
+    offPeak: false, offPeakHolidays: [],
+    // 金额换算用的三档单价（元 / 百万 token，谷时价）：老配置没有就用 DeepSeek 官方默认
+    priceModel: 'deepseek-flash', priceCustom: false, priceHit: 0.02, priceMiss: 1, priceOut: 4,
+  }, '默认关 + 空节假日 + 默认单价')
   // 开关只认 boolean（手填 "true" 之类不当真）
   assert.equal(normalize({ cost: { offPeak: true } }).cost.offPeak, true)
   assert.equal(normalize({ cost: { offPeak: 'yes' } }).cost.offPeak, false)
   assert.equal(normalize({ cost: { offPeak: 1 } }).cost.offPeak, false)
+  // 单价：认得的预设名才留，乱填退回默认；自定义价按数字夹住
+  assert.equal(normalize({ cost: { priceModel: 'deepseek-v4-pro' } }).cost.priceModel, 'deepseek-v4-pro')
+  assert.equal(normalize({ cost: { priceModel: '乱填' } }).cost.priceModel, 'deepseek-flash')
+  const pc = normalize({ cost: { priceCustom: true, priceHit: '0.5', priceMiss: -3, priceOut: 8 } })
+  assert.equal(pc.cost.priceCustom, true)
+  assert.equal(pc.cost.priceHit, 0.5)
+  assert.equal(pc.cost.priceMiss, 0, '负数夹到 0')
+  assert.equal(pc.cost.priceOut, 8)
   // 节假日：去重、去非法日期（2 月 30 / 乱填 / 非字符串）、排序、接受字符串形式
   const c = normalize({ cost: { offPeakHolidays: ['2026-10-01', '2026-10-01', '2026-02-30', 'bad', 20261001, ' 2026-10-02 '] } })
   assert.deepEqual(c.cost.offPeakHolidays, ['2026-10-01', '2026-10-02'])

@@ -94,7 +94,7 @@ def active_engine() -> str:
 
 def engine_note(engine: str) -> str:
     if os.name == "nt":
-        return ("Windows 上「启动 QQ（NapCat）」只负责把带 NapCat 的 QQ 拉起来："
+        return ("Windows 上「启动 QQ 与网关」只负责把带 NapCat 的 QQ 拉起来："
                 "语音渠道由音频服务自己管，不会额外起 9881/9882/9883。")
     if engine == "gpt_sovits":
         return "当前说话渠道是 GPT-SoVITS：启动会带上 9881 + 9882；9883 不用起。"
@@ -259,9 +259,9 @@ def status(cfg=None) -> dict:
                    "多半是插件进程还是旧的：在 DSH 里把「懂你的QQ大肥鱼」关掉再打开一次，"
                    "之后这里会变成「已有客户端连上」。")
     elif on["qq"]:
-        message = "QQ / NapCat 管理页在，但 6700 没开——点「启动 QQ（NapCat）」把网关带起来"
+        message = "QQ / NapCat 管理页在，但 6700 没开——点「启动 QQ 与网关」把网关带起来"
     else:
-        message = ("QQ 没加载 NapCat，收不到消息——Windows 点「启动 QQ（NapCat）」"
+        message = ("QQ 没加载 NapCat，收不到消息——Windows 点「启动 QQ 与网关」"
                    if win else "QQ 没加载 NapCat，收不到消息——macOS 用 qq-stack.sh start")
     # 没有「一个必须等另一个」的硬依赖：每件都能单独跑。启动脚本只是按当前说话渠道
     # 挑一套语音服务，再把 QQ 和桥带上；面板把这件事说清楚，用户不用猜。
@@ -308,7 +308,7 @@ class StackRunner:
             raise ValueError("找不到启动脚本：" + str(script) + "（先在配置里填 stack.script；Windows 一般是 D:\\NapCat\\napcat.bat）")
         win_script = os.name == "nt" and script.suffix.lower() in (".bat", ".cmd", ".ps1")
         if win_script and action not in ("start", "restart", "status"):
-            raise ValueError("Windows 上这个动作会连你自己的 QQ 一起关掉，请在 QQ 里手动退出；要重新拉起网关就点「启动 QQ（NapCat）」")
+            raise ValueError("Windows 上这个动作会连你自己的 QQ 一起关掉，请在 QQ 里手动退出；要重新拉起网关就点「启动 QQ 与网关」")
         if self._busy and action != "status":
             raise ValueError("上一个启停动作还没跑完，等它结束再点")
         if action == "status":

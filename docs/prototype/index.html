@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>懂你的QQ大肥鱼 · 面板原型</title>
+<title>懂你的QQ大肥鱼 · 运行看盘（只读）</title>
 <style>
 :root{
   --bg:#060912; --grid:rgba(126,232,245,.045); --panel:#0d1424; --panel2:#111b30;
@@ -33,11 +33,11 @@ html[data-theme="light"] .side{background:linear-gradient(180deg,rgba(255,255,25
 .brand svg{width:38px;height:38px;flex:0 0 auto}
 .brand b{font-size:15px;letter-spacing:.5px;display:block}
 .brand small{color:var(--mut);font-size:11px;letter-spacing:.4px}
-.navgrp{margin-bottom:14px}
+.navgrp{margin-bottom:16px}
 .navgrp h4{margin:0 0 6px;padding:0 10px;font-size:10.5px;font-weight:700;letter-spacing:2px;color:var(--dim);text-transform:uppercase}
 .nav{display:flex;flex-direction:column;gap:2px}
-.nav button{all:unset;cursor:pointer;padding:8px 10px;border-radius:9px;color:var(--mut);font-size:13px;
-  display:flex;align-items:center;gap:9px;transition:.16s}
+.nav button{all:unset;cursor:pointer;padding:9px 11px;border-radius:9px;color:var(--mut);font-size:13px;
+  display:flex;align-items:center;gap:9px;transition:.16s;cursor:pointer}
 .nav button:hover{background:var(--panel2);color:var(--tx)}
 .nav button.on{background:linear-gradient(90deg,rgba(126,232,245,.14),rgba(143,168,255,.08));color:var(--tx);
   box-shadow:inset 2px 0 0 var(--cyan)}
@@ -47,8 +47,22 @@ html[data-theme="light"] .side{background:linear-gradient(180deg,rgba(255,255,25
   padding:1px 5px;border-radius:5px;font-weight:800;margin-left:auto}
 .sidefoot{border-top:1px solid var(--line);margin-top:18px;padding:14px 10px 0;font-size:11px;color:var(--dim);line-height:1.8}
 /* ---------- 主区 ---------- */
-.main{padding:30px 40px 72px;min-width:0}
-.topbar{display:flex;align-items:center;gap:12px;justify-content:flex-end;margin-bottom:18px}
+.main{padding:26px 36px 64px;min-width:0}
+.topbar{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap}
+.tb-title{display:flex;flex-direction:column;gap:2px;min-width:0}
+.tb-title b{font-size:14px;letter-spacing:.3px}
+.tb-title small{font-size:11px;color:var(--dim)}
+.tb-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.ro-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-4px 0 16px;padding:9px 14px;
+  font-size:11.5px;color:var(--mut);background:var(--panel);border:1px solid var(--line2);
+  border-left:3px solid var(--cyan);border-radius:10px;transition:.16s}
+.ro-bar b{color:var(--tx);font-weight:600}
+.ro-badge{font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--cyan);
+  border:1px solid var(--cyan);border-radius:5px;padding:2px 6px;white-space:nowrap}
+.ro-bar.flash{border-left-color:var(--amber);box-shadow:0 0 0 2px rgba(255,190,90,.18)}
+.ro{opacity:.78 !important;background:var(--panel2) !important;color:var(--dim) !important;
+  border:1px dashed var(--line2) !important;box-shadow:none !important;transform:none !important}
+.ro-input{opacity:.6;cursor:not-allowed}
 .chip{font-size:11px;padding:5px 11px;border-radius:20px;border:1px solid var(--line2);color:var(--mut);
   display:inline-flex;align-items:center;gap:6px;background:var(--panel)}
 .chip b{color:var(--green);font-weight:700}
@@ -56,6 +70,7 @@ html[data-theme="light"] .side{background:linear-gradient(180deg,rgba(255,255,25
 .ghost{all:unset;cursor:pointer;font-size:11.5px;padding:6px 12px;border:1px solid var(--line2);
   border-radius:9px;color:var(--mut);transition:.16s}
 .ghost:hover{color:var(--tx);border-color:var(--cyan)}
+.nav button:focus-visible,.btn:focus-visible,.ghost:focus-visible,.pill:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 .btn{all:unset;cursor:pointer;font-size:12px;padding:7px 14px;border-radius:9px;font-weight:600;
   background:linear-gradient(100deg,var(--cyan),var(--blue));color:#05101f;transition:.16s;white-space:nowrap}
 .btn:hover{filter:brightness(1.12);transform:translateY(-1px)}
@@ -82,14 +97,14 @@ html[data-theme="light"] .hero{background:linear-gradient(115deg,#fff,#eef4ff 60
 .view{display:none;animation:fade .28s ease}
 .view.on{display:block}
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-h2.sec{font-size:21px;margin:32px 0 8px;letter-spacing:.2px;font-weight:700}
+h2.sec{font-size:20px;margin:28px 0 8px;letter-spacing:.2px;font-weight:700}
 .sub{color:var(--mut);font-size:12.5px;margin:0 0 16px}
-.grid{display:grid;gap:14px}
+.grid{display:grid;gap:14px;align-items:start}
 .g2{grid-template-columns:repeat(2,minmax(0,1fr))}
 .g3{grid-template-columns:repeat(3,minmax(0,1fr))}
 .g4{grid-template-columns:repeat(4,minmax(0,1fr))}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px;transition:.18s}
-.card:hover{border-color:var(--line2);transform:translateY(-2px)}
+.card:hover{border-color:var(--line2)}
 .card h3{margin:0 0 10px;font-size:15px;letter-spacing:.2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .card p{margin:0;color:var(--mut);font-size:13px;line-height:1.7}
 .tag{font-size:10px;padding:2px 8px;border-radius:6px;font-weight:700;letter-spacing:.4px}
@@ -103,9 +118,18 @@ h2.sec{font-size:21px;margin:32px 0 8px;letter-spacing:.2px;font-weight:700}
 .t-gray{background:rgba(139,155,189,.12);color:var(--mut)}
 .kv{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
 .kv:last-child{border:0}
-.kv span:first-child{color:var(--mut)}
+.kv span:first-child{color:var(--mut);flex:0 0 auto;white-space:nowrap;padding-right:10px}
+/* 右边是长路径：允许在任意位置断行，不然会把左边的标签挤成「曲库 / 成品目
+   录」这种半个词换行 */
+.kv span:last-child{min-width:0;text-align:right;overflow-wrap:anywhere}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
 th{text-align:left;color:var(--dim);font-size:10.5px;letter-spacing:1.2px;font-weight:700;padding:9px 10px;border-bottom:1px solid var(--line)}
+/* 之前没写 a 的样式：深色底上默认链接是浏览器那种暗蓝，基本看不清 */
+a{color:var(--cyan);text-decoration:none;border-bottom:1px solid rgba(126,232,245,.35);transition:.16s}
+a:hover{color:var(--tx);border-bottom-color:var(--cyan)}
+/* 行内代码给一点底色，和正文区分开；.pcode 是整段路径，不加底色 */
+code:not(.pcode){font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em;padding:1px 5px;border-radius:5px;background:rgba(126,232,245,.09);color:var(--tx)}
+html[data-theme="light"] code:not(.pcode){background:rgba(47,82,200,.08)}
 td{padding:10px;border-bottom:1px solid var(--line);color:var(--mut);vertical-align:middle}
 tr:last-child td{border-bottom:0}
 td b{color:var(--tx);font-weight:600}
@@ -136,6 +160,9 @@ select{appearance:none;-webkit-appearance:none;padding-right:26px;
 .note{background:rgba(255,201,122,.07);border:1px solid rgba(255,201,122,.28);border-radius:11px;
   padding:11px 14px;font-size:12px;color:var(--mut);margin:12px 0}
 .note b{color:var(--amber)}
+.note:empty{display:none}
+.hint{color:var(--dim);font-size:11.5px;line-height:1.6}
+.stackrow:only-child{border-style:dashed;color:var(--dim)}
 .note.ok{background:rgba(79,209,197,.07);border-color:rgba(79,209,197,.28)}
 .note.ok b{color:var(--green)}
 /* 进度 / 步骤 */
@@ -154,6 +181,10 @@ select{appearance:none;-webkit-appearance:none;padding-right:26px;
 .chart .col:nth-child(odd) i{background:linear-gradient(180deg,var(--purple),rgba(143,168,255,.3))}
 .chart .col small{font-size:10px;color:var(--dim)}
 .chartx{display:flex;gap:9px;padding:7px 4px 0}
+/* 没数据时别留一个 132px 的空框：给一句话占位，框体缩到一行高 */
+.chart:empty{height:auto;min-height:56px;border-bottom:1px dashed var(--line);align-items:center;justify-content:center}
+.chart:empty::after{content:"连上 service 后，这里画每天的量";color:var(--dim);font-size:11.5px}
+.chartx:empty{display:none}
 .chartx span{flex:1;text-align:center;font-size:10px;color:var(--dim)}
 /* 时间线 */
 .tl{position:relative;padding-left:22px;margin-top:8px}
@@ -180,7 +211,7 @@ body.bigscreen .main{padding:20px 28px 50px;max-width:1500px;margin:0 auto;width
 body.bigscreen .hero{padding:20px 26px}
 body.bigscreen .hero .fish{width:180px}
 body.bigscreen h2.sec{margin-top:20px}
-.dash{display:grid;grid-template-columns:1.35fr 1fr;gap:14px}
+.dash{display:grid;grid-template-columns:1.35fr 1fr;gap:14px;align-items:start}
 .toast{position:fixed;bottom:24px;left:50%;transform:translate(-50%,20px);opacity:0;pointer-events:none;
   background:var(--panel2);border:1px solid var(--cyan);color:var(--tx);padding:10px 18px;border-radius:11px;
   font-size:12.5px;box-shadow:var(--shadow);transition:.25s;z-index:99}
@@ -296,32 +327,33 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
       <div><b>懂你的QQ大肥鱼</b><small>dsh-qq-soul · v1.2.0</small></div>
     </div>
 
-    <div class="navgrp"><h4>概览</h4><div class="nav">
-      <button data-v="overview" class="on"><i></i>总览</button>
-      <button data-v="wizard"><i></i>安装向导</button>
+    <div class="navgrp"><h4>第一次用</h4><div class="nav">
+      <button data-v="wizard"><i></i>安装引导</button>
       <button data-v="deps"><i></i>依赖体检</button>
     </div></div>
-    <div class="navgrp"><h4>人设与表达</h4><div class="nav">
-      <button data-v="voice"><i></i>语音渠道</button>
-      <button data-v="memory"><i></i>记忆管理</button>
-      <button data-v="skills"><i></i>工具 / 技能</button>
-    </div></div>
-    <div class="navgrp"><h4>能力与模型</h4><div class="nav">
-      <button data-v="models"><i></i>模型管理</button>
-      <button data-v="song"><i></i>翻唱</button>
-      <button data-v="resident"><i></i>内存里的模型</button>
-    </div></div>
-    <div class="navgrp"><h4>系统</h4><div class="nav">
+    <div class="navgrp"><h4>运行看盘</h4><div class="nav">
+      <button data-v="dashboard" class="on"><i></i>运维大屏</button>
       <button data-v="logs"><i></i>日志与时间线</button>
       <button data-v="paths"><i></i>目录与路径</button>
-      <button data-v="dashboard" class="new"><i></i>运维大屏</button>
+    </div></div>
+    <div class="navgrp"><h4>资源浏览</h4><div class="nav">
+      <button data-v="models"><i></i>模型库</button>
+      <button data-v="song"><i></i>翻唱曲库</button>
+      <button data-v="voice"><i></i>声音现状</button>
+    </div></div>
+    <!-- 排查时才看的两页：平时不占位置，需要的时候再点 -->
+    <div class="navgrp"><h4>偶尔才看</h4><div class="nav">
+      <button data-v="resident"><i></i>内存里的模型</button>
+    </div></div>
+    <div class="navgrp"><h4>引导与原理</h4><div class="nav">
+      <button data-v="overview"><i></i>它是怎么跑的</button>
       <button data-v="about"><i></i>关于</button>
     </div></div>
 
     <div class="sidefoot">
-      原型演示 · 数据均为 <b style="color:var(--amber)">DEMO</b><br>
-      service 端口 9876 · 单端口 supervisor<br>
-      大屏 <a href="/panel" style="color:var(--cyan)">127.0.0.1:9876/panel</a><br>
+      <b style="color:var(--cyan)">只读看盘</b> · 由 service 9876 托管<br>
+      改配置、装模型、点歌都在 <b>桌面端面板</b><br>
+      <a href="/panel" style="color:var(--cyan)">127.0.0.1:9876/panel</a><br>
       macOS / Windows 双平台
     </div>
   </aside>
@@ -329,17 +361,25 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
   <!-- ================= 主区 ================= -->
   <main class="main">
     <div class="topbar">
-      <span class="chip demo" id="modeChip"><b>●</b> 演示模式 · 未连接 service</span>
-      <span class="chip" id="gwChip"><b>●</b> QQ 网关未检查</span>
-      <button class="ghost" id="connBtn">连接 service</button>
-      <button class="ghost" id="themeBtn">切换亮色</button>
-      <button class="ghost" id="panelUrlBtn" title="点击复制大屏地址">大屏 · 127.0.0.1:9876/panel</button>
-      <button class="ghost" id="bigBtn">进入大屏</button>
+      <div class="tb-title"><b>运行看盘</b><small>只读 · 配置与操作在桌面端</small></div>
+      <div class="tb-actions">
+        <span class="chip demo" id="modeChip"><b>●</b> 未连接 service</span>
+        <button class="ghost" id="connBtn">连接设置</button>
+        <button class="ghost" id="themeBtn">切换亮色</button>
+        <button class="ghost" id="bigBtn">全屏看板</button>
+      </div>
     </div>
 
-    <!-- P4：同一份 HTML 既能双击打开看演示，也能连上 127.0.0.1:9876 读真实状态 -->
+    <!-- 一句话讲清这页是什么、不是什么：以前顶部堆着「实时 / QQ 在线 / 连接设备」，
+         全是功能状态，没有产品定位，用户不知道该在哪改配置。 -->
+    <div class="ro-bar" id="roBanner">
+      <span class="ro-badge">只读</span>
+      <span>这里看<b>日志、Token、作业进度、成品目录</b>和模型库，也能搜歌、听成品；所有<b>配置、导入、启停、点歌</b>都在桌面端完成，两边读同一份数据。</span>
+    </div>
+
+    <!-- 只在 file:// 双击打开、或连不上 service 时才需要手动填地址；由 service 托管时自动连上 -->
     <div class="card" id="connBox" style="display:none;margin-bottom:16px">
-      <h3>连接真实音频服务 <span class="tag t-green">LIVE</span></h3>
+      <h3>连接设置</h3>
       <div class="row"><div class="lab">服务地址<small>先跑 python3 -m services --serve</small></div>
         <input id="connUrl" style="flex:1" value="http://127.0.0.1:9876"></div>
       <div class="row"><div class="lab">Token<small>没设 QQSOUL_SERVICE_TOKEN 就留空</small></div>
@@ -349,23 +389,18 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
         <button class="btn sec" id="connStop">回到演示模式</button>
         <button class="btn sec" id="connRefresh">重新拉取</button>
       </div>
-      <div class="note" id="connNote" style="margin-top:10px">双击打开也能直连：service 已允许 <code>null</code> origin 的 CORS。连上之后所有表格只消费 <code>/status</code>、<code>/deps/check</code>、<code>/models/catalog</code>、<code>/song/jobs</code> 与 SSE，网页不替服务端造状态。</div>
+      <div class="note" id="connNote" style="margin-top:10px">只读消费 <code>/status</code>、<code>/deps/check</code>、<code>/models/catalog</code>、<code>/song/jobs</code> 与 SSE，网页不替服务端造状态，也不写配置。</div>
     </div>
 
-    <!-- 演示态说清楚「为什么是 DEMO、怎么出去」：不让用户对着编出来的数字猜 -->
-    <div class="card" id="demoHint" style="margin-bottom:16px;border-left:3px solid var(--amber)">
-      <h3>你现在看的是「静态演示页」 <span class="tag t-amber">DEMO</span></h3>
-      <p style="font-size:12.5px">同一份 HTML 有两种打开方式：<b>双击文件</b> = 纯演示（下面的数字全是编的，按钮只回一句提示）；<b>由 service 托管</b> = 实时（打开就自动连上，这块会自己消失）。要真数据，在插件目录跑：</p>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
-        <code style="flex:1;min-width:240px">python3 -m services --serve</code>
-        <button class="btn sec sm" onclick="copyText('python3 -m services --serve')">复制命令</button>
-        <button class="btn sm" onclick="openLivePanel()">打开实时面板</button>
-      </div>
-      <p style="font-size:11.5px;color:var(--dim);margin:8px 0 0">服务已经在跑？点右上角「连接 service」→「连接并读取真实状态」。实时地址是 <code>http://127.0.0.1:9876/panel</code>。</p>
+    <!-- 没连上的时候只留一条细提示，不再占一整张卡片 -->
+    <div class="ro-bar" id="demoHint" style="display:none;border-left-color:var(--amber)">
+      <span class="ro-badge" style="color:var(--amber);border-color:var(--amber)">演示数据</span>
+      <span>现在没连上 9876，表格里是示例值。在插件目录跑 <code>python3 -m services --serve</code>，或点右上角「连接设置」。</span>
+      <button class="btn sec sm" onclick="copyText('python3 -m services --serve')">复制命令</button>
     </div>
 
     <!-- ---------- 总览 ---------- -->
-    <section class="view on" id="v-overview">
+    <section class="view" id="v-overview">
       <div class="hero">
         <svg class="fish" viewBox="0 0 380 260" aria-label="飞鱼插画">
           <defs>
@@ -456,7 +491,9 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
       <div class="hero" style="padding:22px 26px">
         <div class="eyebrow">FIRST RUN · 4 步上线</div>
         <h1 style="font-size:23px">照这四步走，<span class="g">她就能在 QQ 里说话</span></h1>
-        <p>这里只讲流程，每步一个按钮直达对应页面。具体参数在各自页面里调，改坏了随时回来重走这一步。</p>
+        <p>这里只讲流程和看状态，<b>不改任何配置</b>：装网关、起服务、试听、点歌都在桌面端。</p>
+        <p style="margin-top:8px"><a href="/install-guide" target="_blank" rel="noopener" id="wizGuideLink">打开离线安装引导 ↗</a>
+          <span class="ab-muted" style="font-size:12.5px">（docs/install.html，双击也能开，不需要服务先起来）</span></p>
       </div>
       <div class="steps" id="steps">
         <div class="step on" data-s="0">1 · 接上 QQ</div>
@@ -472,6 +509,24 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
           <button class="btn" id="wizNext">下一步</button>
         </div>
       </div>
+
+      <!-- 用户会问「Mac 和 Windows 是不是不一样」：这里一次说清，不藏在别的页面 -->
+      <h2 class="sec">macOS 和 Windows 差在哪</h2>
+      <p class="sub">装的东西一样，<b>只有「怎么起服务」和「本地引擎走哪条路」不同</b>。两种系统都不需要独显。</p>
+      <div class="card" style="padding:0;overflow:hidden">
+        <table>
+          <thead><tr><th style="width:150px">这一项</th><th>macOS</th><th>Windows</th></tr></thead>
+          <tbody>
+            <tr><td><b>Python</b></td><td>系统自带 <code>python3</code> 即可</td><td>要装 3.12；放在 <code>D:/Python312</code> 或 <code>C:/Python312</code> 会被自动找到，装在别处就在设置里指一下</td></tr>
+            <tr><td><b>音频服务怎么起</b></td><td>装一次 launchd 任务，开机自启</td><td>桌面端点「启动服务」，或加一个开机启动项</td></tr>
+            <tr><td><b>ffmpeg</b></td><td><code>brew install ffmpeg</code></td><td>下载 <code>ffmpeg.exe</code>，把完整路径填进设置（不放进 PATH 也行）</td></tr>
+            <tr><td><b>换声引擎（RVC）</b></td><td>装 Applio，目录自己选</td><td>可用技能包里的快速 RVC（默认 <code>D:/tools/rvc</code>），也能装 Applio</td></tr>
+            <tr><td><b>千问本地 TTS</b></td><td>走 MLX 实现</td><td>走本机 <code>9883</code> 常驻服务</td></tr>
+            <tr><td><b>显卡</b></td><td>不需要；Apple 芯片直接用</td><td>不需要；有 NVIDIA 会更快，没有也能跑</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note" style="margin-top:12px"><b>只有 GPT-SoVITS 才需要额外起 9881 的 api_v2</b>；用 edge-tts（在线）或 Breeze（远程）时，本地一个模型都不用下，装完就能出声。</div>
     </section>
 
     <!-- ---------- 依赖体检 ---------- -->
@@ -506,7 +561,7 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
           <button class="btn sec" id="ttsReload">重新读取</button>
           <button class="btn sec" id="adoptBtn" title="从本机旧配置搬说话渠道、参考音频、千问模型、Breeze 和 RVC 音色">读取本机原配置</button>
         </div>
-        <div class="note"><b>快速合成</b>：默认用 edge-tts 严格按输入框里的稿子朗读（秒级、不串稿），再由常驻 fast-rvc 换成大肥鱼音色；面板试听与 QQ 语音条拿的是同一份文件、同一种声音。说话渠道统一由 9876 音频服务托管，外部控制台的启停按钮会和这里抢 9881/9882、误关 QQ，入口已移除。</div>
+        <div class="note"><b>快速合成</b>：默认用 edge-tts 严格按输入框里的稿子朗读（秒级、不串稿），再由 9876 服务统一换成选中的 RVC 音色。服务重启后换声在服务端完成，QQ 语音条和桌面「试听」放的是同一份成品，音色一致；这一页只读，试听和配置都收在桌面端。若某次结果标着「换声前的合成原声」，说明服务还是旧进程或这次换声失败，重启音频服务即可对齐。外部控制台的启停按钮会抢 9881/9882、误关 QQ，入口已移除。</div>
       </div>
 
       <div class="card" style="margin-top:14px">
@@ -812,7 +867,7 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
           <p style="margin-bottom:10px">只常驻一行 description；结果回来才进上下文；零额外 token。</p>
           <div class="row"><div class="lab">qq_song_cover <small>翻唱 · 先回一句「等我一下」</small></div><div class="sw on" data-sw></div></div>
           <div class="row"><div class="lab">qq_draw_image <small>生图 · ownerOnly · 唯一配置入口在真实面板「表达 &gt; 生图」</small></div><div class="sw" data-sw data-lock data-toast="去真实面板「表达 > 生图」配置生图"></div></div>
-          <div class="row" style="align-items:flex-start"><div class="lab">可接的接口格式 <small>与真实面板一致</small></div><div style="display:flex;flex-wrap:wrap;gap:6px"><span class="tag t-cyan">OpenAI 格式</span><span class="tag t-cyan">自定义接口</span><span class="tag t-cyan">Codex 订阅</span><span class="tag t-cyan">本地 api-image</span></div></div>
+          <div class="row" style="align-items:flex-start"><div class="lab">可接的接口格式 <small>与真实面板一致：填地址 + 密钥 + 模型</small></div><div style="display:flex;flex-wrap:wrap;gap:6px"><span class="tag t-cyan">自定义接口 · OpenAI 兼容</span><span class="tag t-cyan">自定义接口 · URL 模板</span><span class="tag t-cyan">Codex 订阅</span></div></div>
           <div class="row"><div class="lab">qq_generate_video <small>生视频 · 走 local 脚本接缝</small></div><div class="sw" data-sw></div></div>
           <div class="row"><div class="lab">remember_memory / recall_memory</div><div class="sw on" data-sw></div></div>
           <div class="note ok" style="margin-bottom:0"><b>作用域：</b>只挂肥鱼自己的会话，不注册成 DSH 全局技能。</div>
@@ -867,8 +922,7 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
         <button class="btn sec sm f" data-f="out">发出消息</button>
         <button class="btn sec sm f" data-f="song">翻唱作业</button>
         <button class="btn sec sm f" data-f="err">错误</button>
-        <button class="btn sec sm" onclick="toast('已清除 7 天前记录（原型）')">清除旧记录</button>
-        <button class="btn sec sm" onclick="toast('已导出 JSONL（原型）')">导出</button>
+        <span style="color:var(--dim);font-size:11.5px;align-self:center">保留 7 天；清理与导出在桌面端「运行记录」里做</span>
       </div>
       <div class="card"><div class="tl" id="tlBody"></div></div>
     </section>
@@ -887,11 +941,11 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
       </div>
     </section>
 
-    <section class="view" id="v-dashboard">
+    <section class="view on" id="v-dashboard">
       <div class="hero" style="padding:22px 26px">
         <div class="eyebrow">OPS DASHBOARD · 报告风格独立大屏</div>
         <h1 style="font-size:24px">今天，她<span class="g">说了多少、唱了什么、烧了多少 token</span></h1>
-        <p>设置页保持宿主主题一致性；这一页可全屏、可分享给朋友看。数据源全部来自 service 9876，演示模式除外。</p>
+        <p>一页看全：服务状态、Token、时间线、翻唱作业进度。数据全部来自 service 9876，没连上时明确标「演示数据」，不编造状态。</p>
       </div>
       <div class="dash" style="margin-top:16px">
         <div class="card">
@@ -904,14 +958,8 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
           <div class="kv"><span>口径</span><span id="tokMeta"></span></div>
         </div>
         <div class="card" id="dashStatus">
-          <h3>服务状态</h3>
-          <div class="kv"><span>service 9876</span><span><span class="dot d-ok"></span><b>运行中</b></span></div>
-          <div class="kv"><span>网关 NapCat</span><span><span class="dot d-ok"></span>正向 WS 已连</span></div>
-          <div class="kv"><span>DSH 宿主</span><span><span class="dot d-ok"></span>desktop profile</span></div>
-          <div class="kv"><span>驻留 worker</span><span>2 个 · 约 1.6 GB</span></div>
-          <div class="kv"><span>翻唱作业</span><span>1 进行中 / 1 失败</span></div>
-          <div class="kv"><span>磁盘</span><span>模型目录 10.8 GB（用户自管）</span></div>
-          <div class="note" style="margin-bottom:0"><b>目标：</b>把包给一个没装过的人，照面板 <b>10 分钟内</b>跑通（对照现状 1 小时+）。</div>
+          <h3>服务状态 <span class="tag t-gray" id="dashStatusTag">读取中</span></h3>
+          <div id="dashStatusBody"><div class="stackrow"><span>连上 service 后显示真实状态</span></div></div>
         </div>
       </div>
       <!-- P6：五步自检，live 时只读 /selfcheck；演示模式不造任何自检状态 -->
@@ -922,7 +970,7 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
         <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
           <button class="btn sm" onclick="runSelfcheck(false)">跑一遍自检</button>
           <button class="btn sec sm" onclick="runSelfcheck(true)">深度自检（真唱一首）</button>
-          <span class="note" id="scSummary" style="margin:0;flex:1">连上 service 后点「跑一遍自检」。</span>
+          <span class="hint" id="scSummary" style="margin:0;flex:1">连上 service 后点「跑一遍自检」。</span>
         </div>
       </div>
       <div class="dash" style="margin-top:14px">
@@ -938,16 +986,9 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
           <div class="tl" id="dashTl"></div>
         </div>
         <div class="card">
-          <h3>翻唱作业进度</h3>
-          <p style="margin-bottom:8px">起风了 · RVC 换声</p>
-          <div class="bar"><i style="width:68%"></i></div>
-          <div class="kv"><span>下载</span><span><span class="dot d-ok"></span>0.3s</span></div>
-          <div class="kv"><span>分离 htdemucs</span><span><span class="dot d-ok"></span>42s</span></div>
-          <div class="kv"><span>起唱点检测</span><span><span class="dot d-ok"></span>trimStart 24.6s</span></div>
-          <div class="kv"><span>裁剪 / 取窗</span><span><span class="dot d-ok"></span>120s 窗口</span></div>
-          <div class="kv"><span>RVC 换声</span><span><span class="dot d-warn"></span>68% · 常驻 worker</span></div>
-          <div class="kv"><span>混音 → 发送</span><span><span class="dot d-off"></span>等待</span></div>
-          <div class="note" style="margin-bottom:0"><b>失败可行动：</b>「夜空中最亮的星」→ 第 3 步失败：<b>缺 ffmpeg</b>，给一键安装 / 复制链接。</div>
+          <h3>翻唱作业进度 <span class="tag t-gray" id="dashJobsTag">读取中</span></h3>
+          <div id="dashJobs"><div class="stackrow"><span>连上 service 后显示真实作业</span></div></div>
+          <div class="note" style="margin-bottom:0">进度、耗时、当前阶段都来自 service 的作业日志，网页不造状态。点一行去「翻唱曲库」看每阶段明细和成品目录。</div>
         </div>
       </div>
     </section>
@@ -1039,7 +1080,7 @@ function fallbackCopy(value) {
 }
 function needLive(what) {
   if (state.live) return true;
-  toast('先连上 service 才能' + what + '（右上角「连接 service」）');
+  toast('先连上 service 才能' + what + '（右上角「连接设置」）');
   return false;
 }
 function fmtMs(ms) {
@@ -1083,8 +1124,96 @@ async function api(path, opts) {
   if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
   return data;
 }
-function post(path, body) { return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }); }
-function del(path) { return api(path, { method: 'DELETE' }); }
+// ------------------------------------------------------------------ 只读看盘护栏
+// 产品定位：网页只做「运行看盘 + 资源浏览 + 引导」，写配置和触发动作一律收拢到桌面端。
+// 这里做三层：① 按钮改叫「去桌面端」；② 点击捕获阶段拦住；③ post/del 兜底，
+// 键盘回车、onchange 之类绕过按钮的写也进不来。删控件会牵出一堆 $('#id').onclick
+// 空引用，所以保留 DOM、改行为，风险最小。
+const RO_WRITE_PATHS = /^\/(tts\/config|tts\/speak|tts\/test|tts\/switch|adopt|audio|refs|refs\/text|pick|song\/strategy|song\/audio|song\/request|song\/sources|song\/covers\/delete|stack|models\/local|models\/import|models\/delete|models\/rvc|install\/paths)/;
+const RO_IDS = ['ttsSave', 'adoptBtn', 'ttsGo', 'strategySave', 'gainSave', 'songGo',
+  'searchSing', 'refTextAuto', 'acapellaSw'];
+const RO_FNS = ['adoptLocal(', 'stackAction(', 'switchTo(', 'importModel(', 'pickModel(',
+  'pickRefAudio(', 'autoReadRefText(', 'chooseTtsModel(', 'deleteTtsModel(', 'rvcSelect(',
+  'rvcRename(', 'rvcDelete(', 'rvcImport(', 'pickIndex(', 'saveVoiceName(', 'clearAudio(',
+  'deleteCover(', 'submitSong(', 'pickDep(', 'depFillKey(', 'saveStrategyLive',
+  'saveSongAudio', 'runSelfcheck(true)', 'toggleAcapella(', 'releaseLive(', 'useSong('];
+// 释放常驻模型走的是 DELETE /models/<引擎>，路径正则里没有通配段，这里单独堵一次。
+const RO_DELETE = /^\/models\/[^/?]+/;
+// 向导四步的动作区：这一页只读，只给「看引导 / 回桌面」两个出口，不再摆写按钮。
+function wizActions() {
+  var href = location.protocol === 'file:' ? '../install.html' : '/install-guide';
+  return '<a class="btn sec" href="' + href + '" target="_blank" rel="noopener">打开安装引导 ↗</a>' +
+    '<button class="btn sec ro" onclick="desktopHint()">去桌面端完成这一步</button>';
+}
+const RO_INPUT_IDS = ['engine', 'ttsVoice', 'ttsRate', 'ttsVolume', 'ttsRvc',
+  'breezeEndpoint', 'breezeToken', 'breezeVoice', 'httpUrl', 'httpToken',
+  'refSel', 'refText', 'ttsModelSel', 'ttsText',
+  'windowSel', 'startSec', 'vocalGain', 'instGain', 'reverb', 'treble',
+  'idxRate', 'padSec', 'durSec', 'singMode', 'songQuery'];
+function desktopHint() {
+  toast('这里是只读看盘；配置和动作请到桌面端完成');
+  const b = $('#roBanner');
+  if (b) { b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 1000); }
+}
+function markRo(b) {
+  if (!b || b.dataset.ro === '1') return;
+  b.dataset.ro = '1';
+  b.textContent = '去桌面端';
+  b.className = 'btn sec sm ro';
+  b.title = '配置与操作已收拢到桌面端，这里只读';
+  b.setAttribute('onclick', '');
+  b.onclick = null;
+}
+function roScan() {
+  const main = document.querySelector('.main'); if (!main) return;
+  main.querySelectorAll('button').forEach(b => {
+    if (b.dataset.ro === '1') return;
+    const act = b.getAttribute('onclick') || '';
+    if (RO_IDS.indexOf(b.id) >= 0 || RO_FNS.some(f => act.indexOf(f) >= 0)) markRo(b);
+  });
+  RO_INPUT_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !el.disabled) { el.disabled = true; el.classList.add('ro-input'); el.title = '只读展示 · 去桌面端修改'; }
+  });
+  const sw = document.getElementById('acapellaSw');
+  if (sw && !sw.dataset.ro) { sw.dataset.ro = '1'; sw.classList.add('ro-input'); sw.title = '只读展示 · 去桌面端修改'; }
+}
+function initReadOnly() {
+  // 双击 HTML（file://）时 /install-guide 由 service 托管、并不存在，指回同仓库的离线页。
+  var guide = document.getElementById('wizGuideLink');
+  if (guide && location.protocol === 'file:') guide.href = '../install.html';
+  roScan();
+  document.addEventListener('click', function (ev) {
+    const t = ev.target;
+    if (!t || !t.closest) return;
+    if (t.closest('#acapellaSw')) { ev.preventDefault(); ev.stopPropagation(); desktopHint(); return; }
+    const b = t.closest('button'); if (!b) return;
+    if (b.dataset.ro === '1') { ev.preventDefault(); ev.stopPropagation(); desktopHint(); return; }
+    const act = b.getAttribute('onclick') || '';
+    if ((b.id && RO_IDS.indexOf(b.id) >= 0) || RO_FNS.some(f => act.indexOf(f) >= 0)) {
+      ev.preventDefault(); ev.stopPropagation(); markRo(b); desktopHint();
+    }
+  }, true);
+  let queued = false;
+  if (window.MutationObserver) {
+    const mo = new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => { queued = false; roScan(); });
+    });
+    mo.observe(document.querySelector('.main'), { childList: true, subtree: true });
+  }
+}
+function post(path, body) {
+  // 「深度自检」会真唱一首，属于触发动作，也归桌面；普通自检只读诊断，放行。
+  const readOnly = RO_WRITE_PATHS.test(path) || (path === '/selfcheck' && body && body.deep);
+  if (readOnly) { desktopHint(); return Promise.resolve({ ok: false, code: 'READ_ONLY', message: '网页只读，请到桌面端操作' }); }
+  return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+}
+function del(path) {
+  if (RO_WRITE_PATHS.test(path) || RO_DELETE.test(path)) { desktopHint(); return Promise.resolve({ ok: false, code: 'READ_ONLY', message: '网页只读，请到桌面端操作' }); }
+  return api(path, { method: 'DELETE' });
+}
 
 /** <audio> 不能带 Authorization 头，token 走 query——否则开了鉴权的 service 放不出声。 */
 function fileUrl(relative) {
@@ -1110,12 +1239,11 @@ function setMode() {
   const c = $('#modeChip');
   if (c) {
     c.className = 'chip' + (state.live ? '' : ' demo');
-    c.innerHTML = '<b>●</b> ' + (state.live ? ('实时 · ' + esc(state.base)) : '未连接 service');
+    c.innerHTML = '<b>●</b> ' + (state.live ? ('实时 · ' + esc(state.base)) : '未连接 service · 演示数据');
   }
-  const btn = $('#connBtn'); if (btn) btn.textContent = state.live ? '连接设置' : '连接 service';
   const foot = $('.sidefoot');
-  if (foot && state.live) foot.innerHTML = 'service <b style="color:var(--green)">在线</b> · ' + esc(state.base) + '<br>大屏 <a href="/panel" style="color:var(--cyan)">127.0.0.1:9876/panel</a>';
-  const hint = $('#demoHint'); if (hint) hint.style.display = state.live ? 'none' : 'block';
+  if (foot && state.live) foot.innerHTML = '<b style="color:var(--cyan)">只读看盘</b> · service <b style="color:var(--green)">在线</b> · ' + esc(state.base) + '<br>配置与操作在 <b>桌面端</b>';
+  const hint = $('#demoHint'); if (hint) hint.style.display = state.live ? 'none' : 'flex';
 }
 async function finishConnect(h, opts) {
   state.live = true; setMode();
@@ -1181,12 +1309,10 @@ function renderWiz() {
     const plan = (st.startWillStart || []).join(' + ');
     note = (st.message ? esc(st.message) : '连上 service 后这里显示五件的真实状态。') +
       (st.engineNote ? '<br><b>依赖关系：</b>' + esc(st.engineNote) : '') +
-      (plan ? '<br>「按当前引擎启动」这次会起：<b>' + esc(plan) + '</b>' : '') +
-      '<br>没有谁必须等谁：QQ 和桥负责收消息，语音服务按渠道二选一；已经跑着的不会被重复启动。';
-    actions = '<button class="btn" onclick="stackAction(\'start\')">按当前引擎启动</button>' +
-      '<button class="btn sec" onclick="stackAction(\'restart-bridge\')">只重启桥</button>' +
-      '<button class="btn sec" onclick="openConsole()">NapCat 扫码登录</button>' +
-      '<button class="btn sec" onclick="copyInstallPrompt()">复制安装提示词</button>';
+      (plan ? '<br>桌面端「启动 QQ 与网关」这次会起：<b>' + esc(plan) + '</b>' : '') +
+      '<br>没有谁必须等谁：QQ 和桥负责收消息，语音服务按渠道二选一；已经跑着的不会被重复启动。' +
+      '<br><b>启停在桌面端「连接」页 →「本机服务」，这里只读。</b>';
+    actions = wizActions();
   } else if (step === 1) {
     const eng = (state.status && state.status.ttsEngine) || 'edge';
     const tts = (state.status && state.status.tts) || {};
@@ -1198,9 +1324,8 @@ function renderWiz() {
         detail: local ? (tts.refAudio || '还没选参考音频') : (voice || '默认音色') },
       { name: '最近一次试听', ok: !!state.ttsLast, detail: state.ttsLast || '还没试过，去语音渠道点一下' }
     ];
-    note = '推荐先用微软在线（零下载）跑通，再换成本地模型。';
-    actions = '<button class="btn" onclick="go(\'voice\')">去试听</button>' +
-      '<button class="btn sec" onclick="go(\'models\')">模型管理</button>';
+    note = '推荐先用在线渠道（零下载）跑通，再换成本地模型。试听按钮和音色参数都在桌面端「语音」页，这里只看现状和日志。';
+    actions = wizActions();
   } else if (step === 2) {
     const list = (state.models && state.models.rows) || [];
     const rvc = list.find(r => r.engine === 'rvc') || {};
@@ -1211,9 +1336,8 @@ function renderWiz() {
       { name: '人声分离 htdemucs', ok: true, detail: sep.exists ? '已就绪' : '用默认即可；第一次跑会自动准备' },
       { name: '最近做好的歌', ok: !!(latest && latest.ok), detail: (latest && latest.ok) ? latest.title : '还没做过' }
     ];
-    note = '翻唱 = 分离人声 → 用你的音色换声 → 混音。过程有日志，失败会告诉你缺什么。';
-    actions = '<button class="btn" onclick="go(\'song\')">去点一首</button>' +
-      '<button class="btn sec" onclick="go(\'song\')">选 RVC 音色</button>';
+    note = '翻唱 = 分离人声 → 用你的音色换声 → 混音。过程有日志，失败会告诉你缺什么。点歌、选音色、导入模型都在桌面端；这里看作业进度和成品目录。';
+    actions = wizActions();
   } else {
     const sc = state.selfcheck && state.selfcheck.steps;
     rows = sc ? sc.map(x => ({ name: x.label || x.id, ok: !!x.ok,
@@ -1223,10 +1347,8 @@ function renderWiz() {
         { name: 'QQ 网关', ok: !!(state.stack && state.stack.onCount >= 2), detail: state.stack ? (state.stack.message || '') : '未读取' },
         { name: '说话渠道', ok: !!((state.status || {}).ttsEngine), detail: (state.status || {}).ttsEngine || '未读取' }
       ];
-    note = '全绿之后就不用管面板了，直接在 QQ 里跟她说话。';
-    actions = '<button class="btn" onclick="runSelfcheck(false)">跑一遍自检</button>' +
-      '<button class="btn sec" onclick="runSelfcheck(true)">深度自检（真唱一首）</button>' +
-      '<button class="btn sec" onclick="copyInstallPrompt()">复制安装提示词</button>';
+    note = '全绿之后就不用管面板了，直接在 QQ 里跟她说话。自检是只读诊断；「深度自检」会真唱一首，属于动作，已收拢到桌面端。';
+    actions = '<button class="btn" onclick="runSelfcheck(false)">跑一遍自检</button>' + wizActions();
   }
 
   $('#wizBody').innerHTML = '<h3>' + w.t + '</h3><p style="margin-bottom:6px">' + w.d + '</p>' +
@@ -1526,7 +1648,8 @@ async function ttsLive() {
     if (stage) stage.textContent = '完成';
     o.innerHTML = '<b style="color:var(--green)">好了</b> · ' + (r.chunks || 1) + ' 句 · ' +
       esc(r.engine || '') + ' · ' + fmtMs(r.durationMs || (Date.now() - started)) +
-      (r.stub ? ' · 自检模式' : '');
+      (r.stub ? ' · 自检模式' : '') +
+      (r.rvcApplied ? ' · 已统一换声，和 QQ 语音条同一个声音' : ' · 换声前的合成原声：QQ 语音条还会再换一次声，音色和这里不同');
     state.ttsLast = new Date().toTimeString().slice(0, 5) + ' · ' + (r.engine || '') + ' · ' + (r.chunks || 1) + ' 句';
     state.lastTtsPath = r.file || '';
     state.lastTtsUrl = r.fileUrl || '';
@@ -1919,7 +2042,74 @@ async function refreshJobsLive() {
       '<td>' + esc(j.lastStage || '—') + '</td><td>' + fmtMs(j.elapsedMs) + '</td>' +
       '<td><span class="tag ' + tag + '">' + label + '</span></td>' +
       '<td><button class="btn sec sm" onclick="event.stopPropagation();showJob(\'' + esc(j.id) + '\')">听</button></td></tr>';
-  }).join('') : '<tr><td colspan="5" style="color:var(--dim)">还没有作业。上面点一首试试。</td></tr>';
+  }).join('') : '<tr><td colspan="5" style="color:var(--dim)">还没有作业。在桌面端点一首歌，这里就会出现。</td></tr>';
+  refreshDashJobs();
+}
+
+// ------------------------------------------------------------------ 只读看盘：真实状态 / 真实进度
+// 以前这两块是写死的「起风了 68%」「2 个 worker · 1.6 GB」，看着像真的其实全是编的。
+// 现在只消费 /status、/stack、/song/jobs 已经读回来的数据，没有就明说没有。
+function refreshDashStatus() {
+  const box = $('#dashStatusBody'), tag = $('#dashStatusTag');
+  if (!box) return;
+  if (!state.live) {
+    box.innerHTML = '<div class="note" style="margin:0">演示数据。连上 9876 后这里显示 service、QQ 网关、说话渠道、作业与目录的真实状态。</div>';
+    if (tag) { tag.textContent = 'DEMO'; tag.className = 'tag t-amber'; }
+    return;
+  }
+  const st = state.status || {}, stack = state.stack || {}, dirs = st.dirs || {};
+  const rows = [];
+  const kv = (k, v, dot) => rows.push('<div class="kv"><span>' + esc(k) + '</span><span>' +
+    (dot ? '<span class="dot ' + dot + '"></span>' : '') + esc(String(v == null || v === '' ? '—' : v)) + '</span></div>');
+  const peers = Number(stack.peers || 0);
+  const bridge = (stack.rows || []).find(x => x.id === 'bridge') || {};
+  kv('service 9876', '在线 · v' + (st.version || '?'), 'd-ok');
+  kv('QQ 网关', peers > 0 ? '在线 · ' + peers + ' 条连接' : (bridge.on ? '6700 在听 · 没有客户端' : '未启动'), peers > 0 ? 'd-ok' : 'd-warn');
+  kv('说话渠道', ENGINE_LABEL[st.ttsEngine] || st.ttsEngine || '未选');
+  kv('本机组件', stack.total ? (stack.onCount || 0) + '/' + stack.total + ' 在跑' : '未读');
+  const resident = st.resident || [];
+  kv('驻留模型', resident.length + ' 个 · ' + resident.reduce((a, w) => a + (Number(w.rssMB) || 0), 0).toFixed(0) + ' MB');
+  const jobs = state.jobs || [];
+  kv('翻唱作业', jobs.filter(j => !j.done).length + ' 进行中 / ' + jobs.filter(j => j.done && !j.ok).length + ' 失败');
+  kv('数据目录', st.dataDir || '—');
+  kv('曲库 / 成品目录', (state.dirs && state.dirs.song) || dirs.song || '—');
+  box.innerHTML = rows.join('') +
+    '<div class="note" style="margin-bottom:0">要改配置、导入模型、启停 QQ 或点歌，请回到<b>桌面端</b>；这一页只读。</div>';
+  if (tag) { tag.textContent = 'LIVE'; tag.className = 'tag t-green'; }
+}
+function refreshDashJobs() {
+  const box = $('#dashJobs'), tag = $('#dashJobsTag');
+  if (!box) return;
+  if (!state.live) {
+    box.innerHTML = '<div class="note" style="margin:0">演示模式没有真实作业。连上 service 后按 <code>/song/jobs</code> 显示。</div>';
+    if (tag) { tag.textContent = 'DEMO'; tag.className = 'tag t-amber'; }
+    return;
+  }
+  const jobs = (state.jobs || []).slice(0, 4);
+  if (!jobs.length) {
+    box.innerHTML = '<div class="note" style="margin:0">还没有作业。在桌面端点一首歌，进度、耗时和成品目录会出现在这里。</div>';
+    if (tag) { tag.textContent = 'LIVE · 0'; tag.className = 'tag t-green'; }
+    return;
+  }
+  box.innerHTML = jobs.map(j => {
+    const done = !!j.done, ok = !!j.ok;
+    const pct = done ? (ok ? 100 : Math.round(Math.min(1, Number(j.ratio) || 0) * 100))
+      : Math.round(Math.min(1, Math.max(0, Number(j.ratio) || 0)) * 100);
+    const label = ok ? '已完成' : (done ? '失败' : '进行中 ' + pct + '%');
+    const tone = ok ? 'd-ok' : (done ? 'd-off' : 'd-warn');
+    return '<div style="margin-bottom:12px">' +
+      '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;margin-bottom:5px">' +
+        '<b>' + esc(j.title || j.query || j.id) + '</b>' +
+        '<span style="color:var(--dim)">' + esc(j.lastStage || '—') + '</span></div>' +
+      '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
+      '<div style="display:flex;gap:10px;align-items:center;margin-top:5px;font-size:11px;color:var(--dim);flex-wrap:wrap">' +
+        '<span><span class="dot ' + tone + '"></span>' + label + '</span>' +
+        '<span>耗时 ' + fmtMs(j.elapsedMs) + '</span>' +
+        (j.durationSec ? '<span>唱 ' + fmtMs(Number(j.durationSec) * 1000) + '</span>' : '') +
+        '<button class="btn sec sm" style="margin-left:auto" onclick="go(\'song\');showJob(\'' + esc(j.id) + '\')">明细 / 成品</button>' +
+      '</div></div>';
+  }).join('');
+  if (tag) { tag.textContent = 'LIVE · ' + jobs.length; tag.className = 'tag t-green'; }
 }
 async function showJob(id) {
   if (!state.live) { toast('没连上 service，没有真实作业'); return; }
@@ -2218,15 +2408,9 @@ async function refreshStatusLive() {
   }).join('');
   $('#residentBody').innerHTML = cards || '<div class="card" style="border-style:dashed"><h3><span class="sdot off"></span>现在没有常驻模型</h3><p>空闲 ' +
     (st.idleMinutes || 8) + ' 分钟会自动释放。用「切到…」起一个，或者直接去试听一句。</p></div>';
-  if ($('#dashStatus')) {
-    const jobs = st.jobs || [];
-    $('#dashStatus').innerHTML = '<h3>服务状态 <span class="tag t-green">LIVE</span></h3>' +
-      '<div class="kv"><span>service 9876</span><span><span class="sdot on"></span><b>运行中</b> · v' + esc(st.version || '') + '</span></div>' +
-      '<div class="kv"><span>说话渠道</span><span>' + esc(st.ttsEngine || '') + '</span></div>' +
-      '<div class="kv"><span>驻留</span><span>' + rows.length + ' 个 · ' + rows.reduce((a, w) => a + (w.rssMB || 0), 0).toFixed(0) + ' MB</span></div>' +
-      '<div class="kv"><span>翻唱作业</span><span>' + jobs.length + ' 个</span></div>' +
-      '<div class="kv"><span>数据目录</span><span title="' + esc(st.dataDir || '') + '">' + esc((st.dataDir || '').split('/').slice(-2).join('/')) + '</span></div>';
-  }
+  // 以前这里把 #dashStatus 整块 innerHTML 覆盖掉，会把看盘的状态节点冲没。
+  // 现在统一交给 refreshDashStatus()，只读渲染，不再各写一套。
+  refreshDashStatus();
   const rvc = st.rvc || {};
   if ($('#voiceName') && rvc.voiceName) $('#voiceName').value = rvc.voiceName;
   if ($('#rvcIndex')) $('#rvcIndex').textContent = rvc.index || '还没选 .index（有就选，没有也能跑）';
@@ -2309,30 +2493,12 @@ async function copyLog(source) {
 // ------------------------------------------------------------------ 启停
 async function refreshStack() {
   if (!state.live) {
+    // 顶栏不再挂「QQ 在线」这颗灯：网关状态属于看盘数据，统一在运维大屏里读真连接数。
     state.stack = null;
-    const chip = $('#gwChip');
-    if (chip) { chip.className = 'chip demo'; chip.innerHTML = '<b>●</b> QQ 网关未检查'; }
     if (state.step === 0) renderWiz();
     return;
   }
-  const r = await api('/stack');
-  state.stack = r;
-  // 顶栏这颗灯只看真连接数：6700 在听不等于 QQ 在线
-  const chip = $('#gwChip');
-  if (chip) {
-    const peers = Number(r.peers || 0);
-    const bridge = (r.rows || []).find(x => x.id === 'bridge') || {};
-    if (peers > 0) {
-      chip.className = 'chip';
-      chip.innerHTML = '<b>●</b> QQ 在线 · 6700 已连';
-    } else if (bridge.on) {
-      chip.className = 'chip demo';
-      chip.innerHTML = '<b>●</b> QQ 未连 · 6700 在听但没有客户端';
-    } else {
-      chip.className = 'chip demo';
-      chip.innerHTML = '<b>●</b> QQ 未启动';
-    }
-  }
+  state.stack = await api('/stack');
   if (state.step === 0) renderWiz();
 }
 async function stackAction(action) {
@@ -2513,6 +2679,7 @@ async function refreshAll() {
   await loadLog('song', '#songLog').catch(() => {});
   renderWiz();
   paintHero();
+  refreshDashStatus();
 }
 function paintHero() {
   const pills = $('#heroPills'); if (!pills) return;
@@ -2555,7 +2722,7 @@ function bindStatic() {
   $('#bigBtn').onclick = () => {
     state.big = !state.big;
     document.body.classList.toggle('bigscreen', state.big);
-    $('#bigBtn').textContent = state.big ? '退出大屏' : '进入大屏';
+    $('#bigBtn').textContent = state.big ? '退出全屏' : '全屏看板';
     go('dashboard');
   };
   const panelBtn = $('#panelUrlBtn');
@@ -2613,6 +2780,7 @@ function bindStatic() {
   };
   $('#songGo').onclick = submitSong;
   bindWizard();
+  initReadOnly();   // 必须放在最后：把上面刚绑好的写按钮统一改成「去桌面端」
 }
 
 (function boot() {
@@ -2629,7 +2797,8 @@ function bindStatic() {
   setMode();
   autoConnect().then(ok => {
     if (!ok) {
-      const hint = $('#demoHint'); if (hint) hint.style.display = 'block';
+      const hint = $('#demoHint'); if (hint) hint.style.display = 'flex';
+      refreshDashStatus(); refreshDashJobs();
       const note = $('#connNote');
       if (note && /^https?:$/.test(location.protocol)) {
         note.innerHTML = '这个地址上没有 healthz：<b>' + esc(location.origin) + '</b> 看起来不是 service。先跑 <code>python3 -m services --serve</code>。';

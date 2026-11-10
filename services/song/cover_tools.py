@@ -391,6 +391,16 @@ def _mdx_available() -> bool:
             and MDX_SCRIPT.is_file() and MDX_MODEL.is_file())
 
 
+def separation_cache_tag() -> str:
+    """分离实现进翻唱缓存键：MDX 与 demucs 出来的干声不同，不能互相复用。
+
+    只有 Windows 的 ``rvc-solo`` 才有 MDX；macOS / Linux 一直走 demucs。
+    以前不管平台一律在缓存键后面加 ``|mdx4``，Mac 上每升一次这个标记就把
+    用 htdemucs 做好的成品全部作废——白重跑几分钟，音质还一模一样。
+    """
+    return "|mdx4" if _mdx_available() else ""
+
+
 def _separate_mdx(src: str | Path, work_dir: str | Path, *,
                   on_progress: Callable[[float], None] | None = None,
                   timeout: float = SEPARATE_TIMEOUT_S) -> tuple[Path, Path]:

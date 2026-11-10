@@ -18,7 +18,12 @@ const fakePth = () => {
   b[1] = 0x4b
   return b
 }
-const cfg = () => ({ song: { root: join(tmp, 'song'), voice: '' }, voice: { gptsovits: { refAudio: '' } }, resources: {} })
+const cfg = () => ({
+  song: { root: join(tmp, 'song'), voice: '' },
+  voice: { gptsovits: { refAudio: '' } },
+  // 额外扫描目录指到临时目录里，免得测试读到本机真实的 ~/tools/models
+  resources: { modelDirs: [join(tmp, 'tools', 'models')] },
+})
 const res = createResources({ getConfig: cfg, log: { info() {}, warn() {} } })
 
 test('参考音频：音频能导入，非音频拒绝', () => {
@@ -87,6 +92,19 @@ test('RVC：外来文件改名是复制，不动原件', () => {
   assert.equal(r.ok, true)
   assert.ok(existsSync(pth), '原文件必须还在')
   assert.ok(existsSync(join(process.env.AURABOT_DATA_DIR, 'models', 'rvc', '复制来的.pth')))
+})
+
+test('RVC：同一个音色在多处各有一份时只列一次，优先列库里那份', () => {
+  // 库里有一份，本机老目录里也有同名的一份：以前会显示两个「重名音色」，选哪个还各不一样
+  assert.equal(res.importRvc('重名音色.pth', fakePth()).ok, true)
+  const elsewhere = join(tmp, 'tools', 'models')
+  mkdirSync(elsewhere, { recursive: true })
+  writeFileSync(join(elsewhere, '重名音色.pth'), fakePth())
+  const list = res.listRvc()
+  const same = list.items.filter((x) => x.name === '重名音色')
+  assert.equal(same.length, 1, '同名音色只列一次')
+  assert.equal(same[0].managed, true, '列出来的是音色库那份')
+  assert.ok(list.duplicates.some((x) => x.name === '重名音色'), '另一份记进 duplicates，面板上还能「收进音色库」')
 })
 
 test('RVC：删除只允许受管目录', () => {

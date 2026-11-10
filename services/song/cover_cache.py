@@ -366,6 +366,10 @@ class CoverStore:
         rows = []
         for entry in self.entries():
             rows.append({
+                #: 大模型「指名取这一版」用的把手：文件名主干，稳定不变。
+                #: 名字写错、带不带歌手都无所谓——模型认出是同一首，把这个 id
+                #: 传回来就直接放这一版，不再进名字匹配。
+                "id": entry.slug,
                 "title": entry.title,
                 "artist": entry.artist,
                 "accompaniment": mode_label(entry),
@@ -374,7 +378,18 @@ class CoverStore:
                 "created_at": round(float(entry.created_at or 0.0), 3),
             })
         rows.sort(key=lambda row: (row["title"], -row["created_at"]))
-        return rows
+        #: 同一首 + 同一音色 + 清唱/伴奏 只留最新一版：大模型只需要知道
+        #: 「有没有、哪一版」，同一套组合反复做出来的历史文件不该一排排占 token。
+        unique: list[dict] = []
+        seen: set[tuple[str, str, str]] = set()
+        for row in rows:
+            key = (normalize_title(row["title"]), voice_key(row["voice"]),
+                   str(row["accompaniment"]))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(row)
+        return unique
 
     def library(self) -> list[dict]:
         """面板「已翻唱」列表：带上文件名、音色、清唱/伴奏、实际唱了多长。"""

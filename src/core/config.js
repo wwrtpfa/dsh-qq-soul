@@ -43,7 +43,13 @@ export const DEFAULTS = {
   security: { dangerConfirm: false, ssrfMode: 'strict', panelRemoteAccess: false, trustedProxy: '', publicHostname: '' },
   // DeepSeek 峰谷省钱模式（默认关，现有行为不变）：打开后只把「不着急的后台模型调用」尽量挪到谷时，
   // 聊天回复/工具/审批/定时任务本身不变。offPeakHolidays 是中国法定节假日（北京时间日期 'YYYY-MM-DD'）。
-  cost: { offPeak: false, offPeakHolidays: [] },
+  // 价格（元 / 百万 token，谷时价）用来把 token 换算成金额：命中缓存的输入比未命中便宜两个数量级，
+  // 面板以前按「输入全价」估，金额会高出一大截。priceModel 选预设，priceCustom 打开后用手填的三档价。
+  cost: {
+    offPeak: false, offPeakHolidays: [],
+    priceModel: 'deepseek-flash', priceCustom: false,
+    priceHit: 0.02, priceMiss: 1, priceOut: 4,
+  },
   update: { unstable: null }, // 订阅不稳定版本（beta、rc）；null = 没选过，按正在用的版本定
   // 音频服务（127.0.0.1:9876）：说话 / 唱歌的唯一配置源。关着时语音走插件内置引擎、翻唱走旧版 studio。
   // 双端（Web / 桌面）读的都是这一份；地址和 token 在概览页直接改，不用手编 config.json。
@@ -66,10 +72,14 @@ export const DEFAULTS = {
   merge: { enabled: true, waitSec: 2.5, maxSec: 8, groupWaitSec: 5, groupMaxSec: 15 }, // 连发合并：对方停顿 waitSec 秒再一起回，最多等 maxSec 秒；群里等得久一点，把一段话攒齐
   imageGen: {
     enabled: false,
-    provider: 'openai', // openai / custom；codex = 实验性订阅接法（需单独登录）；apiimage = 本地 api-image（读 Codex 配置）
+    // custom = 自己填接口（地址 + 密钥 + 模型，够任何人接自己的服务）；codex = 实验性订阅接法（需单独登录）。
+    // 以前还有 openai / apiimage 两种：openai 本来就是「自己填地址」，apiimage 只是地址和密钥
+    // 从本机 Codex 配置里读 —— 现在都并进 custom，地址留空就自动读 Codex 那份。
+    provider: 'custom',
     baseUrl: '',
     apiKey: '',
     model: '',
+    quality: 'auto', // 标准接口的画质：auto / low / medium / high（服务不认就自动去掉重发）
     size: '1024x1024',
     shape: 'her', // 工具可选构图；her 时未指定就沿用 size
     stylePrompt: '', // 每次生图自动加在前面的风格描述
@@ -77,14 +87,16 @@ export const DEFAULTS = {
     seeOwn: true, // 「让她画完自己看一眼」：开着才把画好的图交给她看
     img2img: true, // 允许参考聊天图片 / 自己的画作来改画
     galleryShown: 20, // 面板「她的画作」显示最近几张（1~50；只影响显示，不删文件）
-    // 自定义接法：url 里可以用 {prompt} {model} {size} {width} {height} {image}（参考图 base64）；params 是参数名/值（值里也能用这些占位符）
-    custom: { method: 'GET', url: '', bodyType: 'json', responsePath: '', params: [] },
+    // 自定义接法：kind = openai（标准 /images/generations，参考图走 /images/edits，只用地址 + 密钥 + 模型）
+    //                    url（自己拼 URL 模板 + 自定义参数，pollinations 那类）
+    custom: { kind: 'openai', method: 'GET', url: '', bodyType: 'json', responsePath: '', params: [] },
     // 实验性订阅接法；登录令牌独立保存在数据目录，不进入配置。
     codex: { model: 'gpt-image-2', quality: 'auto', background: 'auto' },
-    // 本地 api-image：读 Codex 的 config.toml / auth.json；密钥不落这里。
+    // 只给「从本机 Codex 配置填入」用：地址 / 密钥留空时也会读这里；密钥不落进这一段。
     apiImage: { codexHome: '', model: 'auto', quality: 'high' },
   },
-  persona: { current: 'dafeiyu', mutedBy: {} }, // mutedBy[人格 id]：不注入上下文的【节】标题（省 token；开场白始终保留）
+  // enabled=false：人格这一段整段不注入提示词（面板「人设」页的开关）。分段开关看 mutedBy。
+  persona: { current: 'dafeiyu', enabled: true, mutedBy: {} }, // mutedBy[人格 id]：不注入上下文的【节】标题（省 token；开场白始终保留）
   // 运行时开关：关掉的工具不挂给模型（面板「运行记录」里改），技能分组开关也存这里
   ops: { toolsOff: [], switches: {} },
   // 主人私聊里问起群里的事：把最近 24 小时的群聊流水补进这一轮（默认关，开启前先把群加进白名单）
@@ -111,6 +123,9 @@ export const DEFAULTS = {
     // 语音条变声：用翻唱里导入的 RVC 音色模型（先 TTS 念，再变声）。留空 = 不变声
     songVoice: '',
     songPitch: 0, // 变调半音：男声模型转女声一般 +12
+    // 音频服务连不上 / 合成失败时，是否自动回退到下面这套本机渠道。
+    // 关掉 = 服务挂了就改发文字，不偷偷换成一个不一样的声音。
+    fallback: true,
   },
   stickers: {
     enabled: true,
@@ -376,6 +391,13 @@ export function normalize(raw) {
   c.cost.offPeak = bool(c.cost.offPeak, false)
   const rawHolidays = Array.isArray(c.cost.offPeakHolidays) ? c.cost.offPeakHolidays : String(c.cost.offPeakHolidays || '').split(/[\n,，;；\s]+/)
   c.cost.offPeakHolidays = [...new Set(rawHolidays.map(dateKey).filter(Boolean))].sort().slice(0, 60)
+  // 单价：预设模型名或自填三档价（元 / 百万 token，谷时价；峰时由面板按 ×2 算）
+  const priceModels = ['deepseek-flash', 'deepseek-v4-pro']
+  c.cost.priceModel = priceModels.includes(String(c.cost.priceModel || '')) ? String(c.cost.priceModel) : 'deepseek-flash'
+  c.cost.priceCustom = bool(c.cost.priceCustom, false)
+  c.cost.priceHit = num(c.cost.priceHit, 0.02, 0, 10000)
+  c.cost.priceMiss = num(c.cost.priceMiss, 1, 0, 10000)
+  c.cost.priceOut = num(c.cost.priceOut, 4, 0, 10000)
   c.update = { unstable: typeof c.update?.unstable === 'boolean' ? c.update.unstable : null }
   if (!isObj(c.service)) c.service = {}
   c.service.enabled = bool(c.service.enabled, false)
@@ -628,10 +650,21 @@ export function normalize(raw) {
   c.imageGen.img2img = bool(c.imageGen.img2img, true)
   if (!/^\d{3,4}x\d{3,4}$/.test(String(c.imageGen.size))) c.imageGen.size = '1024x1024'
   c.imageGen.galleryShown = Math.min(50, Math.max(1, Math.round(Number(c.imageGen.galleryShown) || 20)))
-  c.imageGen.shape = ['her', 'square', 'portrait', 'landscape', 'wide'].includes(c.imageGen.shape) ? c.imageGen.shape : 'her'
+  // none = 一个尺寸参数都不发，按提示词 / 接口默认来
+  c.imageGen.shape = ['her', 'none', 'square', 'portrait', 'landscape', 'wide'].includes(c.imageGen.shape) ? c.imageGen.shape : 'her'
 
-  // provider：custom = 自己填接口（GET/POST + 自定义参数），apiimage = 读本地 Codex 配置，其它按 OpenAI 兼容
-  c.imageGen.provider = ['custom', 'codex', 'apiimage'].includes(c.imageGen.provider) ? c.imageGen.provider : 'openai'
+  // provider：custom = 自己填接口，codex = 订阅接法。
+  // 老配置里的 openai / apiimage 一律并进 custom：openai 本来就是「自己填地址 + 密钥 + 模型」，
+  // apiimage 只是地址和密钥从本机 Codex 配置里读 —— 并过来以后地址留空就走那条路，谁都不用改。
+  // 迁移判断要看**盘上原来那份**（raw），不能看补完默认值的结果，否则分不出老配置是哪种。
+  const igRaw = isObj(raw && raw.imageGen) ? raw.imageGen : {}
+  const igOld = String(igRaw.provider || '')
+  const igOldKind = isObj(igRaw.custom) ? String(igRaw.custom.kind || '') : ''
+  c.imageGen.provider = ['custom', 'codex'].includes(igOld) ? igOld : 'custom'
+  c.imageGen.baseUrl = String(c.imageGen.baseUrl || '').trim().slice(0, 2000)
+  c.imageGen.model = String(c.imageGen.model || '').trim().slice(0, 120)
+  // 密钥在面板里是明文显示的（自己配的，方便核对），这里只做长度兜底
+  c.imageGen.apiKey = String(c.imageGen.apiKey || '').trim().slice(0, 500)
   if (!isObj(c.imageGen.codex)) c.imageGen.codex = { ...DEFAULTS.imageGen.codex }
   const igx = c.imageGen.codex
   igx.model = ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'].includes(igx.model) ? igx.model : 'gpt-image-2'
@@ -642,8 +675,16 @@ export function normalize(raw) {
   iga.codexHome = String(iga.codexHome || '').trim().slice(0, 1024)
   iga.model = String(iga.model || '').trim().slice(0, 80) || 'auto'
   iga.quality = ['low', 'medium', 'high', 'auto'].includes(iga.quality) ? iga.quality : 'high'
+  // 画质：老 apiimage 配置里那份 quality 搬过来，别让人升级后画质悄悄变了
+  const qualityOk = ['auto', 'low', 'medium', 'high'].includes(c.imageGen.quality)
+  c.imageGen.quality = igOld === 'apiimage' && (!qualityOk || c.imageGen.quality === 'auto')
+    ? iga.quality
+    : qualityOk ? c.imageGen.quality : 'auto'
   if (!c.imageGen.custom || typeof c.imageGen.custom !== 'object') c.imageGen.custom = { ...DEFAULTS.imageGen.custom }
   const igc = c.imageGen.custom
+  // kind：以前 provider=custom 的都是 URL 模板，provider=openai / apiimage 的是标准接口
+  igc.kind = ['openai', 'url'].includes(igOldKind) ? igOldKind
+    : igOld === 'custom' ? 'url' : 'openai'
   igc.method = String(igc.method || 'GET').toUpperCase() === 'POST' ? 'POST' : 'GET'
   igc.bodyType = igc.bodyType === 'form' ? 'form' : 'json'
   igc.url = String(igc.url || '').trim().slice(0, 2000)
@@ -690,7 +731,8 @@ export function normalize(raw) {
 }
 
 // 面板里不回传原文的字段：路径（几层都行）
-const SECRETS = [['snowluma', 'webuiPassword'], ['snowluma', 'httpToken'], ['snowluma', 'wsToken'], ['imageGen', 'apiKey'], ['memory', 'vector', 'apiKey'], ['song', 'neteaseCookie'], ['bili', 'cookie'], ['bili', 'sessdata'], ['bili', 'biliJct'], ['heybox', 'cookie'], ['bridge', 'token']]
+// 生图密钥（imageGen.apiKey）故意不在这里：那是主人自己配的一份 Key，面板里明文显示、方便核对和复制。
+const SECRETS = [['snowluma', 'webuiPassword'], ['snowluma', 'httpToken'], ['snowluma', 'wsToken'], ['memory', 'vector', 'apiKey'], ['song', 'neteaseCookie'], ['bili', 'cookie'], ['bili', 'sessdata'], ['bili', 'biliJct'], ['heybox', 'cookie'], ['bridge', 'token']]
 // 扩展模块设置里的密码类字段（模块加载时登记）：['ext', 模块id, 字段]
 const extraSecrets = new Map()
 export function registerSecretField(path) { extraSecrets.set(path.join('\u0000'), path) }

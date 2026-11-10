@@ -96,7 +96,7 @@ export function createOneBotClient({ endpoint, onEvent, onState, log, retryDelay
     return `连不上 QQ 网关（${where}）：${why}`
   }
 
-  async function call(action, params = {}, { timeoutMs = 30000, retries = retryDelays.length } = {}) {
+  async function call(action, params = {}, { timeoutMs = 30000, retries = retryDelays.length, retryTimeout = false } = {}) {
     if (explicitlyStopped) throw new OneBotError(action, { message: 'QQ 网关客户端已停止' })
     const ep0 = endpoint()
     // 压根没配网关：立即失败，别让调用方白等重试（查群名之类的会立刻回退）
@@ -113,11 +113,15 @@ export function createOneBotClient({ endpoint, onEvent, onState, log, retryDelay
       } catch (error) {
         lastError = error
         if (generation !== stopGeneration) throw stoppedError()
-        // 业务错误（比如没权限、参数不对）重试也没用
-        if (!(error instanceof OneBotError) || !error.transport) throw error
+        // 业务错误（比如没权限、参数不对）重试也没用；超时又可能是「已经做完了只是没等到回执」，
+        // 写消息不能重试。只有调用方明确知道是只读接口（retryTimeout）时，超时才敢再来一次。
+        const canRetry = error instanceof OneBotError && (error.transport || (retryTimeout && error.uncertain))
+        if (!canRetry) throw error
         if (i === retries) break
         const wait = retryDelays[i] ?? retryDelays[retryDelays.length - 1]
-        log?.warn?.(`${action}：网关暂时连不上，${wait / 1000}s 后重试（${i + 1}/${retries}）`)
+        const line = `${action}：${error.transport ? '网关暂时连不上' : '网关没给回执'}，${wait / 1000}s 后重试（${i + 1}/${retries}）`
+        if (error.transport) log?.warn?.(line)
+        else log?.debug?.(line) // 只读接口超时的兜底重试，不往时间线里刷警告
         if (generation !== stopGeneration) throw stoppedError()
         await new Promise((resolve) => {
           const done = () => { clearTimeout(timer); retryWaits.delete(done); resolve() }

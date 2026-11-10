@@ -173,7 +173,7 @@ Windows 上**不要照 macOS 的 Applio 装法配**。技能包的快速 RVC 是
 - **不要用技能包的 `qq-stack.ps1` 当 `stack.script`**：它按旧桥的反向 WS 6700 启动，
   与本插件的正向 WS 服务端冲突。这里用 NapCat.Shell 官方 `napcat.bat`，配
   `qqAccount` 自动加 `-q` 快速登录（本机实测 `start-napcat.bat` 注入器带不起 6099/6700）。
-- **一键起 QQ 网关**：双击 `启动QQ-NapCat.bat`，等价于面板「启动 QQ」按钮：
+- **一键起 QQ 网关**：双击 `启动QQ-NapCat.bat`，等价于面板「启动 QQ 与网关」按钮：
   `napcat.bat -q <机器人号>` → 等 6099 → 打开 `http://127.0.0.1:6099/webui/web_login`。
   按钮在网关端口 6700 已监听时不会重复启动（NapCat.Shell 不产生 `QQ.exe` 进程）。
 - 换目录时设 `QQSOUL_FAST_RVC_DIR`；ffmpeg 不在 PATH 时设 `QQSOUL_FFMPEG`（面板配置会自动传下来）。

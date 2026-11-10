@@ -455,7 +455,7 @@ export function createSongStudio({ getConfig, log, sendVoiceFile, sendText, onSu
       current: current ? { ...current } : null,
       queue: queue.map((q) => ({ query: q.query, chatId: q.chatId })),
       history: history.slice(0, 10),
-      message: !voices.length ? '还没有音色：在下面「音色模型」里导入你有权使用的 RVC 模型（.pth 或 zip / rar）' : ready ? (cfg().enabled ? '可以点歌了' : '准备好了，打开开关就能用') : '还差一些组件，点「一键安装」',
+      message: !voices.length ? '还没有音色：去「翻唱 → 音色模型」导入你有权使用的 RVC 模型（.pth 或 zip / rar）' : ready ? (cfg().enabled ? '可以点歌了' : '准备好了，打开开关就能用') : '还差一些组件，点「一键安装」',
     }
   }
 

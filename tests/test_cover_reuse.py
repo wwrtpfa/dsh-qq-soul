@@ -163,6 +163,55 @@ def test_老清单兜底不会把伴奏成品当成清唱(tmp_path):
                                  voice="d2-rvc", acapella=False) is not None
 
 
+def test_没说清唱还是伴奏时复用已有那一版(tmp_path):
+    """点歌只说「翻唱晴天」：曲库里已经有伴奏版，就别按后台默认清唱重做。"""
+    counters = {"download": 0, "separate": 0, "convert": 0, "mix": 0}
+    store, normal = _renderer(tmp_path, voice="d2-rvc", counters=counters)
+    first = normal.render(_target())
+    assert first.cached is False
+
+    _, unspecified = _renderer(tmp_path, voice="d2-rvc", accompaniment_gain=0.0,
+                               counters=counters, store=store)
+    target = CoverTarget(title="晴天", artist="周杰伦", source_id="2652820720",
+                         url="http://example.test/a.mp3", cache_tag="fp1",
+                         mode_explicit=False)
+    second = unspecified.render(target)
+    assert second.cached is True
+    assert second.wav == first.wav
+    assert counters == {"download": 1, "separate": 1, "convert": 1, "mix": 1}
+
+
+def test_点名清唱时不会拿伴奏版顶替(tmp_path):
+    """用户明确说清唱，就不能用「同歌同音色的伴奏版」糊弄。"""
+    counters = {"download": 0, "separate": 0, "convert": 0, "mix": 0}
+    store, normal = _renderer(tmp_path, voice="d2-rvc", counters=counters)
+    first = normal.render(_target())
+
+    _, acapella = _renderer(tmp_path, voice="d2-rvc", accompaniment_gain=0.0,
+                            counters=counters, store=store)
+    target = CoverTarget(title="晴天", artist="周杰伦", source_id="2652820720",
+                         url="http://example.test/a.mp3", cache_tag="fp1",
+                         mode_explicit=True)
+    second = acapella.render(target)
+    assert second.cached is False
+    assert second.wav != first.wav
+    assert "清唱" in Path(second.wav).name
+
+
+def test_分离标记只在有mdx的机器上加():
+    """macOS / Linux 一直用 demucs：不能因为 Windows 的 MDX 升级把成品作废。"""
+    from services.song import cover_tools
+
+    old = cover_tools._mdx_available
+    try:
+        cover_tools._mdx_available = lambda: False
+        assert cover_tools.separation_cache_tag() == ""
+        cover_tools._mdx_available = lambda: True
+        assert cover_tools.separation_cache_tag() == "|mdx4"
+    finally:
+        cover_tools._mdx_available = old
+
+
 def test_两个作业先后完成不会互相覆盖曲库清单(tmp_path):
     root = tmp_path / "music"
     first = CoverStore(root)

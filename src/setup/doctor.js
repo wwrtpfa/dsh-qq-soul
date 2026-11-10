@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 
 /** 插件默认去连的端口。和旧桥的 6700 保持一致，方便 NapCat 只改方向不改端口。 */
 export const DEFAULT_WS_PORT = 6700
@@ -31,12 +31,15 @@ export function qqAppPath(platform, home = homedir()) {
   if (p !== 'win') return ''
   const x86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)'
   const pf = process.env.ProgramFiles || 'C:\\Program Files'
+  // 这些是 Windows 路径：哪怕体检代码跑在 macOS / Linux 上（比如纯函数注入测试），
+  // 也必须用 win32 语义拼，否则 'C:\Program Files (x86)' + 'Tencent' 会拼出
+  // 'C:\Program Files (x86)/Tencent/...' 这种混合分隔符，existsSync 永远找不到。
   const candidates = [
     process.env.QQSOUL_QQ_EXE,
-    join(x86, 'Tencent', 'QQ', 'Bin', 'QQ.exe'),
-    join(pf, 'Tencent', 'QQNT', 'QQ.exe'),
-    join(pf, 'Tencent', 'QQ', 'Bin', 'QQ.exe'),
-    join(x86, 'Tencent', 'QQNT', 'QQ.exe'),
+    win32.join(x86, 'Tencent', 'QQ', 'Bin', 'QQ.exe'),
+    win32.join(pf, 'Tencent', 'QQNT', 'QQ.exe'),
+    win32.join(pf, 'Tencent', 'QQ', 'Bin', 'QQ.exe'),
+    win32.join(x86, 'Tencent', 'QQNT', 'QQ.exe'),
   ].filter(Boolean)
   return candidates.find((c) => existsSync(c)) || candidates[0]
 }
@@ -46,13 +49,13 @@ export function napCatDir(platform, home = homedir()) {
   const p = platformOf(platform)
   if (p === 'mac') return join(home, 'Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/NapCat')
   if (p !== 'win') return ''
-  const appData = process.env.APPDATA || join(home, 'AppData/Roaming')
+  const appData = process.env.APPDATA || win32.join(home, 'AppData', 'Roaming')
   const candidates = [
     process.env.QQSOUL_NAPCAT_CONFIG_DIR,
     'D:\\NapCat\\napcat\\config',
     'C:\\NapCat\\napcat\\config',
-    join(appData, 'QQ', 'NapCat', 'config'),
-    join(appData, 'QQ', 'NapCat'),
+    win32.join(appData, 'QQ', 'NapCat', 'config'),
+    win32.join(appData, 'QQ', 'NapCat'),
   ].filter(Boolean)
   return candidates.find((c) => existsSync(c)) || candidates[0]
 }
@@ -168,20 +171,25 @@ export function diagnose({
   rows.push({
     id: 'napcat',
     label: 'NapCat（QQ 的 OneBot 实现）',
-    ok: Boolean(config),
-    detail: config ? `找到配置：${config}` : (dir ? `没在 ${dir} 找到 onebot11_*.json` : '这个系统请手动确认 NapCat 已装好'),
-    fix: config ? '' : '装 NapCat（NapCatInstaller），装完在它的 WebUI 里加一个「WebSocket 服务端」；Windows 直接点「启动 QQ」用 NapCat 启动脚本带起 QQ，macOS 有一键脚本的话跑 qq-stack.sh start',
+    // 端口已经在监听 = 网关是活的，只是配置没放在我们猜的目录里（常见：装在别的盘、
+    // 用别的方式启动）。这种情况标灰提示即可，不该报红吓人。
+    ok: config ? true : (portOpen ? null : false),
+    detail: config ? `找到配置：${config}`
+      : portOpen ? `没在 ${dir || '默认目录'} 找到 onebot11_*.json，但 ${port} 端口已经在监听，说明 NapCat 是好的（配置放在别处或用了别的启动方式）。不影响连接，不用管这一行`
+        : (dir ? `没在 ${dir} 找到 onebot11_*.json` : '这个系统请手动确认 NapCat 已装好'),
+    fix: config || portOpen ? '' : '装 NapCat（NapCatInstaller），装完在它的 WebUI 里加一个「WebSocket 服务端」；Windows 直接点「启动 QQ 与网关」用 NapCat 启动脚本带起 QQ，macOS 有一键脚本的话跑 qq-stack.sh start',
     action: '',
   })
   rows.push({
     id: 'direction',
     label: 'NapCat 的 WebSocket 方向',
-    ok: hasServer && !wrongDirection,
-    detail: !config ? '还没找到 NapCat 配置'
-      : hasServer && !wrongDirection ? '已开正向 WebSocket 服务端'
-        : wrongDirection && !hasServer ? `现在只有「反向连接」指向 ${port}：方向和本插件相反，两边都在当客户端，没人监听`
-          : '没开正向 WebSocket 服务端',
-    fix: '一键修复会把 NapCat 改成「开正向 WebSocket 服务端」并关掉指向本机端口的旧反向连接',
+    ok: hasServer && !wrongDirection ? true : (portOpen ? null : false),
+    detail: !config && portOpen ? `${port} 已经在监听：方向是对的，这条只是没读到 NapCat 的配置文件`
+      : !config ? '还没找到 NapCat 配置'
+        : hasServer && !wrongDirection ? '已开正向 WebSocket 服务端'
+          : wrongDirection && !hasServer ? `现在只有「反向连接」指向 ${port}：方向和本插件相反，两边都在当客户端，没人监听`
+            : '没开正向 WebSocket 服务端',
+    fix: hasServer && !wrongDirection ? '' : '一键修复会把 NapCat 改成「开正向 WebSocket 服务端」并关掉指向本机端口的旧反向连接',
     action: config ? 'fix-napcat' : '',
   })
   rows.push({
@@ -198,7 +206,7 @@ export function diagnose({
     label: `端口 ${port} 有没有在监听`,
     ok: Boolean(portOpen),
     detail: portOpen ? '通了' : '没有进程监听：多半是 QQ / NapCat 没启动，或刚才的方向没改过来',
-    fix: portOpen ? '' : '点「启动 QQ」让 NapCat 开正向 WebSocket 服务端；Windows 会调用 NapCat 启动脚本把 QQ 带起来',
+    fix: portOpen ? '' : '点「启动 QQ 与网关」让 NapCat 开正向 WebSocket 服务端；Windows 会调用 NapCat 启动脚本把 QQ 带起来',
     action: qqInstalled ? 'start-qq' : '',
   })
   rows.push({
@@ -206,7 +214,7 @@ export function diagnose({
     label: 'QQ 正在运行',
     ok: qqRunning === null ? null : Boolean(qqRunning),
     detail: qqRunning === null ? '没查（不影响判断）' : qqRunning ? '在跑' : '没在跑',
-    fix: qqRunning === false ? '点「启动 QQ」；Windows 会用 NapCat 启动脚本带起 QQ，第一次要在 QQ 里登录机器人号' : '',
+    fix: qqRunning === false ? '点「启动 QQ 与网关」；Windows 会用 NapCat 启动脚本带起 QQ，第一次要在 QQ 里登录机器人号' : '',
     action: qqRunning === false ? 'start-qq' : '',
   })
 
