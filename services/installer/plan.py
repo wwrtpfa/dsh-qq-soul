@@ -72,7 +72,7 @@ def _win_steps() -> list[dict]:
     return [
         _step("dsh", "DSH 运行环境", "detect", "DSH 是硬前提，本插件不做安装引导"),
         _step("python312", "Python 3.12 独立环境", "install",
-              "py -3.12 -m venv 建独立环境，避免污染系统 Python"),
+              "Windows 用 python -m venv（或 py -3.12 -m venv）建独立环境；本机已装 3.12 时直接复用，避免污染系统 Python"),
         _step("snowluma", "SnowLuma 完整版（用户自己解压并同意 EULA）", "manual",
               "协议不允许程序自动部署：本人下载完整版 zip（不带 lite）、解压到纯英文目录、在面板勾选同意 EULA",
               links=["https://github.com/SnowLuma/SnowLuma"]),
@@ -137,17 +137,64 @@ def component_state(cfg: ServiceConfig, component_id: str) -> str:
     return "已加载" if exists else "路径失效"
 
 
-def component_states(cfg: ServiceConfig) -> list[dict]:
+def _applicable(item: dict, platform: str | None) -> bool:
+    """目录里的模型带 platforms 标签时，只把适用于当前系统的列给用户。
+
+    Windows 用户不该在「模型」页看到 macOS 专用的 MLX 千问模型；不传 platform
+    时保持全量（老调用方与回归测试依赖这个行为）。
+    """
+    if not platform:
+        return True
+    tags = " ".join(str(x).lower() for x in (item.get("platforms") or []))
+    if not tags:
+        return True
+    p = detect_platform(platform)
+    if p == "win" and ("macos" in tags or "darwin" in tags) and "windows" not in tags:
+        return False
+    if p == "mac" and "windows" in tags and "macos" not in tags:
+        return False
+    return True
+
+
+def _local_component_state(cfg: ServiceConfig, component_id: str) -> str:
+    """本机已经装好的资源，即便用户没在面板登记过也该显示「已加载」。
+
+    Windows 用户直接把技能包的快速 RVC / feiyu 音色放在 ``D:/tools/rvc`` 下，
+    不该在「模型」页看到一片「未安装」然后被劝去下载 2 GB。
+    """
+    try:
+        if component_id == "rvc-voice":
+            pth, index = cfg.voice_model()
+            if pth and Path(pth).expanduser().is_file() and index and Path(index).expanduser().is_file():
+                return "已加载"
+        elif component_id == "applio":
+            if cfg.rvc_backend():
+                return "已加载"
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return ""
+
+
+def component_states(cfg: ServiceConfig, *, platform: str | None = None) -> list[dict]:
     """只列「纯手动导入」档：零下载默认与按需轻量档不占模型四态。"""
     rows = []
     for item in load_catalog().get("items", []):
         if item.get("tier") != "manual":
             continue
+        if not _applicable(item, platform):
+            continue
+        component_id = str(item.get("id") or "")
+        state = component_state(cfg, component_id)
+        if state == "未安装" and platform:
+            state = _local_component_state(cfg, component_id) or state
+        hint = item.get("importHint") or "在模型页选目录加载"
+        if state == "已加载":
+            hint = "本机已识别，无需下载；要换资源再在模型页重新选目录"
         rows.append({
             "id": item.get("id"), "name": item.get("name"), "size": item.get("size"),
             "platforms": item.get("platforms") or [], "sha256": item.get("sha256"),
-            "state": component_state(cfg, str(item.get("id"))),
+            "state": state,
             "links": [item.get("officialUrl"), *(item.get("mirrors") or [])],
-            "fix": item.get("importHint") or "在模型页选目录加载",
+            "fix": hint,
         })
     return rows

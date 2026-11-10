@@ -39,7 +39,7 @@
       "sha256": "verify-on-download",
       "platforms": ["macOS", "Windows", "Linux"],
       "required": false,
-      "importHint": "macOS: brew install ffmpeg；Windows: 下载后把路径填进设置"
+      "importHint": "Windows: 下载后把 ffmpeg.exe 完整路径填进设置；macOS: brew install ffmpeg；Linux: 用包管理器安装"
     },
     {
       "id": "demucs-htdemucs",

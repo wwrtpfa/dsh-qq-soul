@@ -70,6 +70,9 @@ export default {
           const r = await service.speak({ text })
           const file = r && r.file
           if (file && existsSync(file)) {
+            // 服务端已经把音色统一换过一次（rvcApplied）：这里再换一遍会变成
+            // 「面板一个声音、QQ 另一个声音」，也会白跑一次 RVC。直接复用同一份文件。
+            if (r.rvcApplied) return { file, engine: 'service/' + (r.engine || '?') }
             const voice = (await serviceVoiceModel()) || cfg.voice.songVoice
             const out = await convertSpeech(file, voice, cfg.voice.songPitch)
             return { file: out, engine: 'service/' + (r.engine || '?') }

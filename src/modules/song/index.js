@@ -227,9 +227,9 @@ export default {
         return { ok: false, code: error.code || 'SERVICE_ERROR', message: error.message }
       }
     })
-    // 本机启停（QQ / NapCat / 桥）：面板点一下就走同一个 qq-stack.sh
+    // 本机启停（QQ / NapCat）：Windows 走 NapCat 启动脚本，macOS / Linux 走 qq-stack.sh
     api.route('/song/stack', async (req) => {
-      if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开，启停要它转给 qq-stack.sh' }
+      if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开，启停不可用；只想启动 QQ 的话用「连接体检」里的「启动 QQ」' }
       try {
         if (req.method === 'POST') return { ok: true, ...(await service.stackAction(String((await http.body(req)).action || 'status'))) }
         return { ok: true, ...(await service.stackStatus()) }

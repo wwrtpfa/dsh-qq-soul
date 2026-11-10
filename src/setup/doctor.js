@@ -24,20 +24,37 @@ export function platformOf(p = process.platform) {
   return 'linux'
 }
 
-/** QQ 客户端装在哪（只用于「装没装」判断）。 */
+/** QQ 客户端装在哪（只用于「装没装」判断）。Windows 的新旧 QQNT 路径都试一遍。 */
 export function qqAppPath(platform, home = homedir()) {
   const p = platformOf(platform)
   if (p === 'mac') return '/Applications/QQ.app'
-  if (p === 'win') return join(process.env.ProgramFiles || 'C:\\Program Files', 'Tencent', 'QQNT', 'QQ.exe')
-  return ''
+  if (p !== 'win') return ''
+  const x86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)'
+  const pf = process.env.ProgramFiles || 'C:\\Program Files'
+  const candidates = [
+    process.env.QQSOUL_QQ_EXE,
+    join(x86, 'Tencent', 'QQ', 'Bin', 'QQ.exe'),
+    join(pf, 'Tencent', 'QQNT', 'QQ.exe'),
+    join(pf, 'Tencent', 'QQ', 'Bin', 'QQ.exe'),
+    join(x86, 'Tencent', 'QQNT', 'QQ.exe'),
+  ].filter(Boolean)
+  return candidates.find((c) => existsSync(c)) || candidates[0]
 }
 
-/** NapCat 的配置目录（QQ 更新后位置可能变，这里给的是官方默认）。 */
+/** NapCat 的配置目录：显式配置优先，再试常见 Windows 安装位置，最后回落官方默认。 */
 export function napCatDir(platform, home = homedir()) {
   const p = platformOf(platform)
   if (p === 'mac') return join(home, 'Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/NapCat')
-  if (p === 'win') return join(process.env.APPDATA || join(home, 'AppData/Roaming'), 'QQ/NapCat')
-  return ''
+  if (p !== 'win') return ''
+  const appData = process.env.APPDATA || join(home, 'AppData/Roaming')
+  const candidates = [
+    process.env.QQSOUL_NAPCAT_CONFIG_DIR,
+    'D:\\NapCat\\napcat\\config',
+    'C:\\NapCat\\napcat\\config',
+    join(appData, 'QQ', 'NapCat', 'config'),
+    join(appData, 'QQ', 'NapCat'),
+  ].filter(Boolean)
+  return candidates.find((c) => existsSync(c)) || candidates[0]
 }
 
 /** macOS 上「让 QQ 带 NapCat 启动」的标记文件（loadNapCat.js 读它）。 */
@@ -153,7 +170,7 @@ export function diagnose({
     label: 'NapCat（QQ 的 OneBot 实现）',
     ok: Boolean(config),
     detail: config ? `找到配置：${config}` : (dir ? `没在 ${dir} 找到 onebot11_*.json` : '这个系统请手动确认 NapCat 已装好'),
-    fix: config ? '' : '装 NapCat（NapCatInstaller），装完在它的 WebUI 里加一个「WebSocket 服务端」；本机已有一键脚本的话直接跑 qq-stack.sh start',
+    fix: config ? '' : '装 NapCat（NapCatInstaller），装完在它的 WebUI 里加一个「WebSocket 服务端」；Windows 直接点「启动 QQ」用 NapCat 启动脚本带起 QQ，macOS 有一键脚本的话跑 qq-stack.sh start',
     action: '',
   })
   rows.push({
@@ -181,7 +198,7 @@ export function diagnose({
     label: `端口 ${port} 有没有在监听`,
     ok: Boolean(portOpen),
     detail: portOpen ? '通了' : '没有进程监听：多半是 QQ / NapCat 没启动，或刚才的方向没改过来',
-    fix: portOpen ? '' : '先启动 QQ（带 NapCat），再看这一行',
+    fix: portOpen ? '' : '点「启动 QQ」让 NapCat 开正向 WebSocket 服务端；Windows 会调用 NapCat 启动脚本把 QQ 带起来',
     action: qqInstalled ? 'start-qq' : '',
   })
   rows.push({
@@ -189,7 +206,7 @@ export function diagnose({
     label: 'QQ 正在运行',
     ok: qqRunning === null ? null : Boolean(qqRunning),
     detail: qqRunning === null ? '没查（不影响判断）' : qqRunning ? '在跑' : '没在跑',
-    fix: qqRunning === false ? '点「启动 QQ」；第一次要在 QQ 里登录机器人号' : '',
+    fix: qqRunning === false ? '点「启动 QQ」；Windows 会用 NapCat 启动脚本带起 QQ，第一次要在 QQ 里登录机器人号' : '',
     action: qqRunning === false ? 'start-qq' : '',
   })
 

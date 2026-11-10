@@ -13,6 +13,8 @@ export const DISTRIBUTION_FILES = [
   'docs/USER-MANUAL.md', 'docs/MODULE-TUTORIAL.md', 'docs/DESIGN.md',
   'README.md', 'README_EN.md', 'CHANGELOG.md',
   'LICENSE', 'NOTICE.md', 'THIRD-PARTY-NOTICES.md',
+  // Windows 用户双击就能用的一键入口（零依赖、不带权重）
+  '启动音频服务.bat', '启动GPT-SoVITS.bat', '启动QQ-NapCat.bat', '快速翻唱.bat',
 ]
 
 const REQUIRED_FILES = [

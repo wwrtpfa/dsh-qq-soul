@@ -126,6 +126,12 @@ class _DriverClient:
         self._err_file = self._open_stderr()
         if self._err_file is not None:
             stderr_target = self._err_file
+        win_kwargs: dict = {}
+        if os.name == "nt" and self._popen is subprocess.Popen:
+            # 常驻 worker 不能挂在用户控制台上：关掉任意一个控制台窗口，
+            # Intel Fortran runtime 会收到 window-CLOSE 事件把子进程直接 abort
+            # （实测 2026-11-10 07:43 做歌失败），随后回落路径又踩 core.py。
+            win_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             proc = self._popen(
                 command,
@@ -136,6 +142,7 @@ class _DriverClient:
                 text=True,
                 bufsize=1,
                 env=env,
+                **win_kwargs,
             )
         except OSError as exc:
             log.info("翻唱常驻换声起不来：%s", exc)

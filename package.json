@@ -16,8 +16,8 @@
     "test": "node --test \"test/**/*.test.js\"",
     "package": "node scripts/package.mjs",
     "package:verify": "node scripts/package.mjs --verify",
-    "service:check": "python3 -m services --check-deps",
-    "service:serve": "python3 -m services --serve"
+    "service:check": "python -m services --check-deps",
+    "service:serve": "python -m services --serve"
   },
   "dsh": {
     "bundle": {

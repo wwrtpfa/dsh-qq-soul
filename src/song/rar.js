@@ -9,7 +9,14 @@ const require = createRequire(import.meta.url)
 let api = null
 
 function unrar() {
-  if (!api) api = require('../vendor/unrar/dist/index.cjs')
+  if (!api) {
+    try {
+      api = require('../vendor/unrar/dist/index.js')
+    } catch (error) {
+      throw new Error('RAR 解压器运行时没装全：缺 src/vendor/unrar/dist/（node-unrar-js 2.0.2）。' +
+        '可以用系统里的 unrar / 7z 解压后导入，或补齐 vendor 目录。' + (error.message || ''))
+    }
+  }
   return api
 }
 
@@ -22,8 +29,9 @@ function unrar() {
 export async function readRar(buf, want = () => true) {
   const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
   let extractor
+  const api = unrar()
   try {
-    extractor = await unrar().createExtractorFromData({ data })
+    extractor = await api.createExtractorFromData({ data })
   } catch (error) {
     throw new Error('不是 RAR 文件（或者文件不完整）')
   }

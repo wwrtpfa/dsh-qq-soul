@@ -152,11 +152,14 @@ function setup(t, { hooks = {}, brain = async () => '', contextProviders, voice 
     } },
   })
   fake.ctx.on('session/event', hub.onSessionEvent)
-  t.after(() => {
+  t.after(async () => {
     hub.dispose(); fake.dispose()
     if (previous === undefined) delete process.env.AURABOT_DATA_DIR
     else process.env.AURABOT_DATA_DIR = previous
-    rmSync(dir, { recursive: true, force: true })
+    // Windows 上文件句柄释放有延迟，rmSync 会偶发 EBUSY；重试几轮，仍失败就跳过清理（只是临时目录）。
+    for (let i = 0; i < 5; i++) {
+      try { rmSync(dir, { recursive: true, force: true }); break } catch { await new Promise((resolve) => setTimeout(resolve, 200)) }
+    }
   })
   return { hub, fake, cfg, calls, sent, warnings, activity, spoken, dir }
 }

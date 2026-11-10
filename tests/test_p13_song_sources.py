@@ -326,6 +326,6 @@ def test_保存源列表写回config且不动别的键(tmp_path):
 def test_原曲与成品缓存目录分开放(tmp_path):
     cfg = config_mod.ServiceConfig(data_dir=tmp_path)
     dirs = cfg.music_dirs()
-    assert dirs["originals"].endswith("music/originals")
-    assert dirs["covers"].endswith("music/covers")
-    assert dirs["work"].endswith("music/work")
+    assert str(dirs["originals"]).replace("\\", "/").endswith("music/originals")
+    assert str(dirs["covers"]).replace("\\", "/").endswith("music/covers")
+    assert str(dirs["work"]).replace("\\", "/").endswith("music/work")

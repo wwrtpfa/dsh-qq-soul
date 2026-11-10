@@ -99,26 +99,90 @@ dsh plugin --profile <profile> add /绝对路径/dsh-qq-soul
 说话与唱歌由仓库自带的 `services/` 包提供，**单端口 `127.0.0.1:9876`、零第三方依赖、默认关闭、不预装任何大模型**。聊天功能不需要它；只有要发语音条 / 翻唱时才起。
 
 ```bash
-# macOS / Linux
-python3 -m services --check-deps        # 依赖体检（只查文件，不下载、不启动模型）
-python3 -m services --serve              # 起服务
-python3 -m services --stub --serve       # 无模型自检：假 TTS / 假翻唱，先验证接口
-python3 -m services --once --text "你好呀，我是大肥鱼"   # 不起后台，直接合成一句
-QQSOUL_SERVICE_TOKEN=自定义串 python3 -m services --serve   # 开鉴权
+# Windows（本机主用；先 cd /d D:\dsh-qq-soul）
+python -m services --check-deps        # 依赖体检（只查文件，不下载、不启动模型）
+python -m services --serve              # 起服务
+python -m services --stub --serve       # 无模型自检：假 TTS / 假翻唱，先验证接口
+python -m services --once --text "你好呀，我是大肥鱼"   # 不起后台，直接合成一句
+set QQSOUL_SERVICE_TOKEN=自定义串 && python -m services --serve   # cmd 开鉴权；PowerShell 用 $env:QQSOUL_SERVICE_TOKEN="自定义串"
+
+# macOS / Linux：把上面的 python 换成 python3 即可
 ```
 
-> **Windows** 用 `python` 代替 `python3`（例如 `python -m services --serve`）。必须在**插件仓库目录**里运行；面板「概览 → 音频服务」会直接给出带本机目录的完整命令，可一键复制。
+> **macOS / Linux** 用 `python3` 代替 `python`。必须在**插件仓库目录**里运行；面板「概览 → 音频服务」会直接给出带本机目录的完整命令，可一键复制。
 > 服务的配置、模型和翻唱缓存放在 `~/.dsh/plugins-data/qqsoul/service/`（Windows 是 `%USERPROFILE%\.dsh\plugins-data\qqsoul\service\`），与插件自己的配置分开。
 
 - 渠道：默认 **edge-tts（零下载）**；可选 Breeze 远程（只填 key）、GPT-SoVITS / 千问 3-TTS MLX（选目录加载或连已跑着的服务）、任意 HTTP。长文本自动分句合成 + 静音拼接。
 - 模型目录见 `models.json`，三档分发（零下载 / 按需轻量 / 手动导入），安装包不带权重。
 - 主要接口：`/healthz`、`/status`（驻留清单 + 当前策略）、`/tts/speak`、`/tts/switch`、`/models/catalog`、`/models/load`、`/song/strategy`（读/存翻唱策略）、`/song/sources`（读/存有序音乐源）、`/song/search`、`/song/request`、`/song/jobs`、`/song/jobs/{id}`（分阶段进度）、`/song/jobs/{id}/energy`（能量曲线）、`/song/jobs/{id}/events`（SSE）、`/deps/check`、`/panel`（托管面板）、`/files/*`。
 - 插件侧的 `src/service/client.js` 是薄客户端，**默认关闭**；开启前现有语音 / 翻唱模块行为完全不变。开启后 `src/service/song-bridge.js` 接管点歌 → 等作业 → 发语音条。面板与运维大屏对语音、音色、翻唱策略、音乐源读写**同一份服务配置**。
-- Python 回归：`python3 -m pytest tests/ -q`（沙箱环境加 `--basetemp=/tmp/…`）。
+- Python 回归：`python -m pytest tests/ -q`（macOS / Linux 用 `python3`；沙箱环境加 `--basetemp` 指到可写目录）。
+
+### 4.0 Windows 快速 RVC（技能包 `D:\大肥鱼进QQ-技能包-v6` 那套装法）
+
+Windows 上**不要照 macOS 的 Applio 装法配**。技能包的快速 RVC 是另一套：`D:\tools\rvc\rvc_convert.py`
++ `infer/vc/pipeline.py`（fcpe 提 F0、CUDA half、30 秒分块），配 `D:\tools\rvc\venv312`。
+本机实测 `torch 2.8.0+cu128`、CUDA 可用：模型冷载 1.3 s、2 秒音频推理 1.4 s；接成常驻驱动后
+**单句换声 281 ms**。服务会按目录里实际有的文件自动选后端：
+
+| 目录里有 | 后端 | 换声走 |
+|---|---|---|
+| `core.py` | `applio` | `from core import run_infer_script` |
+| `rvc_convert.py` + `infer/` | `fast-rvc` | 常驻 `infer.vc.pipeline.Pipeline` |
+
+`config.json` 里对应这么写（Windows 已按本机对齐）：
+
+```json
+{
+  "tts":  { "engine": "edge", "gptsovitsUrl": "http://127.0.0.1:9881" },
+  "paths": {
+    "python":     "D:/tools/rvc/venv312/Scripts/python.exe",
+    "applio":     "D:/tools/rvc",
+    "models":     "D:/tools/rvc/models",
+    "rvcConvert": "D:/tools/rvc/rvc_convert.py",
+    "qwenModel":  ""
+  },
+  "song": {
+    "model": "D:/tools/rvc/models/feiyu-rvc/FeiyuVoice-RVC-v1.pth",
+    "index": "D:/tools/rvc/models/feiyu-rvc/FeiyuVoice-RVC-v1.index",
+    "voiceName": "feiyu", "indexRate": 0.15
+  },
+  "stack": { "script": "D:/NapCat/napcat.bat", "qqAccount": "3085955462" }
+}
+```
+
+几点别踩坑：
+
+- **说话渠道**：默认 `edge`（秒级、零依赖）；要零样本克隆音色就切 `gptsovits`。
+  本机 GPT-SoVITS **实测可用**，但启动时必须用 `启动GPT-SoVITS.bat` 里的
+  `-c GPT_SoVITS/configs/tts_infer.cpu.yaml`。旧脚本少了 `-c`，默认读 `tts_infer.yaml`
+  的 `cuda + is_half`；这台机器是 RTX 5060（Blackwell / sm_120），整合包自带的
+  `torch 2.0.0+cu118` 不认新架构，会退化到 `126 s/it`（一句 50 小时）。CPU 配置实测
+  首句冷加载约 70 秒，之后一句 13–28 秒。9881 是 `api_v2.py`，9882 是技能包的响度代理
+  （补 8 dB、规整 WAV），插件直连 9881。
+- **9890 控制台**：`http://127.0.0.1:9890/` 是技能包的 Windows 控制台，能启停 9881/9882、
+  挑参考音频、试听本地音色；插件面板「声音」页和运维大屏都加了直达按钮。
+  注意别点「全部停止」（会把 QQ 一起关掉）；第一屏的 `BRIDGE 6700` 只是端口名，
+  实际是 NapCat 的正向 WS 服务端，不是旧桥。
+- **千问 3-TTS / MLX 是 Apple 专用**：Windows 的「模型」页不会列出它，旧配置迁移也会跳过
+  `qwenModel` / `qwenPython`，配置里保持 `""`。
+- **唱歌永远只走本地 RVC**，与说话渠道无关；技能包自带的 `feiyu-rvc` / `ncd-rvc` 音色
+  直接放到 `D:/tools/rvc/models/` 就能被扫到。
+- **人声分离降级**：本机没装 `onnx` / `demucs`，分离会自动降级为「原曲转 16k 人声 + 等长静音伴奏」，
+  成品是纯换声人声，链路不会断。装了 `onnx` + MDX 模型或 `demucs` 后自动恢复真分离。
+- **不要用技能包的 `qq-stack.ps1` 当 `stack.script`**：它按旧桥的反向 WS 6700 启动，
+  与本插件的正向 WS 服务端冲突。这里用 NapCat.Shell 官方 `napcat.bat`，配
+  `qqAccount` 自动加 `-q` 快速登录（本机实测 `start-napcat.bat` 注入器带不起 6099/6700）。
+- **一键起 QQ 网关**：双击 `启动QQ-NapCat.bat`，等价于面板「启动 QQ」按钮：
+  `napcat.bat -q <机器人号>` → 等 6099 → 打开 `http://127.0.0.1:6099/webui/web_login`。
+  按钮在网关端口 6700 已监听时不会重复启动（NapCat.Shell 不产生 `QQ.exe` 进程）。
+- 换目录时设 `QQSOUL_FAST_RVC_DIR`；ffmpeg 不在 PATH 时设 `QQSOUL_FFMPEG`（面板配置会自动传下来）。
+- 想单独跑一首整歌（不走插件流水线）：双击 `快速翻唱.bat`，或
+  `D:\tools\rvc\venv312\Scripts\python.exe D:\tools\rvc\rvc_convert.py --input 原曲.mp3 --output 成品.wav`。
 
 ### 4.1 面板 10 分钟跑通（P4）
 
-1. **起服务**：`python3 -m services --check-deps` 看必需项 → `python3 -m services --serve`。还没装模型时先加 `--stub` 自检。
+1. **起服务**：`python -m services --check-deps` 看必需项 → `python -m services --serve`（macOS / Linux 用 `python3`）。还没装模型时先加 `--stub` 自检。
 2. **打开面板**：浏览器开 `http://127.0.0.1:9876/panel`，或双击 `docs/prototype/index.html`；装进 DSH 后也可在「翻唱」页点「打开运维大屏」。
 3. **连接**：点右上「连接 service」→ 地址默认已填好，token 没设就留空 → 连接；左上角变成「实时」即连上。双击打开也能连（service 允许 `null` origin 的 CORS）。
 4. **看体检**：向导第 3 步与「依赖体检」页逐项显示真状态，缺哪行按「修复动作」补。

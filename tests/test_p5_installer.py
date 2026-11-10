@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -250,7 +251,13 @@ def test_路由_install_check_四态(inst_srv):
     base, _ = inst_srv
     code, body = _call(base, "GET", "/install/check")
     assert code == 200 and body["ok"] is True
-    assert any(r["id"] == "qwen3-tts-mlx" and r["state"] == "未安装" for r in body["items"])
+    ids = [r["id"] for r in body["items"]]
+    if sys.platform == "win32":
+        #: MLX 是 Apple 专用；Windows 用户不能在模型页看到它（会被劝去下 488 MB）。
+        assert "qwen3-tts-mlx" not in ids
+        assert any(r["state"] == "未安装" or r["state"] == "已加载" for r in body["items"])
+    else:
+        assert any(r["id"] == "qwen3-tts-mlx" and r["state"] == "未安装" for r in body["items"])
 
 
 def test_路由_install_paths_保存即生效(inst_srv, tmp_path):

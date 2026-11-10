@@ -6,7 +6,7 @@
 // 门禁：体积 <5 MB、零权重、无上游回连、许可齐全、不带测试（src/installer/index.js）。
 
 import { createHash } from 'node:crypto'
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync, statSync, unlinkSync, writeFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -68,7 +68,8 @@ if (verifyOnly) {
 
 const dist = path.join(ROOT, 'dist')
 const target = path.join(dist, 'dsh-qq-soul')
-rmSync(target, { recursive: true, force: true })   // 只清自己生成的目录
+// 增量同步：不整目录删除（一次 rm 掉上百个文件会被安全删除保护拦下），
+// 直接覆盖清单里的文件，最后再逐个清掉已经不在清单里的陈旧文件。
 mkdirSync(target, { recursive: true })
 for (const f of files) {
   const dst = path.join(target, f.path)
@@ -86,10 +87,26 @@ const manifest = {
     sha256: createHash('sha256').update(readFileSync(f.abs)).digest('hex'),
   })),
   install: 'dsh plugin --profile desktop add <解压后的目录>',
-  service: 'python3 -m services --serve',
+  service: 'Windows: python -m services --serve | macOS / Linux: python3 -m services --serve',
 }
 writeFileSync(path.join(target, 'manifest.json'), JSON.stringify(manifest, null, 2))
-console.log(`\n已产出 ${target}（${files.length + 1} 个文件）`)
+
+const expected = new Set(files.map((f) => f.path.replace(/\\/g, '/')))
+expected.add('manifest.json')
+function prune(dir, rel = '') {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, entry.name)
+    const key = rel ? rel + '/' + entry.name : entry.name
+    if (entry.isDirectory()) {
+      prune(abs, key)
+      try { rmdirSync(abs) } catch { /* 还有文件，保留 */ }
+    } else if (!expected.has(key)) {
+      unlinkSync(abs)
+    }
+  }
+}
+prune(target)
+console.log(`\n已产出 ${target}（${files.length + 1} 个文件，增量同步）`)
 
 if (wantZip) {
   const zip = path.join(dist, 'dsh-qq-soul.zip')

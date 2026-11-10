@@ -3,12 +3,30 @@
 // Applio 由服务自己管理，用户不需要单独启动它。
 
 import { execFile, spawn } from 'node:child_process'
-import { mkdirSync, openSync } from 'node:fs'
+import { existsSync, mkdirSync, openSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const DEFAULT_URL = 'http://127.0.0.1:9876'
 const LAUNCHD_LABEL = 'com.pengfanao.qqsoul-service'
+
+/** Windows 没有 python3 这个命令：优先用配置里的绝对路径，再退回 python；macOS/Linux 用 python3。 */
+function pythonCommand(platform, env, exists) {
+  const configured = String(env.QQSOUL_SERVICE_PYTHON || env.QQSOUL_PYTHON || '').trim()
+  if (configured) return configured
+  if (platform === 'win32') {
+    const local = env.LOCALAPPDATA || ''
+    for (const p of [
+      join('D:/', 'Python312', 'python.exe'),
+      join('C:/', 'Python312', 'python.exe'),
+      local ? join(local, 'Programs', 'Python', 'Python312', 'python.exe') : '',
+    ]) {
+      if (p && exists(p)) return p
+    }
+    return 'python'
+  }
+  return 'python3'
+}
 
 function isLocalUrl(base) {
   try {
@@ -39,6 +57,7 @@ export function createServiceLauncher({
   execImpl = runFile,
   fetchImpl = globalThis.fetch,
   env = process.env,
+  exists = existsSync,
   delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   timeoutMs = 20000,
 } = {}) {
@@ -92,11 +111,12 @@ export function createServiceLauncher({
       const logs = join(homedir(), '.dsh', 'plugins-data', 'qqsoul', 'service', 'logs')
       mkdirSync(logs, { recursive: true })
       const fd = openSync(join(logs, 'service.out'), 'a')
-      const python = env.QQSOUL_PYTHON || 'python3'
+      const python = pythonCommand(platform, env, exists)
       const child = spawnImpl(python, ['-m', 'services', '--serve'], {
         cwd: root,
         detached: true,
         stdio: ['ignore', fd, fd],
+        windowsHide: platform === 'win32',
         env,
       })
       child.unref?.()

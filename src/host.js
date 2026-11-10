@@ -12,7 +12,7 @@
 import { readFileSync, existsSync, writeFileSync, unlinkSync, statSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawn, execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import net from 'node:net'
 import { loadConfig, saveConfig, publicConfig, mergeFromPanel } from './core/config.js'
 import { createLogger } from './core/logger.js'
@@ -40,7 +40,8 @@ import { createDangerGuard, safeOwnedSession } from './security/danger.js'
 import { setSsrpMode, assertPublicUrl, fetchGuarded } from './core/net.js'
 import { BUILTINS } from './modules/index.js'
 import { probeUpstream } from './installer/probe.js'
-import { diagnose, applyFix, portOfUrl, napCatFlag, platformOf, DEFAULT_WS_PORT } from './setup/doctor.js'
+import { diagnose, applyFix, portOfUrl, DEFAULT_WS_PORT } from './setup/doctor.js'
+import { startQQ, planQQLaunch } from './setup/launcher.js'
 import { createOpsStore } from './features/ops-store.js'
 import { registerResourceRoutes } from './resources/routes.js'
 
@@ -1255,28 +1256,76 @@ export function apply(ctx) {
     sock.once('connect', () => finish(true))
     sock.once('error', () => finish(false))
   })
-  /** QQ 在不在跑：只有 macOS 有稳定的进程名可查，其它平台交给端口那一行判断。 */
-  const qqRunning = () => new Promise((resolve) => {
-    if (platformOf() !== 'mac') return resolve(null)
-    execFile('pgrep', ['-x', 'QQ'], (error, stdout) => resolve(!error && Boolean(String(stdout || '').trim())))
-  })
+  // 启动器路径不常变：算一次缓存起来，别让每次体检都扫一遍盘。
+  let launcherCache = null
+  const launcherInfo = () => {
+    if (!launcherCache) {
+      const l = planQQLaunch()
+      launcherCache = { ok: l.ok, kind: l.kind || '', path: l.path || '',
+                        label: l.label || '', note: l.note || '', message: l.message || '' }
+    }
+    return launcherCache
+  }
   const doctorState = async () => {
     const port = portOfUrl(endpoint().wsUrl)
-    return diagnose({ cfg: getConfig(), port, portOpen: await portOpen(port), qqRunning: await qqRunning() })
+    // 进程是否在跑由「启动 QQ」自己判断（startQQ 里查）；体检只看端口，避免每次拉起子进程。
+    return {
+      ...diagnose({ cfg: getConfig(), port, portOpen: await portOpen(port), qqRunning: null }),
+      // 面板要告诉 Windows 用户「点启动 QQ 到底会跑哪个文件」，没找到时也能给出可执行的指引
+      launcher: launcherInfo(),
+    }
   }
-  /** 带 NapCat 启动 QQ：放标记文件让 loadNapCat.js 进 NapCat 模式，再用 LaunchServices 启动。 */
-  const startQQApp = async () => {
-    if (platformOf() !== 'mac') return { ok: false, message: '只有 macOS 能一键启动；Windows 请从开始菜单启动 QQ（要带 NapCat 的启动器）' }
-    try { const flag = napCatFlag(); if (flag) writeFileSync(flag, '') } catch (error) { log.debug('写 NapCat 标记失败：', error.message) }
-    const r = await new Promise((resolve) => execFile('open', ['-a', 'QQ'], (error) => resolve(error)))
-    return r ? { ok: false, message: '启动 QQ 失败：' + r.message } : { ok: true, message: '正在启动 QQ（第一次要在 QQ 里登录机器人号）' }
-  }
+  /**
+   * 面板「启动 QQ」：跨平台启动带 NapCat 的 QQ。
+   * Windows 找 NapCat 启动脚本 / NapCatWinBootMain.exe 注入器，macOS 走 LaunchServices，
+   * 详见 src/setup/launcher.js。QQ 已在跑且网关端口已监听时不重复开第二个。
+   */
+  const startQQApp = () => startQQ({
+    // NapCat.Shell 的 -q 快速登录：用面板里填的机器人号，免去每次扫码
+    account: String(getConfig()?.botQQ || process.env.QQSOUL_QQ_ACCOUNT || ''),
+    portOpen: () => portOpen(portOfUrl(endpoint().wsUrl)),
+    log: (message) => log.debug(message),
+  })
   route('/setup/doctor', async () => {
     const state = await doctorState()
     // ok 永远是「接口调通了」，链路健不健康看 healthy —— 否则 unhealthy 时前端会把整份体检当成失败丢掉
     return { ...state, ok: true, healthy: state.ok }
   })
   route('/setup/start-qq', async () => startQQApp())
+  /**
+   * 面板「声音」页：服务没连上时，选渠道前先把音频服务拉起来。
+   * 端口已监听就直接复用（不重复起第二个）；Windows 用 python，macOS / Linux 用 python3。
+   */
+  route('/setup/start-service', async () => {
+    const from = /:(\d+)/.exec(String(cfg?.service?.url || ''))
+    const port = from ? Number(from[1]) : 9876
+    if (await portOpen(port, 400)) return { ok: true, already: true, message: `音频服务已经在跑（127.0.0.1:${port}）` }
+    const win = process.platform === 'win32'
+    // DSH 是 GUI 进程，PATH 未必和终端一致：优先用本机装好的绝对路径，再退回 python / python3。
+    const pyCandidates = win
+      ? [String(process.env.QQSOUL_SERVICE_PYTHON || '').trim(),
+         'D:\\Python312\\python.exe', 'C:\\Python312\\python.exe',
+         join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python312', 'python.exe')]
+      : [String(process.env.QQSOUL_SERVICE_PYTHON || '').trim()]
+    const python = pyCandidates.find((p) => p && existsSync(p)) || (win ? 'python' : 'python3')
+    const hint = `请手动在 ${ROOT} 里跑 python -m services --serve（macOS 用 python3）看报错`
+    try {
+      const child = spawn(python, ['-m', 'services', '--serve'], {
+        cwd: ROOT, detached: true, stdio: 'ignore', windowsHide: true,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      })
+      child.on?.('error', (error) => log.debug('音频服务启动失败：' + error.message))
+      child.unref?.()
+      if (!child.pid) return { ok: false, message: `没能启动音频服务（${python} 没起来）：${hint}` }
+    } catch (error) {
+      return { ok: false, message: `没能启动音频服务：${error.message}；${hint}` }
+    }
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 500))
+      if (await portOpen(port, 400)) return { ok: true, message: `音频服务已启动（127.0.0.1:${port}），渠道可以切了` }
+    }
+    return { ok: false, message: `已发起启动，但 15 秒内 ${port} 还没监听；${hint}` }
+  })
   route('/setup/repair', async (req) => {
     const body = await readBody(req)
     const port = DEFAULT_WS_PORT

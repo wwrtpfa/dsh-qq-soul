@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -27,7 +28,7 @@ DIRS = (
 
 
 def root(cfg) -> Path:
-    """数据根目录：一律给绝对路径——面板要复制、要在 Finder 里打开。"""
+    """数据根目录：一律给绝对路径——面板要复制、要在文件管理器里打开。"""
     return Path(cfg.data_dir).expanduser().resolve()
 
 
@@ -46,7 +47,7 @@ def ensure_dirs(cfg) -> dict:
 
 # ------------------------------------------------------------------ 选择器
 def pick(cfg, kind: str = "dir", title: str = "", start: str = "") -> dict:
-    """调系统自己的选择框（macOS: Finder，其它: tkinter）。
+    """调系统自己的选择框（Windows: PowerShell / WinForms，macOS: Finder，Linux: tkinter）。
 
     取消返回 ``{"ok": False, "cancelled": True}``，不抛异常——面板据此什么也不做。
     ``start`` 是打开时停的目录，默认落在数据目录。
@@ -59,9 +60,91 @@ def pick(cfg, kind: str = "dir", title: str = "", start: str = "") -> dict:
     if not here.exists():
         here = root(cfg)
 
-    if os.name != "nt" and shutil.which("osascript"):
+    if os.name == "nt":
+        # Windows 别指望 tkinter：很多精简版 Python（包括 WorkBuddy 内置解释器）不带它。
+        # 先用系统自带的 PowerShell + WinForms 对话框，失败再退回 tkinter。
+        try:
+            return _pick_win(kind, title, here)
+        except (ValueError, OSError) as exc:
+            # 退回 tkinter：优先用配置里那个 Python（本机 RVC venv 通常带 tkinter），
+            # 再试跑服务的解释器；精简版解释器两个都没有时，给人话而不是一句 traceback。
+            candidates = [str((getattr(cfg, "paths", None) or {}).get("python") or ""), sys.executable]
+            for py in [p for p in candidates if p]:
+                try:
+                    return _pick_tk(kind, title, here, python=py)
+                except Exception:
+                    continue
+            raise ValueError("这台机器上打不开 Windows 选择框（%s）；可以直接把完整路径填进输入框" % exc)
+    if shutil.which("osascript"):
         return _pick_osascript(kind, title, here)
     return _pick_tk(kind, title, here)
+
+
+def _pick_win(kind: str, title: str, here: Path) -> dict:
+    """Windows 原生选择框：PowerShell + System.Windows.Forms，不依赖 tkinter。
+
+    结果写进临时文件再读，避开 PowerShell 5.1 控制台的 GBK / UTF-8 编码坑。
+    取消时不写文件，返回 cancelled=True，面板就什么也不做。
+    """
+    import tempfile
+
+    exe = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if not exe:
+        raise ValueError("没找到 PowerShell")
+    out_file = Path(tempfile.gettempdir()) / ("qqsoul-pick-%d.txt" % os.getpid())
+    try:
+        out_file.unlink()
+    except OSError:
+        pass
+    prompt = (title or ("选一个目录" if kind == "dir" else "选一个文件")).replace("'", "''")
+    if kind == "dir":
+        dlg = """
+Add-Type -AssemblyName System.Windows.Forms
+$d = New-Object System.Windows.Forms.FolderBrowserDialog
+$d.Description = '__PROMPT__'
+$d.SelectedPath = $env:QQSOUL_PICK_START
+$d.ShowNewFolderButton = $true
+if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  [System.IO.File]::WriteAllText($env:QQSOUL_PICK_OUT, $d.SelectedPath, (New-Object System.Text.UTF8Encoding($false)))
+}
+"""
+    else:
+        dlg = """
+Add-Type -AssemblyName System.Windows.Forms
+$d = New-Object System.Windows.Forms.OpenFileDialog
+$d.Title = '__PROMPT__'
+$d.InitialDirectory = $env:QQSOUL_PICK_START
+$d.CheckFileExists = $true
+if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  [System.IO.File]::WriteAllText($env:QQSOUL_PICK_OUT, $d.FileName, (New-Object System.Text.UTF8Encoding($false)))
+}
+"""
+    dlg = dlg.replace("__PROMPT__", prompt)
+    env = {**os.environ, "QQSOUL_PICK_OUT": str(out_file), "QQSOUL_PICK_START": str(here)}
+    args = [exe, "-NoProfile"]
+    if "powershell.exe" in exe.lower():
+        args.append("-STA")   # PowerShell 5.1 的 WinForms 对话框要 STA；pwsh 不认这个参数
+    args += ["-Command", dlg]
+    try:
+        proc = subprocess.run(args, env=env, capture_output=True, timeout=300,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("Windows 选择框没起来：%s" % exc)
+    if proc.returncode != 0:
+        err = (proc.stderr or b"").decode("utf-8", "replace").strip()[-300:]
+        raise ValueError("Windows 选择框打不开：%s" % (err or "未知原因"))
+    picked = ""
+    if out_file.is_file():
+        try:
+            picked = out_file.read_text(encoding="utf-8").strip().strip('"')
+        finally:
+            try:
+                out_file.unlink()
+            except OSError:
+                pass
+    if not picked:
+        return {"ok": False, "cancelled": True, "message": "已取消"}
+    return {"ok": True, "path": str(Path(picked)), "kind": kind}
 
 
 def _pick_osascript(kind: str, title: str, here: Path) -> dict:
@@ -83,8 +166,11 @@ def _pick_osascript(kind: str, title: str, here: Path) -> dict:
     return {"ok": True, "path": str(Path(picked).expanduser()), "kind": kind}
 
 
-def _pick_tk(kind: str, title: str, here: Path) -> dict:
-    """跨平台兜底：tkinter 在选择框里跑，不需要用户手打路径。"""
+def _pick_tk(kind: str, title: str, here: Path, python: str | None = None) -> dict:
+    """跨平台兜底：tkinter 在选择框里跑，不需要用户手打路径。
+
+    ``python`` 可指定另一个解释器（有些精简版 Python 不带 tkinter）。
+    """
     code = r"""
 import json, sys, tkinter as tk
 from tkinter import filedialog
@@ -95,7 +181,7 @@ path = filedialog.askdirectory(**kw) if kind == 'dir' else filedialog.askopenfil
 print(json.dumps(path or ''))
 """
     try:
-        proc = subprocess.run(["python3", "-c", code, kind, title, str(here)],
+        proc = subprocess.run([python or sys.executable, "-c", code, kind, title, str(here)],
                               capture_output=True, text=True, timeout=300)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ValueError("这台机器上没有可用的图形选择框（%s）。可以先把字号改窄再试。" % exc)
@@ -192,8 +278,271 @@ def refs(cfg) -> dict:
             "message": ("参考音频目录：%s" % folder) if items else "这里还没有参考音频，点「选择音频」加一段 3–10 秒的干净人声"}
 
 
+def read_ref_text(cfg, path: str = "") -> dict:
+    """自动读参考音频的同名 ``.txt`` 逐字稿（技能包约定）。
+
+    为什么必须按「音频自己的名字」找：控制台会把长音频截成 9 秒的
+    ``d2.gsv.wav``，逐字稿也要跟着缩到 ``d2.gsv.txt``（只有第一句）。
+    若继续用整段 ``d2.txt`` 的 4 句话去配 9 秒音频，GPT-SoVITS 会把
+    prompt 一起念出来——表现就是「没按稿子读」、成品凭空长到 18 秒。
+
+    查找顺序：同名 > 去掉 .gsv 的原名 > 原音频目录 > 技能包旧目录。
+    只读白名单目录里的 .txt，不按用户传入路径读任意文件。
+    """
+    audio = Path(str(path or cfg.tts.get("refAudio") or cfg.song.get("refAudio") or "")).expanduser()
+    if not audio.name:
+        return {"ok": False, "text": "", "source": "", "message": "还没选参考音频"}
+    stem = audio.stem
+    base = stem[:-4] if stem.lower().endswith(".gsv") else stem
+    names: list[str] = []
+    for n in (stem + ".txt", stem + ".gsv.txt", base + ".txt"):
+        if n not in names:
+            names.append(n)
+    folders: list[Path] = [dir_for(cfg, "refs")]
+    if audio.parent.is_dir():
+        folders.append(audio.parent)
+    legacy = str(cfg.paths.get("refsLegacy") or "").strip()
+    if legacy:
+        folders.append(Path(legacy).expanduser())
+    folders += [Path("D:/qq-tts/refs"), Path.home() / "qq-tts" / "refs",
+                Path.home() / "Downloads" / "qq-tts" / "refs"]
+    try:
+        if LEGACY_VOICE.is_file():
+            old = json.loads(LEGACY_VOICE.read_text(encoding="utf-8")) or {}
+            p = Path(str(old.get("refAudio") or "")).expanduser()
+            if p.name:
+                folders.append(p.parent)
+    except (OSError, ValueError):
+        pass
+    seen: set[str] = set()
+    for folder in folders:
+        for name in names:
+            f = folder / name
+            try:
+                key = str(f.resolve())
+                if key in seen or not f.is_file():
+                    continue
+                seen.add(key)
+                text = f.read_text(encoding="utf-8-sig", errors="replace").strip()
+            except OSError:
+                continue
+            if text:
+                return {"ok": True, "text": text, "source": str(f),
+                        "message": "已读到逐字稿 " + f.name}
+    return {"ok": False, "text": "", "source": "",
+            "message": "没找到同名 .txt 逐字稿：把这段音频说的话存成 %s，放在参考音频旁边即可" % (stem + ".txt")}
+
+
+_ASR_CODE = r'''
+import sys, os, json
+root = r"D:\tools\GPT-SoVITS\GPT-SoVITS-v2-240821"
+os.chdir(root)
+sys.path.insert(0, root)
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+try:
+    from funasr import AutoModel
+    model = AutoModel(
+        model="tools/asr/models/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+        model_revision="v2.0.4", device="cpu", disable_update=True)
+    out = model.generate(input=sys.argv[1])
+    text = str((out[0] if out else {}).get("text") or "").strip()
+except Exception as exc:
+    text = ""
+    sys.stderr.write(str(exc) + "\n")
+print("__QQSOUL_ASR__" + json.dumps({"text": text}, ensure_ascii=False), flush=True)
+'''
+
+
+def _asr_text(cfg, audio: Path) -> str:
+    """自动听写：优先 ``QQSOUL_ASR_URL``，否则用本机 GPT-SoVITS 整合包的 FunASR。
+
+    用「只加载 ASR 主模型」的轻量配置：本机实测 **2.0 秒**（加载 1.7s +
+    推理 0.3s）；带 VAD 的完整三件套要 45 秒，不适合切音频时即时生成。
+    输出不带标点（punc 模型需要 VAD 分段才生效），用户可在框里补。
+    """
+    url = str(os.environ.get("QQSOUL_ASR_URL") or cfg.tts.get("asrUrl") or "").strip()
+    if url:
+        try:
+            import urllib.request
+
+            req = urllib.request.Request(url, data=audio.read_bytes(), method="POST",
+                                         headers={"Content-Type": "audio/wav"})
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                obj = json.loads(resp.read().decode("utf-8", "replace"))
+            return str(obj.get("text") or "").strip()
+        except Exception:  # noqa: BLE001
+            return ""
+    root = Path("D:/tools/GPT-SoVITS/GPT-SoVITS-v2-240821")
+    runtime = root / "runtime" / "python.exe"
+    asr_model = root / "tools/asr/models/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch/model.pt"
+    if not runtime.is_file() or not asr_model.is_file():
+        return ""
+    try:
+        env = dict(os.environ)
+        env.update({"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1",
+                    "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+        proc = subprocess.run([str(runtime), "-c", _ASR_CODE, str(audio)],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=90, cwd=str(root), env=env)
+        for line in (proc.stdout or "").splitlines():
+            if line.startswith("__QQSOUL_ASR__"):
+                return str(json.loads(line[len("__QQSOUL_ASR__"):]).get("text") or "").strip()
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return ""
+
+
+def prepare_ref_text(cfg, path: str = "", draft: str = "", force: bool = False) -> dict:
+    """「自动读取参考音频文本」的完整流程：规整音频 + 自动写好逐字稿。
+
+    1. 音频超过 10 秒（GPT-SoVITS 上限）→ 截前 9 秒成 ``<原名>.gsv.wav``；
+    2. 找源逐字稿：同名 .txt > 原名 .txt > 旧目录 > 面板输入框 > 同一音频的配置文本
+       > 可选 ASR；**不会拿另一段音频的稿子来凑**；
+    3. 截取过音频就按 ``秒数比例`` 把逐字稿截到句末标点（`_trim_prompt`）；
+    4. 把结果写成新音频同名的 ``.txt``，并回填 ``refAudio`` / ``refText`` 到配置；
+    5. 返回文本给面板直接填进「这段音频说的是」。
+
+    没有可用文本时仍完成音频规整与配置写回，并给出可执行的下一步，不伪造内容。
+    """
+    folder = dir_for(cfg, "refs")
+    folder.mkdir(parents=True, exist_ok=True)
+    audio = Path(str(path or cfg.tts.get("refAudio") or cfg.song.get("refAudio") or "")).expanduser()
+    if not audio.is_file():
+        return {"ok": False, "text": "", "message": "参考音频文件不在了，先导入一段"}
+
+    final, note, ratio = _normalize_gsv_ref(cfg, str(audio), folder)
+    final = Path(final)
+    trimmed = ratio < 0.999
+
+    #: force=「重新听写」：跳过已有的 .txt（可能是别的音频留下的错稿），
+    #: 直接对当前音频做语音识别并覆盖写回。
+    found = {"text": "", "source": ""} if force else read_ref_text(cfg, str(audio))
+    text = str(found.get("text") or "").strip()
+    src = str(found.get("source") or "")
+    #: 面板切了参考音频却还留着上一段的稿子时，不能把这份「残留稿」当成
+    #: 用户给新音频写的内容，否则一键读取会把错稿固化进新音频的 .txt。
+    stale = str(cfg.tts.get("refText") or "").strip()
+    stale_from_other = bool(stale) and str(cfg.tts.get("refAudio") or "") != str(audio)
+    if not text and not force and str(draft or "").strip():
+        typed = str(draft).strip()
+        if not (stale_from_other and typed == stale):
+            text, src = typed, "面板输入框"
+    if not text and str(cfg.tts.get("refAudio") or "") == str(audio):
+        text, src = stale, "当前配置"
+    if not text:
+        heard = _asr_text(cfg, final)
+        if heard:
+            text, src = heard, "自动听写"
+    #: 自动听写是对「截取后的新音频」做的，稿子天然就对应那段音频，
+    #: 不能再按比例截一次（会平白截短）。只有从完整稿读来的才需要截。
+    if text and trimmed and src != "自动听写":
+        text = _trim_prompt(text, ratio)
+
+    txt_file = final.with_suffix(".txt")
+    if text:
+        txt_file.write_text(text + "\n", encoding="utf-8")
+        cfg.save_tts({"refAudio": str(final), "refText": text})
+        bits = []
+        if note:
+            bits.append(note)
+        if trimmed:
+            bits.append("逐字稿按比例截到标点")
+        if src == "自动听写":
+            bits.append("本机 FunASR 自动听写（可手动补标点）")
+        bits.append("已写好 " + txt_file.name + " 并回填配置")
+        return {"ok": True, "text": text, "audio": str(final),
+                "textFile": str(txt_file), "source": src, "trimmed": trimmed,
+                "message": "；".join(bits)}
+
+    # 听写也没出结果：音频照样规整好、配置指向正确文件，并把旧稿清空，
+    # 绝不让上一段音频的逐字稿继续跟着新音频。
+    cfg.save_tts({"refAudio": str(final), "refText": ""})
+    extra = ("；" + note) if note else ""
+    return {"ok": False, "text": "", "audio": str(final), "textFile": "",
+            "source": "", "trimmed": trimmed,
+            "message": "自动听写没出结果" + extra +
+                       "。可在框里手写一句，点「自动读取」即存成 " + txt_file.name +
+                       " 并回填（旧稿已清空，不会串稿）"}
+
+
+def _probe_duration(ffprobe: str, path: Path) -> float:
+    """读音频时长（秒）；读不出来返回 0，让调用方按「不规整」处理。"""
+    try:
+        out = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        return max(0.0, float((out.stdout or "").strip()))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0.0
+
+
+def _trim_prompt(text: str, ratio: float) -> str:
+    """参考音频被截短后，逐字稿按比例截到标点，别让后半句对不上嘴。"""
+    import re
+
+    if not text or ratio >= 0.999:
+        return text
+    parts = re.split(r"(?<=[。！？!?；;])", str(text))
+    total = sum(len(part) for part in parts) or 1
+    limit = total * max(0.1, ratio)
+    kept = ""
+    for part in parts:
+        if kept and len(kept) + len(part) > limit:
+            break
+        kept += part
+    return kept.strip() or str(text)
+
+
+def _normalize_gsv_ref(cfg, path: str, folder: Path) -> tuple[str, str, float]:
+    """把参考音频规整成 GPT-SoVITS 能收的 3–10 秒单声道 WAV。
+
+    ``api_v2.py`` 会直接拒绝 3 秒以下 / 10 秒以上的参考音频，返回 HTTP 400
+    「参考音频在3~10秒范畴以外」。技能包的 macOS 控制台会把长音频截前 9 秒
+    另存 ``<原名>.gsv.wav``；这里把同样的行为带进 Windows 插件，用户从面板
+    选任何一段音频都不会再把「说话」弄成 400。
+
+    返回 ``(最终路径, 给页面的一句话, 截短比例)``。缺 ffmpeg / 探测失败 /
+    转码失败时一律保留原路径，不让「选音频」这一步失败。
+    """
+    src = Path(path).expanduser()
+    ffmpeg = str(cfg.ffmpeg() or "").strip()
+    if not ffmpeg or not Path(ffmpeg).is_file():
+        return str(src), "", 1.0
+    ffprobe = Path(ffmpeg).with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
+    if not ffprobe.is_file():
+        return str(src), "", 1.0
+    duration = _probe_duration(str(ffprobe), src)
+    if duration <= 0:
+        return str(src), "", 1.0
+    if duration < 3:
+        return (str(src),
+                "这段只有 %.1f 秒，短于 GPT-SoVITS 要求的 3 秒，本地音色会报 400；换一段 3–10 秒的"
+                % duration, 1.0)
+    if duration <= 10 and src.suffix.lower() == ".wav":
+        return str(src), "", 1.0
+    seconds = min(9.0, duration) if duration > 10 else duration
+    dest = folder / (src.stem + ".gsv.wav")
+    if src.resolve() == dest.resolve():
+        return str(src), "", 1.0
+    try:
+        proc = subprocess.run(
+            [ffmpeg, "-y", "-v", "error", "-i", str(src), "-t", "%.3f" % seconds,
+             "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", str(dest)],
+            capture_output=True, text=True, timeout=120,
+        )
+        if proc.returncode != 0 or not dest.is_file() or dest.stat().st_size < 1024:
+            return str(src), "", 1.0
+    except (OSError, subprocess.SubprocessError):
+        return str(src), "", 1.0
+    note = "已自动截成 %.0f 秒的 %s（GPT-SoVITS 只收 3–10 秒）" % (seconds, dest.name)
+    return str(dest), note, seconds / duration
+
+
 def set_ref(cfg, *, path: str = "", text: str = "", use: str = "tts") -> dict:
-    """选一段参考音频：外来文件复制进 refs 目录，然后写进配置。"""
+    """选一段参考音频：外来文件复制进 refs 目录、规整成 3–10 秒，然后写进配置。"""
     folder = dir_for(cfg, "refs")
     folder.mkdir(parents=True, exist_ok=True)
     target = ""
@@ -211,13 +560,17 @@ def set_ref(cfg, *, path: str = "", text: str = "", use: str = "tts") -> dict:
             target = str(dest)
         else:
             target = str(src)
+    note = ""
+    ratio = 1.0
+    if target and use in ("tts", "both"):
+        target, note, ratio = _normalize_gsv_ref(cfg, target, folder)
     patch = {}
     if target:
         patch["refAudio"] = target
         if use in ("song", "both"):
             patch["song"] = {"refAudio": target}
     if text:
-        patch["refText"] = text
+        patch["refText"] = _trim_prompt(text, ratio) if ratio < 1.0 else text
     if patch.get("song"):
         song_patch = patch.pop("song")
         cfg.song = dict(cfg.song)
@@ -225,8 +578,10 @@ def set_ref(cfg, *, path: str = "", text: str = "", use: str = "tts") -> dict:
         cfg._write_config(lambda p: p.setdefault("song", {}).update(song_patch))
     if patch:
         cfg.save_tts(patch)
-    return {"ok": True, "refs": refs(cfg), "saved": patch,
-            "message": "参考音频已保存：%s" % (Path(target).name if target else "只更新了逐字稿")}
+    message = "参考音频已保存：%s" % (Path(target).name if target else "只更新了逐字稿")
+    if note:
+        message += "；" + note
+    return {"ok": True, "refs": refs(cfg), "saved": patch, "message": message}
 
 
 # ------------------------------------------------------------------ 音色
@@ -864,6 +1219,8 @@ _ENGINE_MAP = {"qwen_local": "qwen", "qwen": "qwen", "qwen3": "qwen", "local": "
 
 
 def _keychain_secret(service: str = "codex-breeze-tts") -> str:
+    if os.name != "darwin":
+        return ""  # security 是 macOS 钥匙串命令，Windows 上只有环境变量/明文 key
     try:
         proc = subprocess.run(["security", "find-generic-password", "-s", service, "-w"],
                               capture_output=True, text=True, timeout=8)
@@ -890,8 +1247,14 @@ def adopt_local(cfg) -> dict:
             voice = {}
         engine = _ENGINE_MAP.get(str(voice.get("provider") or "").strip().lower(), "")
         if engine:
-            patch["engine"] = engine
-            report.append("说话渠道 → %s" % engine)
+            # Windows 上这两个渠道是死的：qwen 依赖 Apple MLX；本机 GPT-SoVITS
+            # 的 runtime 推理实测 126s/it（CUDA 没走通）。旧 macOS 配置里的
+            # provider 不能把当前唯一可出声的 edge 覆盖掉。
+            if os.name == "nt" and engine in ("qwen", "gptsovits"):
+                report.append("说话渠道保留 edge（旧配置的 %s 在 Windows 上不可用）" % engine)
+            else:
+                patch["engine"] = engine
+                report.append("说话渠道 → %s" % engine)
 
     ref_src = str(voice.get("refAudio") or "").strip()
     if ref_src and Path(ref_src).expanduser().is_file():
@@ -920,6 +1283,12 @@ def adopt_local(cfg) -> dict:
         value = str(voice.get(key) or "").strip()
         if not value:
             continue
+        # Windows 没有 MLX，也没有 macOS 那份千问驱动；整组千问配置都不搬，
+        # 免得配置里残留 Apple 专用模型名和跑不通的解释器路径。
+        if os.name == "nt":
+            continue
+        if "mlx" in value.lower():
+            continue
         if key == "qwenModel":
             # 老配置存的是 HF 仓库名，换成磁盘上的快照目录，直接能用
             snap = Path.home() / ".cache" / "huggingface" / "hub" / ("models--" + value.replace("/", "--"))
@@ -928,7 +1297,7 @@ def adopt_local(cfg) -> dict:
                 value = str(hits[-1])
         paths[cfg_key] = str(Path(value).expanduser())
     driver = Path.home() / "code" / "dsh-pet-indesktop" / "pet" / "tts" / "qwen_tts_driver.py"
-    if engine == "qwen" and driver.is_file():
+    if os.name != "nt" and engine == "qwen" and driver.is_file():
         paths["qwenDriver"] = str(driver)
         report.append("千问驱动已找到")
     # 9883 是原来那个语音服务（千问 / Breeze 都走它的 /synth），在跑就直接连它。

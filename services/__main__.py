@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""启动入口：
+"""启动入口（Windows 用 python，macOS / Linux 把 python 换成 python3）：
 
-    python3 -m services --serve                  # 单端口 9876（默认）
-    python3 -m services --check-deps            # 只体检，不起服务
-    python3 -m services --stub --serve          # 无模型自检模式
-    python3 -m services --once --text "你好呀"   # 不启后台，直接读一句
-    python3 -m services --stub --sing "小幸运"   # 不启后台，直接跑一个翻唱 job
+    python -m services --serve                  # 单端口 9876（默认）
+    python -m services --check-deps            # 只体检，不起服务
+    python -m services --stub --serve          # 无模型自检模式
+    python -m services --once --text "你好呀"   # 不启后台，直接读一句
+    python -m services --stub --sing "小幸运"   # 不启后台，直接跑一个翻唱 job
+
+必须在插件仓库目录里运行（例如 cd /d D:\\dsh-qq-soul）。
 """
 
 from __future__ import annotations

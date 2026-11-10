@@ -13,9 +13,11 @@ function reveal(path) {
   return new Promise((resolve) => {
     if (!path) return resolve({ ok: false, message: '没有路径' })
     const isFile = (() => { try { return statSync(path).isFile() } catch (error) { return false } })()
-    const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open'
-    // macOS 的 open -R 是在 Finder 里选中文件；Windows 的 explorer /select, 由 explorer 自己认
-    const args = isFile && process.platform === 'darwin' ? ['-R', path] : [path]
+    const win = process.platform === 'win32'
+    const cmd = process.platform === 'darwin' ? 'open' : win ? 'explorer.exe' : 'xdg-open'
+    // macOS 的 open -R 在 Finder 里选中文件；Windows 的 explorer /select, 在资源管理器里选中它
+    const args = isFile && process.platform === 'darwin' ? ['-R', path]
+      : isFile && win ? ['/select,' + path] : [path]
     execFile(cmd, args, (error) => resolve(error
       ? { ok: false, message: '打不开：' + error.message }
       : { ok: true, message: isFile ? '已在文件管理器里定位' : '已打开目录' }))

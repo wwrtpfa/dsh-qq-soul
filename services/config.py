@@ -100,13 +100,42 @@ class ServiceConfig:
 
     # ---------------------------------------------------------------- 派生
     def applio_dir(self) -> Path:
-        return Path(str(self.paths.get("applio") or os.environ.get("QQSOUL_APPLIO_DIR") or _home("tools", "applio"))).expanduser()
+        explicit = self.paths.get("applio") or os.environ.get("QQSOUL_APPLIO_DIR")
+        if explicit:
+            return Path(str(explicit)).expanduser()
+        # Windows 常见装法在 D 盘 / tools 下；没有再回落 macOS 时代的 ~/tools/applio。
+        if os.name == "nt":
+            for candidate in (Path("D:/tools/rvc"), Path("C:/tools/rvc"),
+                              Path("D:/tools/applio"), Path("C:/tools/applio")):
+                if candidate.is_dir():
+                    return candidate
+        return _home("tools", "applio")
+
+    def rvc_convert_path(self) -> Path:
+        """本机快速 RVC（技能包 Windows 版）的主程序，配置/环境没填就在引擎目录里找。"""
+        explicit = str(self.paths.get("rvcConvert")
+                       or os.environ.get("QQSOUL_RVC_CONVERT") or "").strip()
+        return Path(explicit).expanduser() if explicit else self.applio_dir() / "rvc_convert.py"
+
+    def rvc_backend(self) -> str:
+        """按磁盘上真实存在的文件选换声后端，别把 macOS 的 Applio 写死给 Windows。"""
+        root = self.applio_dir()
+        if (root / "core.py").is_file():
+            return "applio"
+        if self.rvc_convert_path().is_file() and (root / "infer" / "vc" / "pipeline.py").is_file():
+            return "fast-rvc"
+        return ""
 
     def engine_python(self) -> Path:
         explicit = str(self.paths.get("python") or "").strip()
         if explicit:
             return Path(explicit).expanduser()
         exe = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        #: 本机快速 RVC 用的是 ``venv312``，不是 Applio 的 ``.venv``
+        for name in ("venv312", ".venv"):
+            candidate = self.applio_dir() / name / exe
+            if candidate.is_file():
+                return candidate
         return self.applio_dir() / ".venv" / exe
 
     def ffmpeg(self) -> str:
@@ -118,7 +147,8 @@ class ServiceConfig:
         found = shutil.which("ffmpeg")
         if found:
             return found
-        for candidate in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
+        for candidate in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg",
+                          "C:/tools/ffmpeg/bin/ffmpeg.exe", "D:/tools/ffmpeg/bin/ffmpeg.exe"):
             if Path(candidate).is_file():
                 return candidate
         return ""
@@ -128,12 +158,24 @@ class ServiceConfig:
         pth = str(self.song.get("model") or self.paths.get("rvcModel") or "").strip()
         index = str(self.song.get("index") or self.paths.get("rvcIndex") or "").strip()
         if not pth:
-            base = Path(str(self.paths.get("models") or _home("tools", "models"))).expanduser()
-            for stem in ("FeiyuVoice-RVC-v1", "NCD"):
-                candidate = base / ("feiyu-rvc" if stem.startswith("Feiyu") else "ncd-rvc") / (stem + ".pth")
-                if candidate.is_file():
-                    pth = str(candidate)
-                    index = str(candidate.with_suffix(".index"))
+            hint = str(self.paths.get("models") or "").strip()
+            if hint:
+                bases = [Path(hint).expanduser()]
+            elif os.name == "nt":
+                #: Windows 上快速 RVC 的音色就放在引擎目录的 models/ 下，
+                #: 别再默认去 ~/tools/models 找 macOS 装法留下的目录。
+                bases = [self.applio_dir() / "models", _home("tools", "models")]
+            else:
+                bases = [_home("tools", "models")]
+            for base in bases:
+                for stem in ("FeiyuVoice-RVC-v1", "NCD"):
+                    folder = "feiyu-rvc" if stem.startswith("Feiyu") else "ncd-rvc"
+                    candidate = base / folder / (stem + ".pth")
+                    if candidate.is_file():
+                        pth = str(candidate)
+                        index = str(candidate.with_suffix(".index"))
+                        break
+                if pth:
                     break
         return pth, index
 
@@ -177,6 +219,13 @@ class ServiceConfig:
             "covers": str(root / "covers"),
             "work": str(root / "work"),
         }
+
+    def rvc_enabled(self) -> bool:
+        """说话是否统一换成 RVC 音色；关掉即保留参考音频（d2）的原声。"""
+        raw = self.tts.get("rvc", True)
+        if isinstance(raw, bool):
+            return raw
+        return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
     def song_config(self) -> dict:
         """喂给 CoverRenderer 的 cover 配置（键名沿用已验证的音频工具契约）。"""
@@ -274,6 +323,50 @@ class ServiceConfig:
         return dict(self.paths)
 
     # ---------------------------------------------------------------- 说话 / 唱歌参数
+    @staticmethod
+    def _guard_engine(engine: str, tts: dict) -> None:
+        """Windows 上别把跑不通的渠道写进配置。
+
+        之前的事故：旧 macOS 配置迁移 / 大屏「保存说话参数」会把 ``gptsovits``
+        写回 config.json，而本机 GPT-SoVITS 的 runtime 实测 126 s/it；用户一开
+        面板，默认可用的 edge 就被覆盖，合成直接失败。这里从**唯一的写入口**
+        拦住，不管是谁发起的 POST。
+        """
+        if os.name != "nt" or engine not in ("qwen", "gptsovits"):
+            return
+        if engine == "qwen":
+            # Windows 走本机 9883 常驻服务（QwenProvider 的 qwenUrl 分支），
+            # MLX 只是 macOS 的一种实现，不再按平台一刀切禁用这个渠道。
+            import socket
+            from urllib.parse import urlparse
+
+            raw = str(tts.get("qwenUrl") or "http://127.0.0.1:9883")
+            parsed = urlparse(raw if "://" in raw else "http://" + raw)
+            host = parsed.hostname or "127.0.0.1"
+            port = parsed.port or 9883
+            try:
+                with socket.create_connection((host, port), timeout=0.4):
+                    return
+            except OSError:
+                raise ValueError(
+                    "本机 %s:%d 的千问 3-TTS 常驻服务没启动；先把 9883 服务带起来再选，"
+                    "或临时用 edge-tts" % (host, port))
+        import socket
+        from urllib.parse import urlparse
+
+        raw = str(tts.get("gptsovitsUrl") or "http://127.0.0.1:9881")
+        parsed = urlparse(raw if "://" in raw else "http://" + raw)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 9881
+        try:
+            with socket.create_connection((host, port), timeout=0.4):
+                return
+        except OSError:
+            raise ValueError(
+                "本机 %s:%d 的 GPT-SoVITS 没启动。双击插件目录里的「启动GPT-SoVITS.bat」"
+                "（CPU 配置，权重加载约 1-3 分钟），或打开 http://127.0.0.1:9890/ 在「01 启停」"
+                "点全部启动；等 9881 起来后再选。临时用 edge-tts 也可以" % (host, port))
+
     def save_tts(self, patch: dict) -> dict:
         """说话渠道「保存即生效」：音色 / 语速 / 音量 / 远程 key。
 
@@ -282,14 +375,17 @@ class ServiceConfig:
         """
         allowed = ("engine", "voice", "edgeVoice", "rate", "volume", "breezeKey",
                    "breezeEndpoint", "breezeUrl", "breezeToken", "breezeVoice",
-                   "refAudio", "refText", "httpUrl", "httpToken", "qwenUrl", "gptsovitsUrl")
+                   "refAudio", "refText", "httpUrl", "httpToken", "qwenUrl", "gptsovitsUrl",
+                   "rvc", "rvcIndexRate")
         incoming: dict = {}
         for key in allowed:
             value = (patch or {}).get(key)
             if value is None:
                 continue
             text = str(value).strip()
-            if not text:
+            #: refText 允许显式清空：换了参考音频又没写新稿时，宁可留空，
+            #: 也不能让上一段音频的逐字稿继续跟着新音频（会串稿）。
+            if not text and key != "refText":
                 continue
             incoming[key] = text
         if "volume" in incoming:
@@ -297,9 +393,15 @@ class ServiceConfig:
                 incoming["volume"] = str(max(0.0, min(2.0, float(incoming["volume"]))))
             except ValueError:
                 incoming.pop("volume")
+        if "rvc" in incoming:
+            #: 复选框传布尔，统一存成小写字符串，避免 "False" 被当成真值
+            incoming["rvc"] = ("true" if str(incoming["rvc"]).strip().lower()
+                               in ("1", "true", "yes", "on") else "false")
         if not incoming:
             return dict(self.tts)
         if "engine" in incoming:
+            #: 先校验再改内存：不可用渠道不能留下半截状态
+            self._guard_engine(incoming["engine"], {**self.tts, **incoming})
             self.tts_engine = incoming["engine"]
         self.tts = dict(self.tts)
         self.tts.update(incoming)

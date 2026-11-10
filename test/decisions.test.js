@@ -94,13 +94,16 @@ test('Skill：缺名字 / 未知权限一律拒绝', () => {
 })
 
 function memoryFs(files = {}) {
+  // 假文件系统用 POSIX 风格当 key；Windows 上 path.join 会给出反斜杠，
+  // 统一归一成 / 才能让这套夹具在两个平台上都成立。
+  const key = (p) => String(p).replace(/\\/g, '/')
   const store = { ...files }
   return {
     store,
-    existsSync: (p) => Object.prototype.hasOwnProperty.call(store, p),
-    readFileSync: (p) => store[p] ?? '',
-    appendFileSync: (p, s) => { store[p] = (store[p] || '') + s },
-    writeFileSync: (p, s) => { store[p] = s },
+    existsSync: (p) => Object.prototype.hasOwnProperty.call(store, key(p)),
+    readFileSync: (p) => store[key(p)] ?? '',
+    appendFileSync: (p, s) => { const k = key(p); store[k] = (store[k] || '') + s },
+    writeFileSync: (p, s) => { store[key(p)] = s },
     mkdirSync: () => {},
     readdirSync: () => Object.keys(store),
   }

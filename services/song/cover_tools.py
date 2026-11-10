@@ -19,8 +19,18 @@
 **所有子进程都带 ``HF_HUB_OFFLINE=1`` 与 ``NO_PROXY=*``**：这台机器上 HuggingFace
 不通，demucs 新版默认去 HF 找权重，不带这个标志会卡到超时而不是回落到本地缓存。
 
-**失败一律抛**（由 ``cover_studio`` 接住转成「做不出来」）：这一步没有「降级成
-清唱」的说法——没有伴奏的原曲混音 = 观众听到一段卡拉的怪声，不如老实说做不了。
+**失败一律抛**（由 ``cover_studio`` 接住转成「做不出来」）：没有伴奏的原曲混音
+= 观众听到一段卡拉的怪声，不如老实说做不了。
+
+**Windows 快速 RVC 后端**：技能包那套装法没有 Applio 的 ``core.py``，也没有
+``demucs``，而是 ``rvc_convert.py`` + ``infer/vc/pipeline.py``（fcpe / CUDA /
+30s 分块）。这时：
+
+- 换声照常走常驻 ``rvc_driver.py``，它会自动认出 ``fast-rvc`` 后端；
+- 分离降级为「原曲直喂」——把原曲转成 16k 单声道人声 + 等长静音伴奏，
+  链路不中断、成品是纯换声人声（本机 ``--no-separate`` 实测可出声）。
+  装了 ``onnx`` + MDX 模型或 ``demucs`` 之后会自动走真分离。
+- ``demucs`` 的 ``-d mps`` 是 Apple 专用，Windows 一律换成 cpu / cuda。
 """
 
 from __future__ import annotations
@@ -47,7 +57,7 @@ ACCOMPANIMENT_GAIN = 0.85
 VOCAL_GAIN = 0.82
 LOUDNORM = "I=-16:TP=-2.0:LRA=11"
 SAMPLE_RATE = 44100
-MP3_BITRATE = "256k"
+MP3_BITRATE = "320k"
 #: 唱歌档与播报档要分开：播报要「像字正腔圆」，唱歌要「像那个角色的嗓子」。
 #: index_rate 太低只剩原唱的咬字、太高会叠伪影，0.55 是本机听感的一档起点。
 SING_INDEX_RATE = 0.55
@@ -75,6 +85,13 @@ TIGHTEN_MIN_OUTPUT_BYTES = 4 * 1024
 SEPARATE_TIMEOUT_S = 900.0
 CONVERT_TIMEOUT_S = 1800.0
 MIX_TIMEOUT_S = 300.0
+
+#: Windows 本机 MDX-Net 真分离（技能包那套）：ONNX 模型 + torch CUDA，
+#: 由 rvc-solo 自己的 venv 运行，绕开服务端 Python 没装 onnx/demucs 的限制。
+MDX_DIR = Path(os.environ.get("QQSOUL_MDX_DIR", "D:/tools/rvc-solo"))
+MDX_PYTHON = MDX_DIR / "venv/Scripts/python.exe"
+MDX_SCRIPT = MDX_DIR / "mdx_vocal.py"
+MDX_MODEL = MDX_DIR / "models/Kim_Vocal_2.onnx"
 
 #: 已知音色模型（这台机器上现成的）。用户在后台填了路径就以后台为准。
 # 音色模型不再猜本机目录：一律由 services.config 以 model/index 显式注入。
@@ -122,20 +139,73 @@ def resolve_voice(config) -> VoiceModel | None:
     return None
 
 
+def fast_rvc_dir() -> Path | None:
+    """本机 Windows 快速 RVC 引擎目录（技能包那套）；没装就返回 None。
+
+    认的是 ``rvc_convert.py`` + ``infer/vc/pipeline.py`` 这对文件，不是
+    macOS  Applio 的 ``core.py``，这样换机器、换盘符都不会误判。
+    """
+    if os.name != "nt":
+        return None
+    explicit = (os.environ.get("QQSOUL_FAST_RVC_DIR")
+                or os.environ.get("QQSOUL_APPLIO_DIR") or "").strip()
+    if explicit:
+        candidates = [Path(explicit)]
+    else:
+        candidates = [Path("D:/tools/rvc"), Path("C:/tools/rvc"),
+                      Path.home() / "tools" / "rvc", Path.home() / "tools" / "applio"]
+    for root in candidates:
+        root = root.expanduser()
+        if (root / "rvc_convert.py").is_file() and (root / "infer" / "vc" / "pipeline.py").is_file():
+            return root
+    return None
+
+
 def engine_paths(config) -> tuple[Path, Path]:
-    """``(Applio 目录, 它的 venv 解释器)``；配置留空就用默认位置。"""
+    """``(RVC 引擎目录, 它的 venv 解释器)``；配置留空就用本机实际装法。"""
     payload = config if isinstance(config, dict) else {}
-    engine = Path(str(payload.get("engine_dir") or DEFAULT_ENGINE_DIR)).expanduser()
-    default_py = engine / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    raw = str(payload.get("engine_dir") or "").strip()
+    if raw:
+        engine = Path(raw).expanduser()
+    else:
+        env_dir = os.environ.get("QQSOUL_APPLIO_DIR")
+        engine = (Path(env_dir).expanduser() if env_dir
+                  else fast_rvc_dir() or Path(DEFAULT_ENGINE_DIR).expanduser())
+    exe = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    #: 快速 RVC 用的是 venv312，Applio 用 .venv；两个都认。
+    default_py = None
+    for name in ("venv312", ".venv"):
+        candidate = engine / name / exe
+        if candidate.is_file():
+            default_py = candidate
+            break
+    default_py = default_py or engine / ".venv" / exe
     python = Path(str(payload.get("python") or "").strip() or default_py)
+    #: 服务进程自己的解释器（如 D:\Python312\python.exe）没装 torch，拿它去跑
+    #: RVC 只会得到「No module named torch」或「can't open file core.py」。
+    #: 本机快速 RVC 一律纠正回引擎自己的 venv312，别让上游传错污染整条链。
+    fast = fast_rvc_dir()
+    if fast is not None and engine.resolve() == fast.resolve():
+        venv_py = engine / "venv312" / exe
+        if venv_py.is_file() and python.expanduser().resolve() != venv_py.resolve():
+            python = venv_py
     return engine, python.expanduser()
 
 
 def toolchain_problem(config) -> str:
-    """整条链能不能跑；空串 = 能。**只查文件，不启动进程、不联网**。"""
+    """整条链能不能跑；空串 = 能。**只查文件，不启动进程、不联网**。
+
+    Windows 快速 RVC 没有 ``core.py``，不能因为这一个文件就判定整链废了。
+    """
     engine, python = engine_paths(config)
-    if not (engine / "core.py").is_file():
-        return f"换声引擎找不到：{engine / 'core.py'}"
+    core = engine / "core.py"
+    fast = fast_rvc_dir()
+    fast_here = bool(fast) and not core.is_file() and (
+        fast is not None and fast.resolve() == engine.resolve()
+    )
+    if not core.is_file() and not fast_here:
+        return (f"换声引擎找不到：{core}（Applio）或 "
+                f"{engine / 'rvc_convert.py'}（本机快速 RVC）")
     if not python.is_file():
         return f"换声引擎的解释器找不到：{python}"
     if resolve_voice(config) is None:
@@ -151,7 +221,16 @@ def cover_toolchain_ready(config) -> bool:
 
 
 def ffmpeg_exe() -> str:
-    """ffmpeg 可执行文件：优先 imageio 自带的那份，其次 PATH / Homebrew。"""
+    """ffmpeg 可执行文件：配置注入 > imageio > PATH > Windows 常见装法。
+
+    面板里填的 ``paths.ffmpeg`` 由 ``ServiceContext`` 通过 ``QQSOUL_FFMPEG``
+    传下来——翻唱工具层跑在独立子进程里，拿不到 cfg 对象。
+    """
+    import glob
+
+    explicit = os.environ.get("QQSOUL_FFMPEG", "").strip()
+    if explicit and Path(explicit).is_file():
+        return explicit
     try:
         import imageio_ffmpeg
 
@@ -164,11 +243,26 @@ def ffmpeg_exe() -> str:
         found = shutil.which(candidate) if os.sep not in candidate else candidate
         if found and Path(found).is_file():
             return found
+    if os.name == "nt":
+        for pattern in ("D:/tools/ffmpeg/*/bin/ffmpeg.exe", "C:/tools/ffmpeg/*/bin/ffmpeg.exe",
+                        "D:/tools/ffmpeg/bin/ffmpeg.exe", "C:/tools/ffmpeg/bin/ffmpeg.exe"):
+            hits = sorted(glob.glob(pattern))
+            if hits:
+                return hits[0]
     return ""
 
 
 def ffprobe_exe() -> str:
-    for candidate in ("ffprobe", "/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe"):
+    #: Windows 上 ffmpeg 常是「填进配置的完整路径」，ffprobe 就在同一个 bin 里，
+    #: 还带 .exe 后缀；先按这个找，比只查 PATH / Homebrew 靠谱。
+    ffmpeg = ffmpeg_exe()
+    if ffmpeg:
+        sibling = Path(ffmpeg).with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
+        if sibling.is_file():
+            return str(sibling)
+    candidates = ("ffprobe", "ffprobe.exe") if os.name == "nt" else (
+        "ffprobe", "/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe")
+    for candidate in candidates:
         found = shutil.which(candidate) if os.sep not in candidate else candidate
         if found and Path(found).is_file():
             return found
@@ -237,6 +331,96 @@ def demucs_progress(line: str) -> float | None:
     return fractions[-1] if fractions else None
 
 
+def _demucs_available(runner: Path) -> bool:
+    """引擎 venv 里到底装没装 demucs；没装别白等 15 分钟再炸。"""
+    if not runner.is_file():
+        return False
+    try:
+        probe = subprocess.run([str(runner), "-c", "import demucs"],
+                               capture_output=True, timeout=25, env=_env())
+        return probe.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _separate_direct(src: str | Path, work_dir: str | Path,
+                     *, on_progress: Callable[[float], None] | None) -> tuple[Path, Path]:
+    """Windows 快速 RVC 的降级分离：原曲转 16k 人声 + 等长静音伴奏。
+
+    本机快速方案 ``rvc_convert.py --no-separate`` 实测能出声；没装 onnx / demucs
+    时不假装能分离，但也不让整条点歌链路断在这一步。等装了 MDX / demucs，
+    ``separate()`` 会自动回到真分离。
+    """
+    import wave
+
+    exe = ffmpeg_exe()
+    if not exe:
+        raise CoverToolError("找不到 ffmpeg，没法把原曲转成人声 wav")
+    out = Path(work_dir) / "fast-rvc"
+    out.mkdir(parents=True, exist_ok=True)
+    vocals = out / "vocals.wav"
+    accompaniment = out / "no_vocals.wav"
+
+    if on_progress:
+        on_progress(0.15)
+    _run([exe, "-y", "-v", "error", "-i", str(src), "-vn", "-ac", "1",
+          "-ar", "16000", "-c:a", "pcm_s16le", str(vocals)],
+         timeout=300, what="原曲转 16k 人声")
+    if not vocals.is_file() or vocals.stat().st_size < 1024:
+        raise CoverToolError("原曲转人声没有产出文件")
+
+    with wave.open(str(vocals), "rb") as reader:
+        seconds = reader.getnframes() / float(reader.getframerate() or 16000)
+    seconds = max(0.1, seconds)
+    if on_progress:
+        on_progress(0.6)
+    _run([exe, "-y", "-v", "error", "-f", "lavfi",
+          "-i", "anullsrc=r=44100:cl=stereo", "-t", f"{seconds:.3f}",
+          "-c:a", "pcm_s16le", str(accompaniment)],
+         timeout=120, what="生成等长静音伴奏")
+    if not accompaniment.is_file():
+        raise CoverToolError("静音伴奏没有产出文件")
+    if on_progress:
+        on_progress(1.0)
+    log.info("[做歌] Windows 快速 RVC：本机没有 onnx/demucs，分离降级为原曲直喂")
+    return vocals, accompaniment
+
+
+def _mdx_available() -> bool:
+    return (os.name == "nt" and MDX_PYTHON.is_file()
+            and MDX_SCRIPT.is_file() and MDX_MODEL.is_file())
+
+
+def _separate_mdx(src: str | Path, work_dir: str | Path, *,
+                  on_progress: Callable[[float], None] | None = None,
+                  timeout: float = SEPARATE_TIMEOUT_S) -> tuple[Path, Path]:
+    """MDX-Net 真分离：干净干声（16k mono）+ 严格互补伴奏（44.1k stereo）。
+
+    以前没 demucs 就降级成「整首混音直喂 RVC」：乐器被当成音高很乱的嗓音
+    一起重绘，成品又杂又糊。本机 ``rvc-solo/venv`` 里有 torch + onnx2torch +
+    CUDA，模型也在，实测 15 秒片段约 9 秒（含模型加载 0.5s / 分离 1.4s /
+    净化 0.6s）。dry_passes=2 会把第一次的干声再过一次模型去掉夹带器乐。
+    """
+    work = Path(work_dir) / "mdx"
+    work.mkdir(parents=True, exist_ok=True)
+    vocals = work / "vocals.wav"
+    inst = work / "no_vocals.wav"
+    if on_progress:
+        on_progress(0.08)
+    _run([str(MDX_PYTHON), "-u", str(MDX_SCRIPT),
+          "--input", str(src), "--model", str(MDX_MODEL),
+          "--dry-passes", "2",
+          "--out-vocals", str(vocals), "--out-inst", str(inst)],
+         timeout=timeout, cwd=str(MDX_DIR), what="MDX 人声分离",
+         on_tick=(lambda s: on_progress(min(0.9, 0.08 + s / 180.0))) if on_progress else None)
+    if not vocals.is_file() or vocals.stat().st_size < 1024 or not inst.is_file():
+        raise CoverToolError("MDX 分离没有产出人声 / 伴奏")
+    if on_progress:
+        on_progress(1.0)
+    log.info("[做歌] MDX-Net 真分离完成（干净干声 + 互补伴奏）")
+    return vocals, inst
+
+
 def separate(
     src: str | Path,
     work_dir: str | Path,
@@ -257,6 +441,19 @@ def separate(
     runner = Path(python).expanduser() if python else engine_python
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
+
+    #: 只要本机 MDX-Net 可用就**无条件**走真分离。整首混音直喂 RVC 会把乐器
+    #: 当嗓音重绘，是「杂音多、发糊」的根因，不能因 demucs 探测结果而降级。
+    if _mdx_available():
+        try:
+            return _separate_mdx(src, work, on_progress=on_progress, timeout=timeout)
+        except (CoverToolError, OSError, subprocess.SubprocessError) as exc:
+            log.warning("MDX 分离失败（%s），回落", exc)
+
+    fast = fast_rvc_dir()
+    if os.name == "nt" and fast is not None and not _demucs_available(runner):
+        return _separate_direct(src, work, on_progress=on_progress)
+
     stem = Path(src).stem
     shown = [0.0]
 
@@ -270,9 +467,14 @@ def separate(
         shown[0] = max(shown[0], min(1.0, ratio))
         on_progress(shown[0])
 
+    #: mps 是 Apple 专用；Windows 上默认 cpu，有 CUDA 可设 QQSOUL_DEMUCS_DEVICE=cuda
+    import sys as _sys
+
+    device = os.environ.get("QQSOUL_DEMUCS_DEVICE") or (
+        "mps" if _sys.platform == "darwin" else "cpu")
     _run(
         [str(runner), "-m", "demucs", "-n", "htdemucs", "--two-stems=vocals",
-         "-d", "mps", "-o", str(work), str(src)],
+         "-d", device, "-o", str(work), str(src)],
         timeout=timeout,
         cwd=engine,
         what="人声分离",
@@ -380,21 +582,54 @@ def _convert_once(
     timeout: float,
     on_tick: Callable[[float], None] | None,
 ) -> Path:
-    """一次性 ``core.py infer``：常驻引擎不可用时的兜底，参数与改之前逐字一致。"""
-    command = [
-        str(python), "core.py", "infer",
-        "--input-path", str(src),
-        "--output-path", str(target),
-        "--pth-path", str(Path(model.pth).expanduser()),
-        "--index-path", str(Path(model.index).expanduser()),
-        "--pitch", str(int(pitch)),
-        "--index-rate", str(float(index_rate)),
-        "--protect", str(float(protect)),
-        "--f0-method", "rmvpe",
-        "--embedder-model", "contentvec",
-        "--export-format", "WAV",
-    ]
-    _run(command, timeout=timeout, cwd=engine_dir, what="换声", on_tick=on_tick)
+    """一次性换声兜底：按后端选脚本。
+
+    2026-11-10 修复：本机是技能包的**快速 RVC**（``rvc_convert.py`` +
+    ``infer/vc/pipeline.py``），根本没有 Applio 的 ``core.py``。旧实现无条件拼
+    ``python core.py infer``，一旦常驻 worker 没起来就直接报
+    ``can't open file 'D:\\tools\\rvc\\core.py'``，做歌必失败。现在：
+
+    - 有 ``core.py`` → 原 Applio 命令，逐字不变；
+    - 有 ``rvc_convert.py`` → 技能包快速 CLI，输入已是分离好的人声，
+      用 ``--no-separate --acapella`` 只出纯人声 WAV，混音仍交给上层。
+    """
+    engine = Path(engine_dir)
+    py = Path(python)
+    fast = fast_rvc_dir()
+    if fast is not None and engine.resolve() == fast.resolve():
+        # 兜底也必须用引擎 venv，不能拿服务进程的系统 Python 去跑 torch。
+        engine, py = engine_paths({"engine_dir": str(engine), "python": ""})
+    if (engine / "core.py").is_file():
+        command = [
+            str(py), "core.py", "infer",
+            "--input-path", str(src),
+            "--output-path", str(target),
+            "--pth-path", str(Path(model.pth).expanduser()),
+            "--index-path", str(Path(model.index).expanduser()),
+            "--pitch", str(int(pitch)),
+            "--index-rate", str(float(index_rate)),
+            "--protect", str(float(protect)),
+            "--f0-method", "rmvpe",
+            "--embedder-model", "contentvec",
+            "--export-format", "WAV",
+        ]
+    elif (engine / "rvc_convert.py").is_file() and (engine / "infer" / "vc" / "pipeline.py").is_file():
+        command = [
+            str(py), "rvc_convert.py",
+            "--input", str(src),
+            "--output", str(target),
+            "--model", str(Path(model.pth).expanduser()),
+            "--index", str(Path(model.index).expanduser()),
+            "--pitch", str(int(pitch)),
+            "--index-rate", str(float(index_rate)),
+            "--protect", str(float(protect)),
+            "--no-separate", "--acapella",
+        ]
+    else:
+        raise CoverToolError(
+            "换声引擎找不到：%s（Applio core.py）或 %s（快速 RVC rvc_convert.py）"
+            % (engine / "core.py", engine / "rvc_convert.py"))
+    _run(command, timeout=timeout, cwd=engine, what="换声", on_tick=on_tick)
     if not target.is_file() or target.stat().st_size <= 0:
         raise CoverToolError("换声没有产出音频")
     return target

@@ -170,7 +170,7 @@ def test_状态与路径把模块目录都给出去(srv):
     base, cfg = srv
     code, body = _call(base, "GET", "/status")
     assert body["dirs"]["audio"].endswith("audio")
-    assert body["dirs"]["rvc"].endswith("models/rvc")
+    assert str(body["dirs"]["rvc"]).replace("\\", "/").endswith("models/rvc")
     code, body = _call(base, "GET", "/paths")
     labels = [i["label"] for i in body["items"]]
     assert "试听目录" in labels and "翻唱成品" in labels and "QQ 语音条（Downloads）" in labels

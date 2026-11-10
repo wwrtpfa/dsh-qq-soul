@@ -1029,7 +1029,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           toast(r.ok ? '音频服务在线' + (r.version ? ' v' + r.version : '') : (r.message || '连不上音频服务'), r.ok ? 'ok' : 'err')
         } catch (e) { setHealth({ ok: false, message: e.message }); toast(e.message, 'err') } finally { setBusy(false) }
       }
-      // 一键拉起：macOS 踢已经装好的 launchd job，其它平台直接 spawn；Applio 由服务自己管理。
+      // 一键拉起：/service/start 由翻唱模块注册，内部走跨平台的 service launcher
+      // （Windows 用 python，macOS 优先 launchd，再退回 python3）。
       const boot = async () => {
         setBusy(true)
         try {
@@ -1039,7 +1040,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           return r
         } catch (e) { toast('启动失败：' + e.message, 'err'); return { ok: false, message: e.message } } finally { setBusy(false) }
       }
-      // 运维大屏由 service 托管：没起来时页面根本打不开，所以先拉服务再跳。
+      // 运维大屏由 service 托管：没起来时页面打不开，所以先拉服务再跳。
       const openPanel = async (hash) => {
         try {
           const h = await get('/service/health')
@@ -1062,7 +1063,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           health ? h('span', { className: 'ab-small', style: { color: health.ok ? 'var(--ab-ok)' : 'var(--ab-warn)' } },
             health.ok ? '在线 · 端口 ' + (health.port || '') + (health.version ? ' · v' + health.version : '') : (health.message || '连不上')) : null),
         h('div', { style: { marginTop: 10 } },
-          h('div', { className: 'ab-muted ab-small' }, '点「启动服务」就行（Applio 由服务自己带起来，不用单独开）。自动启动失败时，再在终端里跑这一行：'),
+          h('div', { className: 'ab-muted ab-small' }, '点「启动服务」就会自动拉起（Windows 用 python，macOS / Linux 用 python3 / launchd）。没起来时，再在终端里跑这一行：'),
           h('div', { className: 'ab-flex', style: { marginTop: 4 } },
             h('code', { style: { flex: '1 1 320px', fontSize: 11.5, wordBreak: 'break-all' } }, cmd),
             h(Btn, { small: true, onClick: () => copy(cmd, toast, '命令复制好了') }, '复制'))),
@@ -1267,8 +1268,10 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const act = (p) => async () => { const r = await post(p); toast(r.message || (r.ok ? '好了' : '没成功')); reload() }
       const login = st.onebot.login
       const external = draft.gateway === 'onebot'
-      // 本机栈状态（QQ / NapCat / 桥）：service 转给 qq-stack.sh，桌面只负责显示和点按钮
+      // 本机栈状态（QQ / NapCat）：Windows 由 service 转给 NapCat 启动脚本，macOS / Linux 转给 qq-stack.sh
       const [stack, setStack] = useState(null)
+      const stackWin = (stack && stack.platform === 'win') ||
+        (typeof navigator !== 'undefined' && /Win/i.test(String(navigator.platform || '')))
       const panelUrl = (st.service && st.service.url ? st.service.url : 'http://127.0.0.1:9876') + '/panel'
       const loadStack = async () => { const r = await get('/song/stack'); setStack(r.ok ? r : { ok: false, message: r.message }) }
       useEffect(() => { loadStack() }, [])
@@ -1332,11 +1335,16 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                 toast(r.message, r.ok ? 'ok' : 'err')
                 if (r.ok) { setMoveTo(''); reload() }
               } }, '搬过去')))),
-        h(Card, { title: '本机服务（QQ / 桥 / 语音）', desc: '没有谁必须等谁：QQ + 桥负责收消息；语音服务按渠道二选一——千问 / Breeze 只起 9883，GPT-SoVITS 只起 9881 + 9882。已经跑着的不会被重复启动，停的时候 QQ 优雅退出、登录不掉。' },
+        h(Card, { title: '本机服务（QQ / 网关 / 语音）', desc: 'Windows 点「启动 QQ（NapCat）」会用 NapCat 启动脚本把带网关的 QQ 拉起来；macOS / Linux 用「按当前引擎启动」跑本机脚本。停止请直接在 QQ 里退出，插件不会代你关 QQ，避免连大号一起关掉。' },
           h('div', { className: 'ab-flex', style: { flexWrap: 'wrap' } },
-            h(Btn, { small: true, kind: 'primary', onClick: () => stackAct('start') }, '按当前引擎启动'),
-            h(Btn, { small: true, onClick: () => stackAct('restart-bridge') }, '只重启桥'),
-            h(Btn, { small: true, onClick: () => stackAct('stop') }, '全部停止'),
+            h(Btn, { small: true, kind: 'primary', title: '跨平台：Windows 调 NapCat 启动脚本，macOS 用 LaunchServices', onClick: async () => {
+              const r = await post('/setup/start-qq')
+              toast(r.message || (r.ok ? '已发起启动' : '没成功'), r.ok ? 'ok' : 'err')
+              setTimeout(loadStack, 2000)
+            } }, '启动 QQ（NapCat）'),
+            h(Btn, { small: true, disabled: stackWin || !stack || !stack.ok, title: stackWin ? 'Windows 请用左边的「启动 QQ（NapCat）」' : '', onClick: () => stackAct('start') }, '按当前引擎启动'),
+            h(Btn, { small: true, disabled: stackWin || !stack || !stack.ok, title: stackWin ? 'Windows 不代你重启网关' : '', onClick: () => stackAct('restart-bridge') }, '只重启桥'),
+            h(Btn, { small: true, disabled: stackWin || !stack || !stack.ok, title: stackWin ? '请在 QQ 里手动退出' : '', onClick: () => stackAct('stop') }, '全部停止'),
             h(Btn, { small: true, onClick: loadStack }, '刷新')),
           stack && stack.rows ? h('div', { style: { marginTop: 10 } }, stack.rows.map((r) => h('div', { key: r.id, className: 'ab-kv', title: r.desc || '' },
             h('span', null, h('span', { className: 'ab-flex' }, h('i', { className: cx('ab-dot', r.on ? 'ok' : 'err') }), r.name + ' :' + r.port + (r.optional ? '（按需）' : ''))),
@@ -2011,28 +2019,42 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const switchEngine = async (value) => {
         setBusy(true)
         try {
+          // 服务没连上时别把下拉锁死：先把服务拉起来，再切渠道（旧版这里直接 disabled，点了没反应）
+          if (!(r && r.ok)) {
+            const started = await post('/setup/start-service')
+            if (!started || !started.ok) {
+              toast((started && started.message) || '音频服务没起来，渠道没切成', 'err')
+              return
+            }
+            await reload()
+          }
           const out = await post('/song/tts', { engine: value })
           toast(out.message || (out.ok ? '渠道已切换，下一句生效' : '没切成'), out.ok ? 'ok' : 'err')
           if (out.ok) reload()
         } finally { setBusy(false) }
       }
       return h(Card, { title: '声音（音频服务统一管）', desc: '桌面和网页共用这一份：频道、音色、语速、音量都存音频服务（127.0.0.1:9876）。这里只切渠道，细节去大屏调，改完 QQ 下一句就生效。' },
-        h(Row, { label: '说话渠道', hint: r === null ? '正在读…' : (r.ok ? '当前音色 ' + (voice || '—') : (r.message || '音频服务没开')) },
+        h(Row, { label: '说话渠道', hint: r === null ? '正在读…' : (r.ok ? '当前音色 ' + (voice || '—') : '音频服务没连上：选渠道会自动帮你启动，也可以点「启动音频服务」') },
           h(Select, {
-            value: eng || 'edge', width: 240, disabled: busy || !(r && r.ok),
+            value: eng || 'edge', width: 240, disabled: busy,
             onChange: switchEngine,
             options: [
-              { value: 'edge', label: '微软 edge-tts' },
-              { value: 'qwen', label: '千问 3 本地（9883）' },
-              { value: 'breeze', label: 'Breeze 远程' },
-              { value: 'gptsovits', label: '本地 GPT-SoVITS（9881）' },
+              { value: 'edge', label: '微软 edge-tts（Windows 默认，可直接出声）' },
+              { value: 'qwen', label: '千问 3 本地（本机 9883 常驻服务，Windows 可用）' },
+              { value: 'breeze', label: 'Breeze 远程（要填 Key）' },
+              { value: 'gptsovits', label: '本地 GPT-SoVITS（9881，用 9890 控制台或启动脚本带起）' },
               { value: 'http', label: '其他 HTTP 接口' },
             ],
           })),
         h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', marginTop: 10 } },
+          !(r && r.ok) ? h(Btn, { small: true, disabled: busy, onClick: async () => {
+            const out = await post('/setup/start-service')
+            toast(out.message || (out.ok ? '已启动' : '没起来'), out.ok ? 'ok' : 'err')
+            reload()
+          } }, '启动音频服务') : null,
           h(Btn, { small: true, kind: 'primary', onClick: () => window.open(panel, '_blank', 'noopener') }, '打开大屏调音色 / 语速'),
           h(Btn, { small: true, onClick: async () => { try { await navigator.clipboard.writeText(panel); toast('地址复制好了') } catch (e) { toast(panel) } } }, '复制地址')),
-        h('div', { className: 'ab-muted ab-small', style: { marginTop: 6 } }, r && r.ok ? '大屏里还能试听、换 RVC 音色、看合成日志；这里选完渠道会自动同步到本机启动脚本。' : '音频服务没开时，下面「本机备用渠道」照常可用。'))
+        h('div', { className: 'ab-muted ab-small', style: { marginTop: 6 } }, r && r.ok ? '大屏里还能试听、换 RVC 音色、看合成日志。说话渠道统一由 9876 音频服务托管，外部控制台容易抢端口、误关 QQ，入口已移除。' : '音频服务没开时，下面「本机备用渠道」照常可用；选上面的渠道会自动把服务拉起来。'))
     }
 
     function Voice({ st, draft, setDraft, toast, reload }) {
@@ -2073,7 +2095,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             { value: 'auto', label: '自动', desc: 'edge-tts 优先，不行用 Windows 语音' },
             { value: 'edge', label: '微软 edge-tts', desc: st.voice.edgeInstalled ? '在线，音色自然（已装好）' : '在线，音色自然（还没装）' },
             { value: 'cosyvoice', label: '本地 CosyVoice', desc: '自己部署的 CosyVoice 服务，可克隆音色' },
-            { value: 'gptsovits', label: '本地 GPT-SoVITS', desc: 'GPT-SoVITS api_v2，用参考音频定音色' },
+            { value: 'gptsovits', label: '本地 GPT-SoVITS', desc: '需先启动 api_v2 的 9881；没启动会合成失败' },
             { value: 'http', label: '其他 HTTP 接口', desc: '任意返回音频的地址' },
             { value: 'windows', label: 'Windows 自带', desc: '离线可用，机械感重一些' },
           ])),
@@ -3730,13 +3752,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         h(Btn, { small: true, kind: 'ghost', onClick: async () => { await post('/memory/delete', { id: m.id }); onChanged() } }, '忘掉'))
     }
 
-    /** 导入音色：把 .zip / .rar / .pth / .index 拖进来或点选，自动识别；下面列出已有的音色，可以删。 */
+    /** 导入音色：把 .zip / .pth / .index 拖进来或点选，自动识别；下面列出已有的音色，可以删。 */
     function VoiceImport({ s, toast, onChange }) {
       const [over, setOver] = useState(false)
       const [busy, setBusy] = useState('')
       const upload = async (files) => {
         for (const file of [...files]) {
-          if (!/\.(zip|rar|pth|index|ckpt)$/i.test(file.name)) { toast('「' + file.name + '」不是 .zip / .rar / .pth / .index / .ckpt', 'err'); continue }
+          if (!/\.(zip|pth|index|ckpt)$/i.test(file.name)) { toast('「' + file.name + '」不是 .zip / .pth / .index / .ckpt', 'err'); continue }
           setBusy('正在导入「' + file.name + '」（' + Math.round(file.size / 1024 / 1024) + 'MB）…')
           const r = await fetch(API + '/song/import?name=' + encodeURIComponent(file.name), { method: 'POST', body: file })
             .then((x) => x.json()).catch((e) => ({ ok: false, message: '上传失败：' + e.message }))
@@ -3749,17 +3771,17 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         const inp = document.createElement('input')
         inp.type = 'file'
         inp.multiple = true
-        inp.accept = '.zip,.rar,.pth,.index,.ckpt'
+        inp.accept = '.zip,.pth,.index,.ckpt'
         inp.onchange = () => inp.files && upload(inp.files)
         inp.click()
       }
-      return h(Card, { title: '音色模型', desc: '插件不自带音色。把你有权使用的 RVC 模型导进来：.pth（可以带 .index），或者装着它们的 zip / rar（模型站常发 rar，直接拖进来，不用自己解压）。只存在本机。自己训练的是 so-vits-svc 之类别的模型、或者想用自己的推理参数？去「本地接口」页接「翻唱换声」。' },
+      return h(Card, { title: '音色模型', desc: '插件不自带音色。把你有权使用的 RVC 模型导进来：.pth（可以带 .index），或者装着它们的 zip。只存在本机。自己训练的是 so-vits-svc 之类别的模型、或者想用自己的推理参数？去「本地接口」页接「翻唱换声」。' },
         h('div', {
           className: 'ab-drop' + (over ? ' over' : ''), role: 'button', tabIndex: 0,
           onClick: pick, onKeyDown: (e) => (e.key === 'Enter' || e.key === ' ') && pick(),
           onDragOver: (e) => { e.preventDefault(); setOver(true) }, onDragLeave: () => setOver(false),
           onDrop: (e) => { e.preventDefault(); setOver(false); upload(e.dataTransfer.files) },
-        }, busy ? h('span', null, h('i', { className: 'ab-spin' }), ' ' + busy) : h('span', null, '把 .zip / .rar / .pth / .index 拖到这里，或者点击选择文件')),
+        }, busy ? h('span', null, h('i', { className: 'ab-spin' }), ' ' + busy) : h('span', null, '把 .zip / .pth / .index 拖到这里，或者点击选择文件')),
         // 分离模型自动下载不动时：给几个地址，用浏览器或下载工具下好，拖进上面这个框
         s.parts && !s.parts.separatorModel && (s.separatorLinks || []).length ? h('div', { className: 'ab-note', style: { marginTop: 10 } },
           h('b', null, '人声分离模型下不动？'), ' 安装时会自动试好几个源（断了能接着下，太慢会换源）。实在不行，用浏览器或下载工具下好下面任一个（约 640 MB，是同一个文件），拖进上面这个框就行，插件会核对文件对不对：',
@@ -3870,7 +3892,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         const inp = document.createElement('input')
         inp.type = 'file'
         inp.multiple = true
-        inp.accept = '.zip,.rar,.pth,.index'
+        inp.accept = '.zip,.pth,.index'
         inp.onchange = () => inp.files && upload(inp.files)
         inp.click()
       }
@@ -3932,7 +3954,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h(Btn, { small: true, kind: 'ghost', onClick: () => choose(v.name) }, cur === v.name ? '已选' : '用这个'),
             h(Btn, { small: true, kind: 'ghost', onClick: () => setRen({ path: v.pth, name: v.name }) }, '改名'),
             h(Btn, { small: true, kind: 'ghost', onClick: () => openDir(v.dir, toast) }, '打开')))))
-          : h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } }, '还没有音色：把 .pth（可带 .index）或装着它们的 zip / rar 拖进来。'))
+          : h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } }, '还没有音色：把 .pth（可带 .index）或装着它们的 zip 拖进来。'))
     }
 
     /** 本机已有资源：扫描只读，导入是复制。 */
@@ -4325,7 +4347,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               try { const r = await get('/song/service/panel'); window.open(r.url, '_blank', 'noopener') }
               catch (e) { toast('打不开运维大屏：' + e.message, 'err') }
             } }, '打开运维大屏'),
-            h('span', { className: 'ab-muted ab-small' }, 'service 127.0.0.1:9876 · 先跑 python3 -m services --serve'))),
+            h('span', { className: 'ab-muted ab-small' }, 'service 127.0.0.1:9876 · 先起音频服务（Windows 用 python，其他平台用 python3）'))),
         h(Card, { title: '翻唱', right: f.sw('song.enabled'), desc: '让ta用自己的声音唱歌：点歌 → 按「音乐源」顺序下载原曲 → 分离人声和伴奏 → 用 RVC 换成ta的声音 → 混音 → 发语音条。主人在 QQ 里说「唱首歌」，或者发 /sing 歌名 都行。' },
           h('div', { className: cx('ab-note', s.ready ? '' : 'warn') }, s.message),
           h('div', { className: 'ab-checks', style: { marginTop: 12 } },
@@ -5681,7 +5703,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       return h('div', null,
         h('div', { className: 'ab-note', style: { margin: '8px 0' } }, '直接读本机 Codex 的 config.toml（model_provider + base_url + experimental_bearer_token）；没有就依次用 OPENAI_API_KEY、auth.json。密钥只在发请求时读取，不写进 QQ 配置、不显示、不记录日志。'),
         h(Row, { label: 'Codex 目录', hint: '留空用 ~/.codex（或环境变量 CODEX_HOME）' },
-          f.text('imageGen.apiImage.codexHome', { size: 'wide', placeholder: '例如 /Users/你/.codex' }),
+          f.text('imageGen.apiImage.codexHome', { size: 'wide', placeholder: '例如 C:\\Users\\你\\.codex（Windows）或 ~/.codex（macOS / Linux）' }),
           h(Btn, { small: true, kind: 'ghost', onClick: refresh }, '重新检测')),
         h(Row, { label: '检测结果' },
           h('span', { className: 'ab-small', style: { wordBreak: 'break-all' } },
@@ -5931,12 +5953,16 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h('div', { className: 'ab-spacer' }),
           h(Btn, { small: true, kind: 'ghost', onClick: () => { setD(null); load() } }, '重新检测'),
           d.canAutoFix
-            ? h(Btn, { small: true, kind: 'primary', disabled: Boolean(busy), onClick: () => run('fix') }, busy === 'fix' ? '正在修…' : '一键修复并启动')
-            : h(Btn, { small: true, disabled: Boolean(busy), onClick: () => run('qq') }, busy === 'qq' ? '正在启动…' : '启动 QQ')),
+            ? h(Btn, { small: true, kind: 'primary', disabled: Boolean(busy), title: '改好 NapCat 方向，再启动带 NapCat 的 QQ（Windows / macOS 都支持）', onClick: () => run('fix') }, busy === 'fix' ? '正在修…' : '一键修复并启动')
+            : h(Btn, { small: true, disabled: Boolean(busy), title: d.platform === 'win' ? '用 NapCat 启动脚本把 QQ 带起来（Windows 兼容）' : '启动带 NapCat 的 QQ', onClick: () => run('qq') }, busy === 'qq' ? '正在启动…' : '启动 QQ')),
         h('div', { className: 'ab-kv' }, d.rows.map((r) => h(Fragment, { key: r.id },
           h('span', null, h('span', { className: 'ab-flex' }, h('i', { className: cx('ab-dot', r.ok === null ? 'warn' : r.ok ? 'ok' : 'err') }), r.label)),
           h('span', { className: 'ab-small' }, r.detail,
             r.ok === false && r.fix ? h('div', { className: 'ab-muted ab-small' }, '→ ' + r.fix) : null)))),
+        d.platform === 'win' && d.launcher ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 6 } },
+          d.launcher.ok
+            ? 'Windows「启动 QQ」会调用：' + d.launcher.path + (d.launcher.note ? ' · ' + d.launcher.note : '')
+            : d.launcher.message) : null,
         d.port ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 6 } }, '端口 ' + d.port + ' · 地址 ' + (d.wsUrl || '（未填）')) : null)
     }
 

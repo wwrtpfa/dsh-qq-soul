@@ -11,4 +11,5 @@ __pycache__/
 services/**/__pycache__/
 jobs/
 audio/
-dist/
+# 只忽略根目录的打包产物；src/vendor/unrar/dist/ 是随仓库分发的运行时，必须入库
+/dist/

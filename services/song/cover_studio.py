@@ -96,6 +96,9 @@ DOWNLOAD_ALTERNATIVES = 20
 #: 模型、推理参数一点关系都没有，重跑一次就是白烧 50–70 s。戳里记原曲指纹，
 #: 换过版本（会员版拿不到改下另一版）会自动判失效，绝不复用错的人声。
 SEPARATED_STAMP = ".separated.json"
+#: 分离方式升级后，旧的分离产物一律作废。旧戳没有 version 字段，读到就重分离，
+#: 避免继续复用「整首混音直喂 RVC + 静音伴奏」那版脏干声（实测伴奏 -91 dB）。
+SEPARATED_STAMP_VERSION = "mdx2"
 
 
 def convert_eta(duration: float, separate_elapsed: float) -> float:
@@ -132,7 +135,11 @@ def original_fingerprint(path: str | Path) -> str:
 
 
 def read_separated_stamp(work: Path, fingerprint: str) -> dict | None:
-    """上一次分离留下的产物还能不能用；不能用一律返回 ``None``。"""
+    """分离产物**不复用**：MDX 真分离只十几秒，而历史缓存可能是
+    「整曲直喂 RVC + 静音伴奏」的脏干声（实测伴奏 -91 dB），复用会直接毁音质。
+    等以后需要缓存，再按 SEPARATED_STAMP_VERSION + 实际分离方式做精确校验。
+    """
+    return None
     if not fingerprint:
         return None
     try:
@@ -141,11 +148,17 @@ def read_separated_stamp(work: Path, fingerprint: str) -> dict | None:
         return None
     if not isinstance(payload, dict) or payload.get("fingerprint") != fingerprint:
         return None
+    if payload.get("version") != SEPARATED_STAMP_VERSION:
+        return None
     vocals = Path(str(payload.get("vocals") or ""))
     accompaniment = Path(str(payload.get("accompaniment") or ""))
     if not (vocals.is_file() and accompaniment.is_file()):
         return None
     if vocals.stat().st_size <= 0 or accompaniment.stat().st_size <= 0:
+        return None
+    #: 旧版降级产物（fast-rvc/）是「整首混音直喂 RVC」，不是真干声：
+    #: 复用它等于继续让 RVC 重绘乐器，成品又杂又糊。启用 MDX 后一律重分离。
+    if "fast-rvc" in str(vocals).replace("\\", "/"):
         return None
     return payload
 
@@ -162,6 +175,7 @@ def write_separated_stamp(
         return
     payload = {
         "fingerprint": fingerprint,
+        "version": SEPARATED_STAMP_VERSION,
         "vocals": str(vocals),
         "accompaniment": str(accompaniment),
         "elapsed": round(max(0.0, float(elapsed)), 3),
@@ -386,7 +400,9 @@ class CoverRenderer:
         voice_name = self._voice_name()
         #: v2：起唱点改为「连续成立」+ 清唱换声前压底噪，旧成品开头/间隙的滋滋声
         #: 不再复用；分离戳仍按原策略指纹走，不会因此重跑 demucs。
-        cache_tag = (target.cache_tag or "") + "|gate2"
+        #: |mdx2：启用 MDX 真分离后，旧成品（整曲直喂 RVC）全部作废，
+        #: 再点同一首歌会重新分离 + 换声 + 混音，而不是放回音质差的旧文件。
+        cache_tag = (target.cache_tag or "") + "|gate2|mdx4"
         key = cover_cache.cache_key(
             title, target.source_id, voice_name, vocal_only, cache_tag
         )

@@ -20,8 +20,8 @@
 |---|---|---|
 | 1 | 装插件：`dsh plugin --profile desktop add <本仓库目录>`（Web 端换 `--profile web`） | 终端 |
 | 2 | 装完重启 DSH，左侧栏打开面板，走完 5 步设置向导 | 面板 |
-| 3 | 装好并**自己启动** QQ 网关，把它的**正向 WebSocket** 地址填进「连接」页 | 见第二节 |
-| 4 | 起音频服务：`python3 -m services --check-deps`，再 `python3 -m services --serve` | 终端 |
+| 3 | 装好 QQ 网关；Windows 本机装了 NapCat 的话，可在「连接」页点「启动 QQ（NapCat）」一键带起，再把它的**正向 WebSocket** 地址填进去 | 见第二节 |
+| 4 | 起音频服务：`python -m services --check-deps`，再 `python -m services --serve`（macOS / Linux 用 `python3`） | 终端 |
 | 5 | 打开运维大屏（双击 HTML，或访问 `http://127.0.0.1:9876/panel`），点「连接 service」 | 浏览器 |
 | 6 | 点「跑一遍自检」，看五步是不是全绿 | 大屏 |
 
@@ -33,7 +33,7 @@
 
 ## 二、接 QQ 网关（唯一必须自己动手的地方）
 
-本插件是 **OneBot v11 正向 WebSocket 客户端**：它主动去连你启动的网关，**不监听端口、不启动网关、不给 QQ 注入任何东西**。
+本插件是 **OneBot v11 正向 WebSocket 客户端**：它主动去连你启动的网关，**不监听端口、也不替网关注入 QQ**。面板里的「启动 QQ」按钮只是把本机现成的 QQ 网关启动脚本调起来（Windows 调 NapCat 启动器，macOS 调 LaunchServices），注入、登录都由网关自己完成；插件也不会替你关 QQ。
 
 ### macOS（推荐 NapCat）
 
@@ -49,6 +49,19 @@
 
 > ⚠️ **从旧桥迁过来的人**：如果 NapCat 里还留着 `websocketClients` 反向连 `ws://127.0.0.1:6700`，**一定要关掉或删掉**。同一个 QQ 号被旧桥和本插件两个消费者抢答，表现就是「她一次回两条」。大屏五步自检的第 3 步会检查这个残留。
 
+### Windows（NapCat，本机已装好时最省事）
+
+1. 面板「连接」页 →「连接体检」→ 点 **「启动 QQ」**。Windows 上这个按钮启动的是 NapCat.Shell 官方入口 **`D:\NapCat\napcat.bat`**，并自动带上 `-q <机器人号>`（例如 `-q 3085955462`）复用本机登录态，**不用每次扫码**。找不到它才依次退回 `start-napcat.bat`、`launcher-*.bat`、`NapCatWinBootMain.exe` 注入器。
+2. 「连接体检」里会写出这次实际调用了哪个文件；要换脚本可设环境变量 `QQSOUL_QQ_LAUNCHER`（完整路径），NapCat 装在别处可设 `QQSOUL_NAPCAT_DIR`，换号改 `QQSOUL_QQ_ACCOUNT`。
+3. **双击 `启动QQ-NapCat.bat` 更省事**：一次完成「`napcat.bat -q` 快速登录 → 等 6099 起来 → 自动打开 WebUI 登录页」。NapCat 在独立的最小化窗口里常驻。
+4. **WebUI**：`http://127.0.0.1:6099/webui/web_login`；带 token 的管理面板 `http://127.0.0.1:6099/webui/?token=<webui.json 里的 token>`。端口 6099、6700、6701 都起来才算就绪。
+5. NapCat 要开**正向 WebSocket 服务端**（本机 `ws://127.0.0.1:6700`，HTTP 接口 6701）。「一键修复并启动」会备份后改好 NapCat 配置并回填插件地址。
+6. 网关端口 6700 已经在监听时，按钮会提示「不用重复启动」——NapCat.Shell 不产生 `QQ.exe` 进程，所以按端口判断，不按进程判断。退出 QQ 请自己在 QQ / WebUI 里操作，插件不会代你关。
+
+> ⚠️ 本机实测 `start-napcat.bat`（`NapCatWinBootMain.exe` 注入器）在这台机器上带不起 6099/6700，所以按钮与一键脚本都改用官方 `napcat.bat`。若 `-q` 快速登录失效（登录态过期），去掉 `-q` 用 WebUI 扫码一次即可。
+
+> Windows 上也可以用「连接」页「本机服务」卡片里的同名按钮；它走的是同一个接口，音频服务没开也能用。
+
 ### Windows（SnowLuma 完整版）
 
 1. 自己下载 **SnowLuma 完整版 zip（不带 lite）**——它的协议不允许程序替你自动部署。
@@ -63,17 +76,59 @@
 服务是随插件分发的 Python 包，**零第三方依赖**（标准库 `http.server`），只监听 `127.0.0.1:9876`。
 
 ```bash
-python3 -m services --check-deps          # 依赖体检，只查不装
-python3 -m services --serve               # 起服务
-python3 -m services --once --text "你好呀" # 不启后台，直接读一句
-python3 -m services --stub --serve        # 没模型也能自检整条 HTTP 契约
+# Windows（在插件仓库目录里，例如 cd /d D:\dsh-qq-soul）
+python -m services --check-deps          # 依赖体检，只查不装
+python -m services --serve               # 起服务
+python -m services --once --text "你好呀" # 不启后台，直接读一句
+python -m services --stub --serve        # 没模型也能自检整条 HTTP 契约
+
+# macOS / Linux：把上面的 python 换成 python3
 ```
 
-> **Windows** 把 `python3` 换成 `python`，并且要在**插件仓库目录**里运行。记不住路径也没关系：面板「概览 → 音频服务」会给出带完整目录的命令，点「复制」即可。服务的配置、模型和翻唱缓存放在 `~/.dsh/plugins-data/qqsoul/service/`（Windows 是 `%USERPROFILE%\.dsh\plugins-data\qqsoul\service\`）。
+> **macOS / Linux** 把 `python` 换成 `python3`，并且要在**插件仓库目录**里运行。记不住路径也没关系：面板「概览 → 音频服务」会给出带完整目录的命令，点「复制」即可。服务的配置、模型和翻唱缓存放在 `~/.dsh/plugins-data/qqsoul/service/`（Windows 是 `%USERPROFILE%\.dsh\plugins-data\qqsoul\service\`）。
 
 - **默认零下载**：edge-tts（微软在线）说一句就成，不用任何权重。
 - **可选本地**：GPT-SoVITS、千问 3-TTS MLX（仅 Mac）、Breeze 远程、任意 HTTP TTS。长文本自动**分句合成 + 静音拼接**，不会撕裂音。
 - **面板**：`http://127.0.0.1:9876/panel`，或直接双击 `docs/prototype/index.html`（已允许 `file://` 直连）。默认演示模式，点「连接 service」后所有表格只读真实推送，**不替服务端造状态**。
+
+#### Windows 用户：说话 / 唱歌各走哪条
+
+本机（装了 `D:\大肥鱼进QQ-技能包-v6`）用的是**快速 RVC**，不是 macOS 的 Applio：
+
+| 用途 | 现在的配置 | 为什么 |
+|---|---|---|
+| 说话（现在） | `tts.engine = gptsovits`（本地音色） | 双击 `启动音频服务.bat` 会按需带起 9881；一句约 13–28 秒 |
+| 说话（快速兜底） | `tts.engine = edge`（微软 edge-tts） | 秒级、零依赖；不想等模型时切回它 |
+| 唱歌 / 语音条变声 | `D:/tools/rvc` 的 `rvc_convert.py` + `infer/` | 常驻 CUDA 推理，单句换声 281 ms |
+| 唱歌音色 | `feiyu-rvc/FeiyuVoice-RVC-v1.pth + .index` | 技能包自带，55 MB / v2 / 40 kHz |
+| 网关启动 | `D:/NapCat/start-napcat.bat` | 正向 WS 服务端；别换成技能包 `qq-stack.ps1`（那是旧桥反向 WS 6700） |
+| 本地音色管理 | `http://127.0.0.1:9890/` | 启停 9881/9882、挑参考音频、试听；插件「声音」页有直达按钮 |
+
+**GPT-SoVITS 为什么之前"跑不动"**：不是模型坏了，是启动脚本少了 `-c`。默认 `tts_infer.yaml`
+用 `cuda + is_half`，而本机是 RTX 5060（sm_120），整合包的 `torch 2.0.0+cu118` 不认新架构，
+退化成 `126 s/it`。改成技能包验证过的 `tts_infer.cpu.yaml` 后实测一句 13–28 秒、WAV 正常。
+`启动GPT-SoVITS.bat` 已经带上了这个参数；首句冷加载约 70 秒属正常。
+
+**渠道下拉里怎么选**：`gptsovits` 需要 9881 在跑 —— 双击 `启动音频服务.bat`（会顺带拉起）
+或 `启动GPT-SoVITS.bat`，也可以打开 **9890 控制台**在「01 启停」点「全部启动」；
+9881 没起时选它会被拦下并给出一句能照做的提示（不会把配置写坏）。9882 是响度代理、
+9883 是旧语音服务，插件都不需要。`qwen` 依赖 Apple MLX，Windows 用不了。
+
+**参考音频（GPT-SoVITS 只收 3–10 秒）**：从面板选任何一段音频时，插件会自动用 ffmpeg
+截前 9 秒、转成 48 kHz 单声道 WAV 存成 `<原名>.gsv.wav`，并把逐字稿按比例截到句末标点；
+短于 3 秒的会在页面上提示换一段。手动改 `config.json` 时也要指向这个 `.gsv.wav`，
+别直接指原来的长 mp3，否则会收到 `GPT-SoVITS 返回 400：参考音频在3~10秒范围外`。
+
+**9890 控制台注意**：第一屏 `BRIDGE 6700` 只是端口名，实际是 NapCat 正向 WS 服务端；
+「全部启动」对已起的组件是幂等的，但**别点「全部停止」**，它会把 QQ 一起关掉。
+控制台里 macOS 专用的千问 MLX 模型名已清空，千问按钮也标了「仅 macOS」。
+
+**「模型」页显示什么**：Windows 上不会列出千问 MLX 模型；本机已有的快速 RVC 引擎与 feiyu 音色
+会自动显示为「已加载」，不用再去下载 2 GB。旧 macOS 配置迁移时也会跳过 MLX 模型名和跑不通的渠道。
+
+**人声分离**：本机没装 `onnx` / `demucs`，分离自动降级成「原曲直喂 RVC + 静音伴奏」，成品是纯换声
+人声、链路不断；装了 `onnx` + MDX 或 `demucs` 之后自动恢复真分离。想单独跑一整首歌，双击插件目录
+里的 `快速翻唱.bat`。
 
 ### 五步自检
 
@@ -154,11 +209,11 @@ python3 -m services --stub --serve        # 没模型也能自检整条 HTTP 契
 
 | 现象 | 先看什么 |
 |---|---|
-| **DSH 每隔几分钟自己重启** | 不是插件崩了。旧项目的「桥守护」（`pet.ops.supervisor`，LaunchAgent `com.merzlin.dsh-qq-supervisor` 或 9890 控制台里的后台线程）把「6700 没监听」当成「桥死了」，于是 `kill -9` 再拉起。本插件不再监听 6700，这个判据永远不成立 → 关掉守护：`touch /tmp/dsh-qq-supervisor.pause`，并把 LaunchAgent 移出 `~/Library/LaunchAgents`。控制台脚本已默认不启动守护（要旧行为用 `QQ_GUARD=1`） |
+| **DSH 每隔几分钟自己重启** | 不是插件崩了。旧项目的「桥守护」（macOS：`pet.ops.supervisor`，LaunchAgent `com.merzlin.dsh-qq-supervisor`；Windows：旧桥 `dsh-qq-onebot-bridge` 或计划任务）把「6700 没监听」当成「桥死了」反复拉起。本插件不再监听 6700，这个判据永远不成立 → macOS 关掉守护（`touch /tmp/dsh-qq-supervisor.pause`，并把 LaunchAgent 移出 `~/Library/LaunchAgents`）；Windows 把旧桥从 profile 的 bundles 移除并设 `disabled: true`，再在「任务计划程序」里停用盯 6700 的任务。控制台脚本已默认不启动守护（要旧行为用 `QQ_GUARD=1`） |
 | 面板显示「已就绪」但 QQ 没连上 | 顶部胶囊只说总开关状态，具体原因看它下面那行红字（或「连接」页的「连接体检」）。常见是网关方向反了 / QQ 没开 |
 | 一次回两条 | 上游插件没卸干净，或 NapCat 还反向连 6700；向导和大屏自检都会提示 |
 | 连不上网关 | 网关是不是**你自己启动**的；地址是不是 `ws://` / `wss://`；token 对不对；Docker 里别填 `127.0.0.1` |
-| 面板打不开 service | 先跑 `python3 -m services --check-deps`（Windows 用 `python`），再看 9876 有没有被占用、token 有没有填；也可以直接在面板「概览 → 音频服务」点「测试连接」，那里有带本机目录的启动命令 |
+| 面板打不开 service | 先跑 `python -m services --check-deps`（macOS / Linux 用 `python3`），再看 9876 有没有被占用、token 有没有填；也可以直接在面板「概览 → 音频服务」点「测试连接」，那里有带本机目录的启动命令 |
 | 改了代码不生效 | 重新跑安装命令并重启 DSH（开发期常见坑） |
 | 翻唱报「缺模型 / 路径失效」 | 模型页重新选目录加载，路径已持久化但文件可能被挪走 |
 | 自检第 3 步红 | 插件还没上报网关状态：确认「连接」页已连上、service 客户端开关已打开 |

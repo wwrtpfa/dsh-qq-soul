@@ -45,7 +45,7 @@ SOFTWARE.
 ## node-unrar-js / unRAR — 读取 RAR 音色包（MIT + unRAR 授权）
 
 - 项目：<https://github.com/YuJianrong/node-unrar.js>（v2.0.2，MIT）
-- 内置位置：`src/vendor/unrar/`（只保留运行时 JS 与 `unrar.wasm`）
+- 内置位置：`src/vendor/unrar/dist/`（node-unrar-js 2.0.2 运行时 JS + `js/unrar.wasm`；`package.json` 声明 CommonJS，避免被项目 `"type": "module"` 误解析）
 - 用途：导入 `.rar` 音色包时解压出 `.pth` / `.index`，只读不写，不提供打包 / 压缩功能。
 - `unrar.wasm` 由 unRAR 6.1.7 源码编译：<https://www.rarlab.com/rar/unrarsrc-6.1.7.tar.gz>
 - unRAR 授权允许自由用于处理 RAR 压缩包并随软件分发，但不得用来开发 RAR 压缩器；

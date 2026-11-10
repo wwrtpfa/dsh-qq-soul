@@ -143,12 +143,50 @@ def _duration_ms(path: Path, *, ffprobe: str = "") -> int:
         return int(w.getnframes() / w.getframerate() * 1000)
 
 
+def _rvc_on(cfg) -> bool:
+    """说话是否统一换成大肥鱼音色；关掉则保留参考音频（d2）原声。"""
+    return cfg.rvc_enabled()
+
+
 class TTSEngine:
     """对外只暴露 speak(payload)；渠道由 provider_of 决定，可整体替换。"""
 
     def __init__(self, cfg, *, providers=None):
         self.cfg = cfg
         self._providers = providers or provider_of
+
+    def _unify_voice(self, out: Path) -> tuple[Path, bool]:
+        """技能包快速方案：TTS 只负责按稿朗读，音色由常驻 fast-rvc 统一换一次。
+
+        面板 ``/tts/speak`` 和 QQ ``/tts/say`` 都经过这里，拿到的是同一份文件，
+        不再出现「面板一个声音、QQ 另一个声音」。换声不可用就静默退回原声，
+        两边仍然一致，语音条也不会发不出去。
+        """
+        if not _rvc_on(self.cfg):
+            return out, False
+        try:
+            from ..song import cover_tools
+
+            voice = cover_tools.resolve_voice(self.cfg.song_config())
+            if voice is None:
+                return out, False
+            work = self.cfg.data_dir / "voice-rvc"
+            work.mkdir(parents=True, exist_ok=True)
+            target = work / (out.stem + "-rvc.wav")
+            cover_tools.convert(
+                out, target, voice,
+                engine_dir=self.cfg.applio_dir(),
+                python=self.cfg.engine_python(),
+                pitch=int(self.cfg.song.get("pitch", 0) or 0),
+                index_rate=float(self.cfg.tts.get("rvcIndexRate", 0.15) or 0.15),
+                protect=0.33,
+                resident=True,
+            )
+            if target.is_file() and target.stat().st_size > 0:
+                return target, True
+        except Exception:  # noqa: BLE001 —— 换声失败不能让整句语音消失
+            pass
+        return out, False
 
     def speak(self, payload: dict) -> dict:
         text = str(payload.get("text") or "").strip()
@@ -173,6 +211,7 @@ class TTSEngine:
             out = audio_dir / (stamp + ".joined.wav")
             if not concat_wav(parts, out, gap_ms=self.cfg.chunk_silence_ms):
                 raise ServiceError("CONCAT_FAILED", "几段语音格式不一致，拼不起来")
+        out, rvc_applied = self._unify_voice(out)
         try:
             duration = _duration_ms(out)
         except (OSError, wave.Error):
@@ -184,6 +223,7 @@ class TTSEngine:
             "voice": voice,
             "durationMs": duration,
             "chunks": len(chunks),
+            "rvcApplied": rvc_applied,
             "sendPolicy": str(payload.get("sendPolicy") or self.cfg.send_policy),
         }
 

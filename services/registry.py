@@ -23,7 +23,7 @@ ENGINE_CATALOG = (
     {"kind": "tts", "id": "edge", "label": "微软在线（零下载）"},
     {"kind": "tts", "id": "breeze", "label": "Breeze 远程（只填 key）"},
     {"kind": "tts", "id": "gptsovits", "label": "GPT-SoVITS 本地服务"},
-    {"kind": "tts", "id": "qwen", "label": "千问 3-TTS MLX（选目录加载）"},
+    {"kind": "tts", "id": "qwen", "label": "千问 3-TTS 常驻服务（Windows 可用）"},
     {"kind": "tts", "id": "http", "label": "任意 HTTP TTS"},
     {"kind": "rvc", "id": "applio", "label": "Applio / RVC"},
     {"kind": "separator", "id": "htdemucs", "label": "demucs htdemucs"},

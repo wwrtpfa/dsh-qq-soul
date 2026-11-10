@@ -129,13 +129,17 @@ class BreezeProvider(BaseProvider):
 
 
 class GPTSoVITSProvider(BaseProvider):
-    """连已经跑着的 GPT-SoVITS 服务（默认 127.0.0.1:9882），不负责启动它。"""
+    """连已经跑着的 GPT-SoVITS API（默认 127.0.0.1:9881），不负责启动它。
+
+    9882 是旧桥 ``dsh-qq-onebot-bridge`` 用的响度代理 gain_proxy，不是模型 API；
+    本插件直连 api_v2.py，所以默认端口必须是 9881。
+    """
 
     name = "gptsovits"
     suffix = ".wav"
 
     def synth(self, text: str, out: Path, *, voice: str = "") -> Path:
-        base = str(self.cfg.tts.get("gptsovitsUrl") or os.environ.get("QQ_GPT_URL") or "http://127.0.0.1:9882")
+        base = str(self.cfg.tts.get("gptsovitsUrl") or os.environ.get("QQ_GPT_URL") or "http://127.0.0.1:9881")
         body = {
             "text": text,
             "text_lang": "zh",
@@ -153,8 +157,19 @@ class GPTSoVITSProvider(BaseProvider):
         try:
             with opener.open(req, timeout=300) as r:
                 Path(out).write_bytes(r.read())
+        except urllib.error.HTTPError as exc:
+            #: HTTP 400 最常见：参考音频不在 3–10 秒、逐字稿语言不对等。
+            #: 以前被 URLError 吞成「服务没连上」，用户对着一个在跑的服务排查半天。
+            try:
+                detail = exc.read().decode("utf-8", "replace")[:300].strip()
+            except Exception:  # noqa: BLE001 —— 读不到错误体也要给出状态码
+                detail = ""
+            raise ServiceError("GPTSOVITS_FAILED",
+                               "GPT-SoVITS 返回 %d：%s" % (exc.code, detail or "上游没给错误详情")) from exc
         except (OSError, urllib.error.URLError) as exc:
-            raise ServiceError("GPTSOVITS_UNREACHABLE", "本地 GPT-SoVITS 服务没连上，先把服务跑起来") from exc
+            raise ServiceError("GPTSOVITS_UNREACHABLE",
+                               "本地 GPT-SoVITS 服务没连上（%s）：%s"
+                               % (type(exc).__name__, str(exc)[:160])) from exc
         return Path(out)
 
 

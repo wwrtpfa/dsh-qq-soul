@@ -495,9 +495,9 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
       <div class="card">
         <div class="row"><div class="lab">渠道<small>在线零下载 / 远程只填 Token / 本地选模型</small></div>
           <select id="engine">
-            <optgroup label="在线（零下载）"><option value="edge">微软 edge-tts</option></optgroup>
+            <optgroup label="在线（零下载，Windows 默认）"><option value="edge">微软 edge-tts</option></optgroup>
             <optgroup label="远程（只填 Token）"><option value="breeze">Breeze TTS</option><option value="http">本机 Bridge / 任意 HTTP TTS</option></optgroup>
-            <optgroup label="本地（自己下载模型）"><option value="gptsovits">GPT-SoVITS</option><option value="qwen">千问 3-TTS · MLX</option></optgroup>
+            <optgroup label="本地（自己起服务；没起会拦下来）"><option value="gptsovits">GPT-SoVITS（需 9881 api_v2）</option><option value="qwen">千问 3-TTS（本机 9883 常驻，Windows 可用）</option></optgroup>
           </select></div>
         <div id="engineCfg"></div>
         <div class="note" id="engineNote"></div>
@@ -506,6 +506,7 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
           <button class="btn sec" id="ttsReload">重新读取</button>
           <button class="btn sec" id="adoptBtn" title="从本机旧配置搬说话渠道、参考音频、千问模型、Breeze 和 RVC 音色">读取本机原配置</button>
         </div>
+        <div class="note"><b>快速合成</b>：默认用 edge-tts 严格按输入框里的稿子朗读（秒级、不串稿），再由常驻 fast-rvc 换成大肥鱼音色；面板试听与 QQ 语音条拿的是同一份文件、同一种声音。说话渠道统一由 9876 音频服务托管，外部控制台的启停按钮会和这里抢 9881/9882、误关 QQ，入口已移除。</div>
       </div>
 
       <div class="card" style="margin-top:14px">
@@ -528,6 +529,11 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
             <button class="btn sec sm" onclick="revealPath(state.lastTtsPath)">在 Finder 里打开</button>
             <button class="btn sec sm" onclick="revealPath(state.audioDir)">打开试听目录</button>
           </div>
+        </div>
+        <div class="inline" id="ttsSeekWrap" style="display:none;align-items:center;gap:10px;margin-top:10px">
+          <button class="btn sm" id="ttsPlayToggle" title="播放 / 暂停">播放 / 暂停</button>
+          <input type="range" id="ttsSeek" min="0" max="1000" value="0" step="1" aria-label="音频进度（可拖动）" style="flex:1;min-width:180px;cursor:pointer;accent-color:var(--blue)">
+          <span class="tag t-gray" id="ttsSeekTime">0:00 / 0:00</span>
         </div>
         <audio id="ttsAudio" controls style="display:none"></audio>
       </div>
@@ -567,7 +573,7 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
       <div class="grid g2" id="ttsModelBody"><div class="card"><h3>正在读…</h3></div></div>
 
       <div class="grouphead"><h3>RVC 音色</h3><small>一个 .pth + 一个 .index；翻唱页下拉选的就是这里</small><div class="sp"></div>
-        <button class="btn sm" onclick="rvcImport()">导入音色（.pth / .zip / .rar）</button></div>
+        <button class="btn sm" onclick="rvcImport()">导入音色（.pth / .zip）</button></div>
       <div class="card" id="rvcBody"><p>连上 service 后显示本机音色。</p></div>
 
       <div class="grouphead"><h3>人声分离</h3><small>翻唱第一步：把人声和伴奏拆开</small></div>
@@ -739,7 +745,7 @@ audio{width:100%;margin-top:10px;height:38px;border-radius:10px}
       <div class="card">
         <h3>说话引擎 <span class="tag t-cyan">二选一</span></h3>
         <div class="pickrow">
-          <b style="min-width:130px">千问 3-TTS · MLX</b>
+          <b style="min-width:130px">千问 3-TTS 常驻服务</b>
           <span class="pt" id="qwenState">读状态…</span>
           <span class="fa"><button class="btn sec sm" onclick="pickModel('qwen')">选目录</button><button class="btn sm" onclick="switchTo('qwen')">切到千问</button></span>
         </div>
@@ -1001,7 +1007,7 @@ function localDay(d) {
 }
 state.tlDate = localDay();
 const ENGINE_LABEL = { edge: '微软在线 edge-tts', breeze: 'Breeze 远程', http: '本机 Bridge / 任意 HTTP TTS',
-  gptsovits: 'GPT-SoVITS 本地', qwen: '千问 3-TTS MLX' };
+  gptsovits: 'GPT-SoVITS 本地', qwen: '千问 3-TTS 常驻服务（Windows 可用）' };
 /** 路径 → 好认的名字：HF 快照目录只显示模型名，别把一长串哈希糊在脸上。 */
 function prettyName(p) {
   const s = String(p || '');
@@ -1049,8 +1055,6 @@ function fmtBytes(n) {
 function go(v) {
   $$('.view').forEach(x => x.classList.toggle('on', x.id === 'v-' + v));
   $$('.nav button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
-  // 记住当前页：#wizard 这类深链能从插件面板直接跳进来
-  try { if (location.hash !== '#' + v) history.replaceState(null, '', '#' + v); } catch (e) {}
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (state.live) {
     if (v === 'models') refreshModelsLive().catch(() => {});
@@ -1096,6 +1100,8 @@ async function playFile(relative, el) {
   const url = fileUrl(relative);
   el.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
   el.style.display = 'block';
+  const wrap = $('#ttsSeekWrap'); if (wrap) wrap.style.display = 'flex';
+  const seek = $('#ttsSeek'); if (seek) seek.value = '0';
   try { await el.play(); } catch (e) { /* 浏览器拦自动播放时保留控件 */ }
 }
 
@@ -1387,18 +1393,34 @@ function renderEngine() {
       '<div class="pickrow"><b style="min-width:84px">模型目录</b>' +
       '<span class="pt" title="' + esc(current) + '">' + esc(current || '还没选；导入或选择目录后会显示在这里') + '</span>' +
       '<span class="fa">' + (current ? '<button class="btn sec sm" onclick="copyText(state.models&&state.models.rows.find(r=>r.engine===\'' + eng + '\').configured||\'\')">复制</button>' +
-        '<button class="btn sec sm" onclick="revealPath(\'' + esc(current) + '\')">打开</button>' : '') + '</span></div>' +
-      '<div class="pickrow"><b style="min-width:84px">参考音频</b>' +
-      '<span class="pt">' + (refItems.length ? selectHtml('refSel', refItems, tts.refAudio || '') : '还没有参考音频') + '</span>' +
-      '<span class="fa"><button class="btn sec sm" onclick="pickRefAudio()">导入音频</button>' +
-      '<button class="btn sec sm" onclick="revealPath((state.dirs||{}).refs||\'\')">打开目录</button></span></div>' +
-      '<div class="row" style="align-items:flex-start"><div class="lab" style="padding-top:7px">这段音频说的是<small>逐字稿，越准越像</small></div>' +
-      '<textarea id="refText" rows="2" style="flex:1" placeholder="例：今天也要好好吃饭哦">' + esc(tts.refText || '') + '</textarea></div>';
-    note = '<b>' + (ENGINE_LABEL[eng] || eng) + '：</b>本地模型要「模型目录 + 参考音频 + 逐字稿」三样齐了才出效果。' +
-      (eng === 'qwen' && tts.qwenUrl ? ' 现在接的是本机已有服务 ' + esc(tts.qwenUrl) + '。' : '');
+        '<button class="btn sec sm" onclick="revealPath(\'' + esc(current) + '\')">打开</button>' : '') + '</span></div>';
+    note = eng === 'qwen'
+      ? '<b>千问 3-TTS：</b>Windows 走本机 9883 常驻服务（' + esc(tts.qwenUrl || 'http://127.0.0.1:9883') + '），不需要 MLX，也不需要模型目录；服务没起会被拦下来。下面的参考音频与逐字稿供切回 GPT-SoVITS 时使用。'
+      : '<b>' + (ENGINE_LABEL[eng] || eng) + '：</b>本地模型要「模型目录 + 参考音频 + 逐字稿」三样齐了才出效果。';
   }
+  // 参考音频与逐字稿是所有渠道共用的资产：切到 edge / 千问时也保留，
+  // 免得切回 GPT-SoVITS 时逐字稿对不上 9 秒截取版音频、又把稿子念串。
+  const allRefs = ((state.refs && state.refs.items) || []).map(f => ({ id: f.path, label: f.name }));
+  html += '<div class="pickrow"><b style="min-width:84px">参考音频</b>' +
+    '<span class="pt">' + (allRefs.length ? selectHtml('refSel', allRefs, tts.refAudio || '') : '还没有参考音频') + '</span>' +
+    '<span class="fa"><button class="btn sec sm" onclick="pickRefAudio()">导入音频</button>' +
+    '<button class="btn sec sm" onclick="revealPath((state.dirs||{}).refs||\'\')">打开目录</button></span></div>' +
+    '<div class="row" style="align-items:flex-start"><div class="lab" style="padding-top:7px">这段音频说的是<small>逐字稿，越准越像</small></div>' +
+    '<div style="flex:1;display:flex;flex-direction:column;gap:6px">' +
+    '<textarea id="refText" rows="2" style="width:100%" placeholder="例：今天也要好好吃饭哦">' + esc(tts.refText || '') + '</textarea>' +
+    '<div class="inline" style="margin:0;gap:8px"><button class="btn sec sm" id="refTextAuto" onclick="autoReadRefText()">重新听写 / 生成逐字稿</button>' +
+    '<span id="refTextHint" style="font-size:11px;color:var(--mut)">换音频会自动听写生成稿子；音频超过 10 秒会先截成 9 秒</span></div>' +
+    '</div></div>';
+  const rvcRaw = tts.rvc;
+  const rvcOn = !(rvcRaw === false || String(rvcRaw || '').toLowerCase() === 'false' || String(rvcRaw || '') === '0');
+  html += '<div class="row"><div class="lab">说话音色<small>参考音频 / RVC</small></div>' +
+    '<label style="display:flex;align-items:center;gap:8px;font-size:12px;flex:1;cursor:pointer">' +
+    '<input type="checkbox" id="ttsRvc"' + (rvcOn ? ' checked' : '') + ' style="width:auto">' +
+    '把说话换成 RVC 大肥鱼音色（不勾选 = 保留参考音频 d2 的原声）</label></div>';
   $('#engineCfg').innerHTML = html;
   $('#engineNote').innerHTML = note;
+  const refSel = $('#refSel');
+  if (refSel) refSel.onchange = onRefAudioChange;
   const vol = $('#ttsVolume');
   if (vol) vol.oninput = () => { $('#ttsVolumeOut').textContent = Math.round(Number(vol.value) * 100) + '%'; };
 }
@@ -1415,13 +1437,66 @@ async function loadVoices() {
   const note = $('#engineNote');
   if (note && r.hint) note.innerHTML += '<br><span style="color:var(--dim)">' + esc(r.hint) + '</span>';
 }
+function applyRefText(r) {
+  const box = $('#refText');
+  if (r.text && box) box.value = r.text;
+  if (r.audio) {
+    if (state.status && state.status.tts) {
+      state.status.tts.refAudio = r.audio;
+      state.status.tts.refText = r.text || '';
+    }
+    if ($('#engine')) renderEngine();   // 重绘后 hint 会被重建，下面重新取
+  }
+  const h = $('#refTextHint');
+  if (h) h.textContent = r.message || (r.ok ? '逐字稿已生成' : '没生成逐字稿，可手动填写');
+  return Boolean(r.ok);
+}
+async function onRefAudioChange() {
+  const sel = $('#refSel'), box = $('#refText'), hint = $('#refTextHint');
+  const path = sel && sel.value;
+  if (!path) return;
+  // 记住这次选择，重绘时不要又跳回配置里那段旧音频
+  if (state.status && state.status.tts) { state.status.tts.refAudio = path; state.status.tts.refText = ''; }
+  // 关键：先把上一段音频的稿子清掉，绝不混用
+  if (box) box.value = '';
+  if (hint) hint.textContent = '正在为新音频生成逐字稿（本机自动听写约 2 秒）…';
+  try {
+    // POST：有同名 .txt 直接读；没有就自动听写生成，并写回配置与输入框
+    const r = await post('/refs/text', { path: path, text: '', force: false });
+    applyRefText(r);
+  } catch (e) {
+    const h = $('#refTextHint');
+    if (h) h.textContent = '生成失败：' + e.message + '；可手动填写逐字稿';
+  }
+}
+async function autoReadRefText() {
+  if (!needLive('重新听写')) return;
+  const sel = $('#refSel');
+  const ref = (sel && sel.value) || ((state.status && state.status.tts && state.status.tts.refAudio) || '');
+  const hint = $('#refTextHint');
+  if (hint) hint.textContent = '正在重新听写这段音频（约 2 秒）…';
+  try {
+    // force：忽略已有 .txt 与框里旧内容，直接对当前音频做本机 FunASR 听写并覆盖写回
+    const r = await post('/refs/text', { path: ref, text: '', force: true });
+    try { state.refs = await api('/refs'); } catch (e) { /* 保留旧列表 */ }
+    const ok = applyRefText(r);
+    toast(ok ? '已重新听写并生成逐字稿' : (r.message || '听写没出结果'), ok ? 'ok' : undefined);
+  } catch (e) {
+    const h = $('#refTextHint');
+    if (h) h.textContent = '听写失败：' + e.message;
+    toast('听写失败：' + e.message);
+  }
+}
 function ttsBody() {
   const body = { engine: $('#engine').value };
   const put = (id, key, num) => { const el = $('#' + id); if (el && el.value !== undefined && el.value !== '') body[key || id] = num ? Number(el.value) : el.value; };
   put('ttsVoice', 'voice'); put('ttsRate', 'rate'); put('ttsVolume', 'volume', true);
   put('breezeEndpoint', 'breezeUrl'); put('breezeToken', 'breezeToken'); put('breezeVoice', 'breezeVoice');
-  put('httpUrl', 'httpUrl'); put('httpToken', 'httpToken'); put('refText', 'refText');
+  put('httpUrl', 'httpUrl'); put('httpToken', 'httpToken');
+  // 逐字稿允许为空：换了参考音频又没写新稿时，显式清空，别让旧稿跟着新音频
+  const refText = $('#refText'); if (refText) body.refText = refText.value.trim();
   const ref = $('#refSel'); if (ref && ref.value) body.refAudio = ref.value;
+  const rvc = $('#ttsRvc'); if (rvc) body.rvc = rvc.checked;
   return body;
 }
 async function refreshTtsCfgLive() {
@@ -1626,7 +1701,7 @@ function renderRvc() {
   const rows = lib.items || [];
   const cur = lib.current || '';
   if (!rows.length) {
-    box.innerHTML = '<p>还没有音色。点「导入音色」，选一个 .pth（或打好的 .zip / .rar 包）。</p>';
+    box.innerHTML = '<p>还没有音色。点「导入音色」，选一个 .pth（或打好的 .zip 包）。</p>';
     return;
   }
   box.innerHTML = rows.map(v => {
@@ -1723,7 +1798,7 @@ async function adoptLocal() {
 }
 async function refreshModelsLive() {
   if (!state.live) {
-    $('#ttsModelBody').innerHTML = ['千问 3-TTS · MLX', 'GPT-SoVITS 整包'].map(n =>
+    $('#ttsModelBody').innerHTML = ['千问 3-TTS 常驻服务', 'GPT-SoVITS 整包'].map(n =>
       '<div class="card"><h3><span class="sdot off"></span>' + n + '</h3><p>连上 service 后显示本机真实模型。</p></div>').join('');
     $('#rvcBody').innerHTML = '<p>连上 service 后显示本机音色。</p>';
     $('#sepBody').innerHTML = '<p>连上 service 后显示。</p>';
@@ -2490,6 +2565,29 @@ function bindStatic() {
   };
   $('#engine').onchange = () => { loadVoices().catch(() => {}); };
   $('#ttsGo').onclick = () => { state.live ? ttsLive() : toast('先连上 service'); };
+  // 合成成品的进度条：显式可拖动。服务端 /files 已支持 Range，原生控件也能 seek。
+  (() => {
+    const a = $('#ttsAudio'), bar = $('#ttsSeek'), label = $('#ttsSeekTime'), wrap = $('#ttsSeekWrap');
+    if (!a || !bar) return;
+    const clock = (s) => { const n = Math.max(0, Math.floor(Number(s) || 0)); return Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0'); };
+    let dragging = false;
+    const sync = () => {
+      const d = Number(a.duration) || 0;
+      if (!dragging && d > 0) bar.value = String(Math.round((a.currentTime / d) * 1000));
+      if (label) label.textContent = clock(a.currentTime) + ' / ' + clock(d);
+    };
+    a.addEventListener('loadedmetadata', () => { if (wrap) wrap.style.display = 'flex'; bar.value = '0'; sync(); });
+    a.addEventListener('timeupdate', sync);
+    a.addEventListener('play', () => { if (wrap) wrap.style.display = 'flex'; });
+    bar.addEventListener('input', () => {
+      const d = Number(a.duration) || 0;
+      if (d > 0) { dragging = true; a.currentTime = (Number(bar.value) / 1000) * d; }
+      if (label) label.textContent = clock((Number(bar.value) / 1000) * d) + ' / ' + clock(d);
+    });
+    bar.addEventListener('change', () => { dragging = false; sync(); });
+    const toggle = $('#ttsPlayToggle');
+    if (toggle) toggle.onclick = () => { if (a.paused) a.play().catch(() => {}); else a.pause(); };
+  })();
   $('#ttsSave').onclick = async () => {
     if (!needLive('保存说话参数')) return;
     try { const r = await post('/tts/config', ttsBody()); toast(r.message || '已保存'); await refreshTtsCfgLive(); renderWiz(); }
@@ -2529,10 +2627,7 @@ function bindStatic() {
   renderAudioList();
   renderRvcSelect();
   setMode();
-  const startView = String(location.hash || '').replace(/^#/, '');
   autoConnect().then(ok => {
-    // 插件面板的「安装向导」走 #wizard 深链，连上后直接停在这一页
-    if (startView && $('#v-' + startView)) { state.step = 0; go(startView); renderWiz(); }
     if (!ok) {
       const hint = $('#demoHint'); if (hint) hint.style.display = 'block';
       const note = $('#connNote');

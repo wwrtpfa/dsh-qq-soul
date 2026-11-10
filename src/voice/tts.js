@@ -74,7 +74,10 @@ export async function installEdge(log) {
   mkdirSync(PYENV_DIR, { recursive: true })
   if (!existsSync(pyExe())) {
     // 电脑上有 Python 就直接用；没有就用 uv 下一个私有的 Python（不用用户自己装）
-    let r = WIN ? await run('py', ['-3', '-m', 'venv', PYENV_DIR], { timeoutMs: 180000 }) : { code: -1 }
+    // Windows 优先用 PATH 上的 python（本机 Python 3.12/3.13 都带 venv），
+    // 再试 py 启动器；python3 在 Windows 上常是应用商店占位程序，放最后兜底。
+    let r = WIN ? await run('python', ['-m', 'venv', PYENV_DIR], { timeoutMs: 180000 }) : { code: -1 }
+    if (r.code !== 0 && WIN) r = await run('py', ['-3', '-m', 'venv', PYENV_DIR], { timeoutMs: 180000 })
     if (r.code !== 0) r = await run('python3', ['-m', 'venv', PYENV_DIR], { timeoutMs: 180000 })
     if (r.code !== 0) r = await run('python', ['-m', 'venv', PYENV_DIR], { timeoutMs: 180000 })
     if (r.code !== 0) {

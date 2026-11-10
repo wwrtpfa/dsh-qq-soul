@@ -137,7 +137,7 @@ def test_音乐源可读可存且带缓存目录(srv):
     base, cfg = srv
     out = _call(base, "GET", "/song/sources")
     assert [row["site"] for row in out["sources"]] == ["txqq", "music-dl"]
-    assert out["dirs"]["originals"].endswith("music/originals")
+    assert str(out["dirs"]["originals"]).replace("\\", "/").endswith("music/originals")
 
     saved = _call(base, "POST", "/song/sources", {"sources": [
         {"name": "music-dl", "site": "music-dl", "enabled": True},

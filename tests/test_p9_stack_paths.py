@@ -111,8 +111,8 @@ def test_paths_lists_every_place(srv):
         assert label in labels, label
     by_label = dict((i["label"], i["path"]) for i in body["items"])
     assert by_label["试听目录"].endswith("audio")
-    assert by_label["RVC 音色"].endswith("models/rvc")
-    assert by_label["千问 TTS 模型"].endswith("models/qwen")
+    assert str(by_label["RVC 音色"]).replace("\\", "/").endswith("models/rvc")
+    assert str(by_label["千问 TTS 模型"]).replace("\\", "/").endswith("models/qwen")
     for name in ("models", "refs", "logs", "audio"):
         assert (cfg.data_dir / name).is_dir(), name
     for sub in ("qwen", "gptsovits", "rvc", "htdemucs"):

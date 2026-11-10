@@ -121,3 +121,23 @@ test('fetch 抛错等同于没起来，不会把异常甩出去', async () => {
   const out = await launcher.start()
   assert.equal(out.ok, false)
 })
+
+test('Windows 用 python 而不是 python3（系统里没有 python3 这个命令）', async () => {
+  const calls = { spawn: [] }
+  const launcher = createServiceLauncher({
+    root: '/repo',
+    platform: 'win32',
+    env: {},
+    exists: () => false,
+    fetchImpl: fakeFetch([false, true]),
+    execImpl: async () => ({ ok: false }),
+    spawnImpl: (file, args) => { calls.spawn.push([file, ...args]); return { unref() {} } },
+    delay: async () => {},
+    timeoutMs: 2000,
+  })
+  const out = await launcher.start()
+  assert.equal(out.ok, true)
+  assert.equal(calls.spawn.length, 1)
+  assert.equal(calls.spawn[0][0], 'python')
+  assert.deepEqual(calls.spawn[0].slice(1), ['-m', 'services', '--serve'])
+})

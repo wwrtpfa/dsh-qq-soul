@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import queue
 import re
 import subprocess
@@ -47,7 +48,7 @@ PROMPT_FALLBACK = """我要在我的电脑上装一个叫「懂你的QQ大肥鱼
 我的情况：系统（macOS / Windows）、插件目录（贴路径）、机器人 QQ 号（小号）、我自己的 QQ 号。
 请按这个顺序：1) 检查有没有装过上游 Aurabot 插件，装过先卸载；2) 用本地目录安装（不要 github 地址），装完重启 DSH；
 3) 在左侧栏找到「懂你的QQ大肥鱼」打开面板走向导；4) 装 QQ 网关（macOS NapCat / Windows SnowLuma 完整版）并开正向 WebSocket；
-5) 起音频服务 python3 -m services --serve，打开 http://127.0.0.1:9876/panel 跑五步自检；6) 告诉我哪几步红了、怎么修。
+5) 起音频服务（Windows 用 python -m services --serve，macOS / Linux 用 python3），打开 http://127.0.0.1:9876/panel 跑五步自检；6) 告诉我哪几步红了、怎么修。
 每一步做完用一句话说明「做了什么、现在什么状态、下一步干嘛」。"""
 
 
@@ -187,6 +188,14 @@ class ServiceContext:
         self.gateway = gateway or GatewayMonitor()
         self.stack = stack or stack_mod.StackRunner(cfg)
         self.started_at = time.time()
+        #: 翻唱工具层 / 常驻 RVC 驱动跑在独立进程里，拿不到 cfg。把配置里的
+        #: ffmpeg 与快速 RVC 目录通过环境变量传下去，Windows 上尤其关键
+        #: （ffmpeg 通常不在 PATH，快速 RVC 也不在 ~/tools/applio）。
+        ffmpeg = str(cfg.ffmpeg() or "").strip()
+        if ffmpeg:
+            os.environ.setdefault("QQSOUL_FFMPEG", ffmpeg)
+        if cfg.rvc_backend() == "fast-rvc":
+            os.environ.setdefault("QQSOUL_FAST_RVC_DIR", str(cfg.applio_dir()))
 
 
 def _deps_items(ctx: ServiceContext) -> list[dict]:
@@ -356,7 +365,7 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                                         "vocalOnly": vocal_only,
                                         "message": "清唱（只有人声）" if vocal_only else "混音音量已保存，下一首生效"})
 
-            # 本机栈：启停 QQ / NapCat / 桥。只转发给 qq-stack.sh，不在 service 里另造一套顺序
+            # 本机栈：Windows 转发给 NapCat 启动脚本，macOS / Linux 转发给 qq-stack.sh
             if path == "/stack" and method in ("GET", "POST"):
                 if method == "GET":
                     payload = stack_mod.status(ctx.cfg)
@@ -395,6 +404,18 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                 return self._json(200, tools_mod.set_ref(ctx.cfg, path=str(body.get("path") or ""),
                                                          text=str(body.get("text") or ""),
                                                          use=str(body.get("use") or "tts")))
+
+            # 「这段音频说的是」旁的自动读取：GET 只读；POST 会规整音频、
+            # 按比例截逐字稿、写同名 .txt 并回填配置与输入框。
+            if method == "GET" and path == "/refs/text":
+                return self._json(200, tools_mod.read_ref_text(
+                    ctx.cfg, str((query.get("path") or [""])[0] or "")))
+            if method == "POST" and path == "/refs/text":
+                body = self._body()
+                return self._json(200, tools_mod.prepare_ref_text(
+                    ctx.cfg, path=str(body.get("path") or ""),
+                    draft=str(body.get("text") or ""),
+                    force=bool(body.get("force"))))
 
             if method == "GET" and path == "/tts/voices":
                 engine = str((query.get("engine") or [""])[0] or ctx.cfg.tts_engine)
@@ -610,7 +631,12 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                     return self._json(200, {"ok": True, "engine": ctx.cfg.tts_engine,
                                             "tts": dict(ctx.cfg.tts)})
                 body = self._body()
-                saved = ctx.cfg.save_tts(body)
+                try:
+                    saved = ctx.cfg.save_tts(body)
+                except ValueError as exc:
+                    #: Windows 上渠道跑不通时给一句能照做的提示，别静默写坏配置
+                    return self._json(409, {"ok": False, "code": "ENGINE_UNAVAILABLE",
+                                            "message": str(exc)})
                 return self._json(200, {"ok": True, "engine": ctx.cfg.tts_engine, "tts": saved,
                                         "message": "说话参数已保存，下一句生效"})
 
@@ -624,7 +650,11 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
 
             if method == "GET" and path == "/deps/check":
                 items = _deps_items(ctx)
-                return self._json(200, {"ok": all(row.get("ok") for row in items), "items": items})
+                #: 可选的 Breeze key / 千问不该让整页体检亮红；与 deps.check() 同口径
+                optional = {"breeze-key", "qwen"}
+                required = [row for row in items if row.get("id") not in optional]
+                return self._json(200, {"ok": all(row.get("ok") for row in required),
+                                        "items": items, "optional": sorted(optional)})
 
             # 语音条变声：插件模式开启后，TTS 原声直接传上来，用服务里选中的
             # RVC 音色换一遍，回 WAV 字节。音色路径只有服务这一份，插件不再另扫目录。
@@ -633,6 +663,29 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                 if not data:
                     return self._json(400, {"ok": False, "code": "EMPTY_AUDIO",
                                             "message": "要变声的音频是空的"})
+                # 关掉「说话换声」时，QQ 侧也必须原样拿原声：否则面板是 d2 原声，
+                # 旧版插件仍会调这个端点换成 FeiyuVoice，两边又不一致。
+                if not ctx.cfg.rvc_enabled():
+                    tools_mod.add_log(ctx.cfg, "tts",
+                                      "语音条变声 · 已关闭，保留参考音频原声")
+                    return self._bytes(200, data, "audio/wav")
+                # 幂等：/tts/speak 与 /tts/say 现在都返回「已换声」成品
+                # （voice-rvc/*-rvc.wav）。旧版插件不认识 rvcApplied，还会把这段
+                # 成品再传回来换一次；服务端 index_rate=0.15、此端点 0.5，两遍
+                # 之后 QQ 听到的就不是面板里那个声音了。命中直接回原字节。
+                done_dir = ctx.cfg.data_dir / "voice-rvc"
+                if done_dir.is_dir():
+                    try:
+                        same_size = [p for p in done_dir.glob("*-rvc.wav")
+                                     if p.is_file() and p.stat().st_size == len(data)]
+                        for prev in sorted(same_size, key=lambda p: p.stat().st_mtime,
+                                           reverse=True)[:12]:
+                            if prev.read_bytes() == data:
+                                tools_mod.add_log(ctx.cfg, "tts",
+                                                  "语音条变声 · 已是本机换声成品，跳过重复换声")
+                                return self._bytes(200, data, "audio/wav")
+                    except OSError:
+                        pass
                 try:
                     pitch = max(-12, min(12, int(float((query.get("pitch") or ["0"])[0] or 0))))
                 except (TypeError, ValueError):
@@ -812,7 +865,7 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                 return self._json(200, {"ok": True, "plan": plan})
 
             if method == "GET" and path == "/install/check":
-                return self._json(200, {"ok": True, "items": component_states(ctx.cfg),
+                return self._json(200, {"ok": True, "items": component_states(ctx.cfg, platform=sys.platform),
                                         "states": ["未安装", "已下载待加载", "已加载", "路径失效"]})
 
             if method == "POST" and path == "/install/paths":
@@ -893,7 +946,47 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
             if not target.is_file():
                 return self._json(404, {"ok": False, "code": "FILE_NOT_FOUND"})
             mime = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-            return self._bytes(200, target.read_bytes(), mime)
+            # 音频进度条要能拖动，浏览器必须能按字节范围 seek。旧实现一律
+            # 200 全量且不回 Accept-Ranges，Chrome/Edge 会把 <audio> 进度条锁死。
+            data = target.read_bytes()
+            size = len(data)
+            cors = _cors_headers()
+            range_header = str(self.headers.get("Range") or "").strip()
+            if range_header.lower().startswith("bytes="):
+                spec = range_header[6:].split(",", 1)[0].strip()
+                start_s, _, end_s = spec.partition("-")
+                try:
+                    if start_s:
+                        start = int(start_s)
+                        end = int(end_s) if end_s else size - 1
+                    else:  # bytes=-N：取末尾 N 字节
+                        start = max(0, size - int(end_s or 0))
+                        end = size - 1
+                except ValueError:
+                    start, end = 0, size - 1
+                start = max(0, min(start, size - 1))
+                end = max(start, min(end, size - 1))
+                chunk = data[start:end + 1]
+                self.send_response(206)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(len(chunk)))
+                self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+                self.send_header("Accept-Ranges", "bytes")
+                for key, value in cors.items():
+                    self.send_header(key, value)
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(chunk)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(size))
+            self.send_header("Accept-Ranges", "bytes")
+            for key, value in cors.items():
+                self.send_header(key, value)
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(data)
 
         def do_GET(self):
             self._dispatch("GET")

@@ -34,14 +34,30 @@ def check(cfg: ServiceConfig) -> dict:
     rows.append(_row("python", "Python 运行环境", True, sys.version.split()[0], "无需处理"))
 
     engine = cfg.applio_dir()
-    rows.append(_row("applio", "Applio / RVC 引擎目录", (engine / "core.py").is_file(), str(engine),
-                     "在「模型」页选 Applio 目录，或设 QQSOUL_APPLIO_DIR"))
+    backend = cfg.rvc_backend()
+    if backend == "applio":
+        engine_row = _row("applio", "RVC 换声引擎（Applio）", True, str(engine),
+                          "无需处理")
+    elif backend == "fast-rvc":
+        engine_row = _row("applio", "RVC 换声引擎（Windows 快速 RVC）", True,
+                          f"{engine} · rvc_convert.py + infer/",
+                          "无需处理；换目录时设 QQSOUL_FAST_RVC_DIR")
+    else:
+        engine_row = _row("applio", "RVC 换声引擎", False,
+                          f"没找到换声引擎：{engine}",
+                          "Windows 装技能包快速 RVC（默认 D:/tools/rvc），或装 Applio 后选目录")
+    rows.append(engine_row)
 
     py = cfg.engine_python()
     rows.append(_row("engine-python", "引擎 venv 解释器", py.is_file(), str(py),
-                     "复用已装 Applio 的 .venv，避免重装 torch"))
+                     "复用本机已装 torch 的 venv312，避免重装 torch"))
 
-    if py.is_file():
+    if backend == "fast-rvc":
+        #: 本机快速 RVC 走「原曲直喂」，没 demucs 也能出声；如实写清是降级。
+        rows.append(_row("demucs", "人声分离（可降级）", True,
+                         "快速 RVC：原曲直喂，不需要 demucs",
+                         "想要真分离：给引擎 venv 装 onnx + MDX 模型，或 pip install demucs"))
+    elif py.is_file():
         ok, detail = _probe([str(py), "-m", "demucs", "--help"])
         rows.append(_row("demucs", "人声分离 demucs htdemucs", ok, detail[:120],
                          "在引擎 venv 里装 demucs，或检查 torch/MPS"))
@@ -50,17 +66,26 @@ def check(cfg: ServiceConfig) -> dict:
 
     ffmpeg = cfg.ffmpeg()
     rows.append(_row("ffmpeg", "ffmpeg", bool(ffmpeg), ffmpeg or "未找到",
-                     "brew install ffmpeg，或在设置里填 ffmpeg 路径"))
-    ffprobe = str(Path(ffmpeg).with_name("ffprobe")) if ffmpeg else ""
+                     "Windows：下载 ffmpeg.exe 后把完整路径填进设置；macOS：brew install ffmpeg；Linux：用包管理器安装"))
+    ffprobe = str(Path(ffmpeg).with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")) if ffmpeg else ""
     rows.append(_row("ffprobe", "ffprobe", bool(ffprobe) and Path(ffprobe).is_file(), ffprobe or "未找到",
                      "与 ffmpeg 一起安装"))
 
-    contentvec = engine / "rvc" / "models" / "embedders" / "contentvec" / "pytorch_model.bin"
-    rmvpe = engine / "rvc" / "models" / "predictors" / "rmvpe.pt"
-    rows.append(_row("rvc-weights", "RVC 预训练权重（contentvec / rmvpe）",
-                     contentvec.is_file() and rmvpe.is_file(),
-                     "齐全" if contentvec.is_file() and rmvpe.is_file() else "缺文件",
-                     "在「模型」页点「复制链接」，下载后拖进引擎目录"))
+    if backend == "fast-rvc":
+        #: 技能包 Windows 快速 RVC 的权重在 assets/，不是 Applio 的 rvc/models/。
+        hubert = engine / "assets" / "hubert_base" / "pytorch_model.bin"
+        rmvpe = engine / "assets" / "rmvpe" / "rmvpe.pt"
+        ok = hubert.is_file() and rmvpe.is_file()
+        rows.append(_row("rvc-weights", "RVC 预训练权重（hubert / rmvpe）", ok,
+                         "assets/ 齐全" if ok else "assets/ 缺文件",
+                         "把技能包的 assets/ 放到引擎目录（hubert_base、rmvpe、pretrained_v2）"))
+    else:
+        contentvec = engine / "rvc" / "models" / "embedders" / "contentvec" / "pytorch_model.bin"
+        rmvpe = engine / "rvc" / "models" / "predictors" / "rmvpe.pt"
+        ok = contentvec.is_file() and rmvpe.is_file()
+        rows.append(_row("rvc-weights", "RVC 预训练权重（contentvec / rmvpe）", ok,
+                         "齐全" if ok else "缺文件",
+                         "在「模型」页点「复制链接」，下载后拖进引擎目录"))
 
     pth, index = cfg.voice_model()
     rows.append(_row("rvc-voice", "大肥鱼音色（.pth + .index）",
@@ -80,8 +105,27 @@ def check(cfg: ServiceConfig) -> dict:
                      "可选：填 key 就能不装任何本地模型"))
 
     qwen_python = str(cfg.paths.get("qwenPython") or "").strip()
-    rows.append(_row("qwen", "千问 3-TTS MLX（仅 Mac，可选）", bool(qwen_python) and Path(qwen_python).is_file(),
-                     qwen_python or "未配置", "选模型目录加载，或连已跑着的服务"))
+    if os.name == "nt":
+        #: Windows 走本机 9883 常驻服务（QwenProvider 的 qwenUrl 分支）；
+        #: MLX 只是 macOS 的一种实现，这里按端口体检，不再写「不适用」。
+        import socket
+        from urllib.parse import urlparse
+
+        raw = str(cfg.tts.get("qwenUrl") or "http://127.0.0.1:9883")
+        parsed = urlparse(raw if "://" in raw else "http://" + raw)
+        host, port = parsed.hostname or "127.0.0.1", parsed.port or 9883
+        try:
+            with socket.create_connection((host, port), timeout=0.4):
+                up = True
+        except OSError:
+            up = False
+        rows.append(_row("qwen", "千问 3-TTS 常驻服务（Windows 可用）", up,
+                         "%s:%d %s" % (host, port, "在跑" if up else "没起"),
+                         "接本机 9883 服务即可，不需要 MLX / 模型目录"))
+    else:
+        rows.append(_row("qwen", "千问 3-TTS MLX（仅 Mac，可选）",
+                         bool(qwen_python) and Path(qwen_python).is_file(),
+                         qwen_python or "未配置", "选模型目录加载，或连已跑着的服务"))
 
     return {"items": rows, "ok": all(row["ok"] for row in rows if row["id"] not in {"breeze-key", "qwen"}),
             "optional": ["breeze-key", "qwen"]}
