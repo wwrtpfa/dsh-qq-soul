@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseReply, stripMarkdown, bubbleDelay } from '../src/chat/reply.js'
+import { parseReply, stripMarkdown, bubbleDelay, isSilence, silenceReason } from '../src/chat/reply.js'
 import { decideGroupReply, engagedHint, policyFor, inQuietHours, DEFAULT_GROUP_POLICY } from '../src/chat/group-policy.js'
 import { parseMessageEvent, isStickerSegment, stickerSizeOk, imageSize } from '../src/chat/inbound.js'
 import { checkAllowed, levelFor, presetFor, isOwner, profileToolVisible, profilePermits } from '../src/chat/access.js'
@@ -28,6 +28,19 @@ test('parseReply 沉默与空', () => {
   assert.equal(parseReply('[沉默]').silent, true)
   assert.equal(parseReply('   ').silent, true)
   assert.equal(parseReply('|||').silent, true)
+})
+
+test('沉默可以带半句原因：只进日志，不进正文', () => {
+  const r = parseReply('[沉默] 他在忙，别打扰')
+  assert.equal(r.silent, true)
+  assert.equal(r.reason, '他在忙，别打扰')
+  assert.deepEqual(r.items, [], '原因不能被当成要发的话')
+
+  assert.equal(silenceReason('［沉默］：困了'), '困了')
+  assert.equal(silenceReason('（沉默）'), '')
+  assert.equal(silenceReason('在呢'), '')
+  assert.equal(isSilence('[沉默] 不想刷屏'), true)
+  assert.equal(isSilence('我说 [沉默] 只是举例'), false, '正文里提到不算沉默')
 })
 
 test('stripMarkdown 洗掉 Markdown', () => {

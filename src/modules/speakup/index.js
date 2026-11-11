@@ -15,8 +15,11 @@ export default {
     api.every(60_000, () => speakUp.tick(), '主动搭话')
     api.route('/speakup/fire', async () => {
       if (!api.config().enabled) return { ok: false, message: '先打开总开关' }
-      await speakUp.fire('手动')
-      return { ok: true, message: '叫她去找你了' }
+      const r = await speakUp.fire('手动')
+      // 说实话：她可以决定不说，面板别一口咬定「发出去了」。
+      if (r?.outcome === 'sent') return { ok: true, message: '她已经去找你了' }
+      if (r?.outcome === 'silent') return { ok: true, message: `她这轮想了想，没说话${r.reason ? '：' + r.reason : ''}` }
+      return { ok: true, message: '已经提醒她了（这轮结果没等到，可能排在别的对话后面）' }
     })
     return speakUp
   },

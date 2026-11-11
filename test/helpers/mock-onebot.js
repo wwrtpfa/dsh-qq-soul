@@ -1,5 +1,6 @@
 // 测试用的假 QQ 网关：OneBot v11 HTTP + WS（Universal）。记录所有调用，能主动推事件。
 import http from 'node:http'
+import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 
 function wsAccept(key) {
@@ -41,7 +42,7 @@ function decodeFrames(buf) {
   return { frames: out, rest: buf.subarray(i) }
 }
 
-export async function startMockOneBot({ selfId = '20000002', token = 'mock-token-abcdef', loginDelayMs = 0 } = {}) {
+export async function startMockOneBot({ selfId = '20000002', token = 'mock-token-abcdef', loginDelayMs = 0, napcat = false } = {}) {
   // loginDelayMs：让 get_login_info 慢一点回，用来测「核对期间的消息不该丢」
   const waitLogin = async (action) => { if (action === 'get_login_info' && loginDelayMs) await new Promise((r) => setTimeout(r, loginDelayMs)) }
   const calls = []
@@ -49,11 +50,14 @@ export async function startMockOneBot({ selfId = '20000002', token = 'mock-token
   let msgSeq = 1000
   const faces = new Map()
   const qzone = new Map()
-  const state = { failRecord: false, failFace: false, failUploadPath: false, failQzoneImage: false, roles: {}, favorites: [], selfProfile: { nickname: '大肥鱼', long_nick: '爱吃白米饭' } } // favorites：机器人号 QQ 收藏表情的地址 // roles: 群号 → 机器人在群里的身份（默认群主）
+  // napcat：按 NapCat 4.x 的真实口味模拟（add_custom_face 只认本机文件路径、不返回 emoji_id，
+  // 收藏列表 / 删除 / 改备注都用 res_id）；默认 false = 老网关（SnowLuma）那套 base64 + emoji_id。
+  const state = { failRecord: false, failFace: false, failUploadPath: false, failQzoneImage: false, napcat, roles: {}, favorites: [], selfProfile: { nickname: '大肥鱼', long_nick: '爱吃白米饭' } } // favorites：机器人号 QQ 收藏表情的地址 // roles: 群号 → 机器人在群里的身份（默认群主）
 
   function handle(action, params) {
     switch (action) {
       case 'get_login_info': return { user_id: Number(selfId), nickname: state.selfProfile.nickname }
+      case 'get_version_info': return { app_name: state.napcat ? 'NapCat.Onebot' : 'SnowLuma', app_version: state.napcat ? '4.18.42' : '1.0.0' }
       case 'set_qq_profile': state.selfProfile.nickname = params.nickname; return null
       case 'set_self_longnick': state.selfProfile.long_nick = params.longNick; return null
       case 'upload_private_file':
@@ -83,13 +87,50 @@ export async function startMockOneBot({ selfId = '20000002', token = 'mock-token
         return { messages: state.history || [] }
       }
       case 'add_custom_face': {
+        if (state.napcat) {
+          // NapCat 把整串 base64:// / file:// 当路径去 stat，直接 ENOENT；成功后也不返回 emoji_id
+          const file = String(params.file || '')
+          if (!file || /^(base64|file|https?):\/\//.test(file)) throw new Error(`ENOENT: no such file or directory, stat '${file.slice(0, 60)}'`)
+          const buf = readFileSync(file) // 路径不存在也要像真网关一样报错
+          const hash = createHash('md5').update(buf).digest('hex').toUpperCase()
+          const id = `${selfId}_0_0_0_${hash}_0_0`
+          faces.set(id, '')
+          return { result: 0, errMsg: 'success', isExist: 0 }
+        }
         const id = 'emoji-' + (faces.size + 1)
         faces.set(id, '')
         return { emoji_id: id }
       }
-      case 'fetch_custom_face': return state.favorites.slice(0, params.count || 48)
-      case 'modify_custom_face': faces.set(params.emoji_id, params.desc); return null
-      case 'delete_custom_face': faces.delete(params.emoji_id); return null
+      case 'fetch_custom_face':
+        if (state.napcat) return [...faces.keys()].map((id) => `https://p.qpic.cn/qq_expression/${selfId}/${id}/0`)
+        return state.favorites.slice(0, params.count || 48)
+      case 'fetch_custom_face_detail': {
+        if (!state.napcat) throw new Error('不支持的Api fetch_custom_face_detail')
+        return [...faces.entries()].map(([resId, desc]) => ({ resId, md5: resId.split('_')[4] || '', emoId: 0, desc }))
+      }
+      case 'set_custom_face_desc': {
+        if (!state.napcat) throw new Error('不支持的Api set_custom_face_desc')
+        // NapCat 的 schema：emoji_id / res_id / md5 / desc 四个都必填
+        if (params.emoji_id === undefined || !params.res_id || !params.md5 || !params.desc) throw new Error('Schema compilation error: Expected required property')
+        faces.set(params.res_id, params.desc)
+        return { result: 0, errMsg: 'suc' }
+      }
+      case 'modify_custom_face': {
+        // NapCat 4.18.42 没有这个接口；老网关（SnowLuma）才有
+        if (state.napcat) throw new Error('不支持的Api modify_custom_face')
+        faces.set(params.emoji_id, params.desc)
+        return null
+      }
+      case 'delete_custom_face': {
+        if (state.napcat) {
+          const id = params.res_id || params.emoji_id
+          if (!id) throw new Error('res_id or ids is required')
+          faces.delete(id)
+          return { result: 0, errMsg: '操作成功' }
+        }
+        faces.delete(params.emoji_id)
+        return null
+      }
       case 'send_qzone_msg': {
         // 模拟空间不认配图（图太大 / 格式不对）：带图发说说直接失败，用来测「退回只发文字」
         if (state.failQzoneImage && params.images && params.images.length) throw new Error('第 1 张图片上传失败: 上传图片失败:响应缺少必要字段')

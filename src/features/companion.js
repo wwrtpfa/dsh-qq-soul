@@ -192,11 +192,27 @@ export function createSpeakUp({ getConfig, hub, log, isMuted, memory }) {
     const owner = cfg.ownerName || '主人'
     const idle = Math.round((Date.now() - lastPrivateAt()) / 60000)
     const angle = ANGLES[Math.floor(Math.random() * ANGLES.length)]
+    // 不想说可以不说，但要留半句原因——只进日志，让主人看得到你在想什么，不会发到 QQ。
+    const whyHint = '不想说就只回 [沉默] 再跟半句原因（例如「[沉默] 他在忙，别打扰」）；这句原因只写进日志，不会发出去。'
     const prompt = nudge
-      ? `【系统提醒，不是${owner}说的话】你刚才跟${owner}说「${String(hub.lastBotToOwner?.text || '').slice(-60)}」，${owner}已经 ${idle} 分钟没回了。可以轻轻追一句（比如「人呢」「睡着啦？」，或者换个话题），别催、别抱怨；觉得${owner}在忙就只回 [沉默]。`
-      : `【系统提醒，不是${owner}说的话】你已经 ${idle > 600 ? '很久' : idle + ' 分钟'}没和${owner}私聊了，想主动找${owner}说点什么。这次的由头可以是：${angle}。优先用手里真实的素材（最近做过的事、记忆里的、聊天流水里能查到的），没有真实素材就别硬找，也不要编；用你自己的口气，一两句就好，别用模板、别解释为什么来找；实在不想说就只回 [沉默]。`
-    log.info(`主动搭话（${reason}）`)
+      ? `【系统提醒，不是${owner}说的话】你刚才跟${owner}说「${String(hub.lastBotToOwner?.text || '').slice(-60)}」，${owner}已经 ${idle} 分钟没回了。可以轻轻追一句（比如「人呢」「睡着啦？」，或者换个话题），别催、别抱怨。${whyHint}`
+      : `【系统提醒，不是${owner}说的话】你已经 ${idle > 600 ? '很久' : idle + ' 分钟'}没和${owner}私聊了，想主动找${owner}说点什么。这次的由头可以是：${angle}。优先用手里真实的素材（最近做过的事、记忆里的、聊天流水里能查到的），没有真实素材就别硬找，也不要编；用你自己的口气，一两句就好，别用模板、别解释为什么来找。${whyHint}`
+    const startedAt = Date.now()
+    log.info(`主动搭话（${reason}）：${owner}已 ${idle} 分钟没回`)
     await hub.pushToSession({ chatId: `private:${cfg.ownerQQ}`, kind: 'private', userId: cfg.ownerQQ, nickname: owner }, [{ type: 'text', text: prompt }], '')
+    // 记下这一轮的结果：说了 / 她决定不说（带原因）/ 排队或发送没确认。
+    // 面板「日志」里筛「搭话」就能看到，不用再去翻会话记录。
+    const sil = hub.lastSilence
+    if (sil && sil.at >= startedAt && sil.chatId === `private:${cfg.ownerQQ}`) {
+      log.info(`主动搭话（${reason}）：她决定不说${sil.reason ? '（' + sil.reason + '）' : ''}`)
+      return { outcome: 'silent', reason: sil.reason || '', idle }
+    }
+    if ((hub.lastBotToOwner?.at || 0) >= startedAt) {
+      log.info(`主动搭话（${reason}）：说了`)
+      return { outcome: 'sent', idle }
+    }
+    log.info(`主动搭话（${reason}）：这轮没等到结果（可能排在别的对话后面）`)
+    return { outcome: 'unknown', idle }
   }
 
   /** 找白名单里的人：不提主人的事，这是她和对方自己的聊天。 */

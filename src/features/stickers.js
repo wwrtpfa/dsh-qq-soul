@@ -2,7 +2,8 @@
 // 发送时按备注 / 标签模糊匹配。本地库：~/.dsh/plugins-data/aurabot/stickers/
 
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, rmdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { dataDir, readJson, writeJson } from '../core/store.js'
 import { imageSize, mimeOf, stickerSizeOk } from '../chat/inbound.js'
@@ -12,6 +13,29 @@ import { askModel, canSeeImages } from '../core/llm.js'
 const dir = () => dataDir('stickers')
 const indexFile = () => join(dir(), 'index.json')
 const ext = (mime) => ({ 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' })[mime] || 'jpg'
+
+// NapCat 的 add_custom_face 只认「本机真实文件路径」：base64:// 和 file:// 都会被整串当路径去 stat，
+// 直接 ENOENT；而且 QQ 是沙盒应用，只有 ~/Downloads 这类放行目录读得到（/tmp、~/.dsh 都是 EPERM）。
+// 所以收藏时先往 ~/Downloads/qqsoul-tmp 落一个临时文件，加完立刻删——QQ 那边存的是它自己的副本。
+const tmpFaceDir = () => join(homedir(), 'Downloads', 'qqsoul-tmp')
+
+// 收藏表情的 res_id 形如 <QQ号>_0_0_0_<文件MD5大写>_0_0；fetch_custom_face 的链接里也是这一段。
+const RES_ID_RE = /^\d+_\d+_\d+_\d+_([0-9a-f]+)_\d+_\d+$/i
+const resIdLike = (id) => RES_ID_RE.test(String(id || '').trim())
+// 改备注要传 QQ 记的那个 md5，它就在 res_id 里（导入的表情尤其别用本地下载文件的 md5，可能被 QQ 转过格式）
+const md5OfResId = (id) => (String(id || '').trim().match(RES_ID_RE) || [])[1] || ''
+
+/** 从 fetch_custom_face 的条目里取出 res_id（返回链接或对象都认）。 */
+export function faceResIdFrom(entry) {
+  if (!entry) return ''
+  if (typeof entry === 'object') {
+    const direct = String(entry.res_id || entry.resId || entry.id || '').trim()
+    if (direct) return direct
+    entry = entry.url || entry.file || ''
+  }
+  const parts = String(entry).split('?')[0].split('/').filter(Boolean)
+  return parts.find((p) => RES_ID_RE.test(p)) || ''
+}
 
 export const DEFAULT_TAGS = ['开心', '卖萌', '生气', '委屈', '无语', '嘲讽', '疑惑', '早晚安']
 
@@ -126,6 +150,159 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
     }
   }
 
+  // ---------- 收藏到 QQ ----------
+  // 各网关的 add_custom_face 口味不一样：NapCat 只认本机文件路径，SnowLuma 认 base64。
+  // 先按网关类型选通道，一条走不通再换另一条，别把原来能用的网关搞坏。
+  let gatewayApp = null
+  async function gatewayAppName() {
+    if (gatewayApp !== null) return gatewayApp
+    try {
+      const v = await onebot.call('get_version_info', {}, { timeoutMs: 5000 })
+      gatewayApp = String(v?.app_name || v?.appName || '').toLowerCase()
+    } catch (error) {
+      gatewayApp = ''
+    }
+    return gatewayApp
+  }
+
+  /** 机器人号：res_id 的前缀。配置里有就用配置的，没有就问网关要一次。 */
+  let cachedUin = null
+  async function selfUin() {
+    const fromCfg = String(getConfig().botQQ || '').trim()
+    if (fromCfg) return fromCfg
+    if (cachedUin !== null) return cachedUin
+    try {
+      const r = await onebot.call('get_login_info', {}, { timeoutMs: 5000 })
+      cachedUin = String(r?.user_id || r?.userId || '').trim()
+    } catch (error) {
+      cachedUin = ''
+    }
+    return cachedUin
+  }
+
+  /**
+   * 当前 QQ 收藏表情：`[{ resId, md5, emojiId }]`。
+   * NapCat 用 fetch_custom_face_detail（带 resId / md5 / emoId，改备注就靠它）；
+   * 老网关只有 fetch_custom_face（只给链接），退回链接里抠 resId。都查不了返回 null。
+   */
+  async function listCustomFaces() {
+    try {
+      const r = await onebot.call('fetch_custom_face_detail', { count: 300 }, { timeoutMs: 15000 })
+      const list = Array.isArray(r) ? r : r?.data
+      if (Array.isArray(list)) {
+        return list.map((x) => ({
+          resId: String(x?.resId || x?.res_id || faceResIdFrom(x) || '').trim(),
+          md5: String(x?.md5 || '').toUpperCase(),
+          emojiId: Number(x?.emoId ?? x?.emojiId ?? 0) || 0,
+        })).filter((x) => x.resId)
+      }
+      return null
+    } catch (error) {
+      log.debug('读 QQ 收藏表情详情失败，改试简化列表：', error.message)
+    }
+    try {
+      const r = await onebot.call('fetch_custom_face', {}, { timeoutMs: 10000 })
+      const list = Array.isArray(r) ? r : r?.data
+      if (!Array.isArray(list)) return null
+      return list.map((x) => {
+        const resId = faceResIdFrom(x)
+        return { resId, md5: md5OfResId(resId).toUpperCase(), emojiId: 0 }
+      }).filter((x) => x.resId)
+    } catch (error) {
+      log.debug('读 QQ 收藏表情列表失败：', error.message)
+      return null
+    }
+  }
+
+  /** NapCat 通道：写临时文件 → 传纯路径 → 列表前后 diff 取 resId → 删临时文件。 */
+  async function addFaceByPath(buf, mime) {
+    const md5 = createHash('md5').update(buf).digest('hex')
+    const folder = tmpFaceDir()
+    mkdirSync(folder, { recursive: true })
+    const file = join(folder, `${md5}.${ext(mime)}`)
+    writeFileSync(file, buf)
+    try {
+      const before = await listCustomFaces()
+      await onebot.call('add_custom_face', { file }, { timeoutMs: 20000 })
+      if (before) {
+        const after = await listCustomFaces()
+        if (after) {
+          const fresh = after.filter((x) => !before.some((b) => b.resId === x.resId))
+          if (fresh.length) return fresh[fresh.length - 1]
+        }
+      }
+      // 列表查不了，或者这张本来就收藏过（返回 isExist）：res_id 里的 hash 就是文件内容的 MD5
+      const uin = await selfUin()
+      return uin ? { resId: `${uin}_0_0_0_${md5.toUpperCase()}_0_0`, md5: md5.toUpperCase(), emojiId: 0 } : null
+    } finally {
+      try { unlinkSync(file) } catch (error) {}
+      try { rmdirSync(folder) } catch (error) {} // 目录里还有别人的文件就不动它
+    }
+  }
+
+  /** 收藏一张到 QQ 的「我喜欢的」，返回 `{ resId, md5, emojiId }`；失败返回 null（本地已留档，不影响发送）。 */
+  async function addFaceToQQ(buf, mime) {
+    if (getConfig().dryRun) return null
+    if ((await gatewayAppName()).includes('napcat')) {
+      try {
+        const hit = await addFaceByPath(buf, mime)
+        if (hit) return hit
+      } catch (error) {
+        log.debug('按文件路径收藏到 QQ 没成，改走 base64 再试：', error.message)
+      }
+    }
+    try {
+      const r = await onebot.call('add_custom_face', { file: 'base64://' + buf.toString('base64') }, { timeoutMs: 30000 })
+      return { resId: String(r?.emoji_id || r?.res_id || ''), md5: '', emojiId: 0 }
+    } catch (error) {
+      log.warn('收藏到 QQ 失败（本地已留档）：', error.message)
+      return null
+    }
+  }
+
+  /**
+   * 改 QQ 收藏里那张的备注。
+   * NapCat 没有 modify_custom_face，用的是 set_custom_face_desc，而且 emoji_id / res_id / md5 / desc 四个都必填。
+   * 老网关（SnowLuma）仍是 modify_custom_face + emoji_id。两种都试，谁先成就用谁。
+   */
+  async function descFaceInQQ(item, desc) {
+    const rec = typeof item === 'string' ? { emojiId: item } : (item || {})
+    const id = String(rec.emojiId || '').trim()
+    const text = String(desc || '').trim().slice(0, 20)
+    if (!id || !text || getConfig().dryRun) return false
+    const md5 = (md5OfResId(id) || String(rec.md5 || '')).toUpperCase()
+    const emojiNum = Number(rec.qqEmojiId) || 0
+    const napcatForm = { api: 'set_custom_face_desc', params: { emoji_id: emojiNum, res_id: id, md5, desc: text } }
+    const legacyForm = { api: 'modify_custom_face', params: { emoji_id: id, desc: text } }
+    const forms = resIdLike(id) ? [napcatForm, legacyForm] : [legacyForm, napcatForm]
+    let last = null
+    for (const f of forms) {
+      try {
+        await onebot.call(f.api, f.params, { timeoutMs: 10000 })
+        return true
+      } catch (error) {
+        last = error
+      }
+    }
+    throw last || new Error('改备注失败')
+  }
+
+  /** 从 QQ 收藏里删掉对应的一张。 */
+  async function deleteFaceFromQQ(id) {
+    if (!id || getConfig().dryRun) return false
+    const forms = resIdLike(id) ? [{ res_id: id }, { emoji_id: id }] : [{ emoji_id: id }, { res_id: id }]
+    let last = null
+    for (const p of forms) {
+      try {
+        await onebot.call('delete_custom_face', p, { timeoutMs: 10000 })
+        return true
+      } catch (error) {
+        last = error
+      }
+    }
+    throw last || new Error('删除失败')
+  }
+
   /** 收一张表情。seg 必须已经过 isStickerSegment 严格判定。 */
   async function collect(seg, from) {
     const cfg = getConfig().stickers
@@ -154,14 +331,10 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
     const marketId = String(d.emoji_id ?? d.emojiId ?? '').trim()
     if (marketId) item.market = { emojiId: marketId, packageId: Number(d.emoji_package_id ?? d.emojiPackageId ?? 0) || 0, key: String(d.key ?? '') }
     recent.push(now)
-    // 收藏到 QQ
+    // 收藏到 QQ（emojiId 里存的是 QQ 那边的 res_id）
     if (!getConfig().dryRun) {
-      try {
-        const r = await onebot.call('add_custom_face', { file: 'base64://' + buf.toString('base64') })
-        item.emojiId = String(r?.emoji_id || '')
-      } catch (error) {
-        log.warn('收藏到 QQ 失败（本地已留档）：', error.message)
-      }
+      const face = await addFaceToQQ(buf, mime)
+      if (face) { item.emojiId = face.resId; item.qqEmojiId = face.emojiId }
     }
     lib.items.push(item)
     saveLibrary(lib)
@@ -177,7 +350,7 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
         it.tags = tags.length ? tags : it.tags
         saveLibrary(l)
         if (it.emojiId && it.name) {
-          try { await onebot.call('modify_custom_face', { emoji_id: it.emojiId, desc: it.name.slice(0, 20) }) } catch (error) { log.warn('写回 QQ 备注失败：', error.message) }
+          try { await descFaceInQQ(it, it.name) } catch (error) { log.warn('写回 QQ 备注失败：', error.message) }
         }
         log.info(`表情 ${md5.slice(0, 8)} 起名「${it.name}」${it.tags.length ? ' #' + it.tags.join(' #') : ''}`)
       }).catch((error) => log.warn('表情起名收尾出错：', error.message))
@@ -198,13 +371,12 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
     writeFileSync(join(dir(), file), buf)
     const { width, height } = imageSize(buf)
     const item = { md5, file, name: String(name).slice(0, 12), tags, from, at: Date.now(), width, height, bytes: buf.length, emojiId: '' }
-    if (toQQ && !getConfig().dryRun) {
-      try {
-        const r = await onebot.call('add_custom_face', { file: 'base64://' + buf.toString('base64') })
-        item.emojiId = String(r?.emoji_id || '')
-        if (item.emojiId && item.name) await onebot.call('modify_custom_face', { emoji_id: item.emojiId, desc: item.name })
-      } catch (error) {
-        log.warn('收藏到 QQ 失败（本地已留档）：', error.message)
+    if (toQQ) {
+      const face = await addFaceToQQ(buf, mime)
+      if (face) item.emojiId = face.resId
+      if (face) item.qqEmojiId = face.emojiId
+      if (item.emojiId && item.name) {
+        try { await descFaceInQQ(item, item.name) } catch (error) { log.warn('写回 QQ 备注失败：', error.message) }
       }
     }
     lib.items.push(item)
@@ -240,7 +412,7 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
     const it = lib.items.find((i) => i.md5 === md5)
     if (!it) return { ok: false, reason: '没有这张' }
     if (fromQQ && it.emojiId) {
-      try { await onebot.call('delete_custom_face', { emoji_id: it.emojiId }) } catch (error) { log.warn('从 QQ 收藏里删除失败：', error.message) }
+      try { await deleteFaceFromQQ(it.emojiId) } catch (error) { log.warn('从 QQ 收藏里删除失败：', error.message) }
     }
     try { unlinkSync(join(dir(), it.file)) } catch (error) {}
     lib.items = lib.items.filter((i) => i.md5 !== md5)
@@ -258,7 +430,7 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
     if (fromQQ && !getConfig().dryRun) {
       for (const it of found) {
         if (!it.emojiId) continue
-        try { await onebot.call('delete_custom_face', { emoji_id: it.emojiId }) } catch (error) { qqFailed++; log.warn('从 QQ 收藏里删除失败：', error.message) }
+        try { await deleteFaceFromQQ(it.emojiId) } catch (error) { qqFailed++; log.warn('从 QQ 收藏里删除失败：', error.message) }
       }
     }
     for (const it of found) { try { unlinkSync(join(dir(), it.file)) } catch (error) {} }
@@ -278,7 +450,7 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
     if (name !== undefined) it.name = String(name).trim().slice(0, 12)
     if (tags !== undefined) it.tags = [...new Set((Array.isArray(tags) ? tags : []).map((t) => String(t).replace(/^#/, '').trim().slice(0, 8)).filter(Boolean))].slice(0, 5)
     saveLibrary(lib)
-    if (it.emojiId && !getConfig().dryRun) onebot.call('modify_custom_face', { emoji_id: it.emojiId, desc: it.name }).catch(() => {})
+    if (it.emojiId && !getConfig().dryRun) descFaceInQQ(it, it.name).catch(() => {})
     return { ok: true, item: it }
   }
 
@@ -315,7 +487,17 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
         const md5 = createHash('md5').update(buf).digest('hex')
         if (loadLibrary().items.some((i) => i.md5 === md5)) { existed++; continue }
         const r = await addFromBuffer(buf, { from: 'qq', toQQ: false })
-        if (r.ok && !r.existed) { added++; named.push({ md5, buf }) } else failed++
+        if (r.ok && !r.existed) {
+          added++
+          // 顺手记下它在 QQ 收藏里的 res_id，以后改备注 / 删除才能对上号
+          const resId = faceResIdFrom(url)
+          if (resId) {
+            const l = loadLibrary()
+            const it = l.items.find((i) => i.md5 === md5)
+            if (it && !it.emojiId) { it.emojiId = resId; saveLibrary(l) }
+          }
+          named.push({ md5, buf })
+        } else failed++
       }
       log.info(`从 QQ 收藏导入表情：新加 ${added} 张，已有 ${existed} 张${failed ? `，${failed} 张下不来` : ''}`)
       // 后台起名（一张张来，别一下子打满模型）

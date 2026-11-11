@@ -272,6 +272,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   let lastOwnerChatAt = 0
   const lastPrivateAt = new Map() // QQ 号 → 最后一次和这个人私聊的时间（主动搭话白名单用）
   let lastBotToOwner = { at: 0, text: '' } // 她在主人私聊里最后说的话
+  let lastSilence = { at: 0, chatId: '', reason: '' } // 她最后一回「选择不说话」（含原因，面板日志用）
 
   function bump(k) {
     const d = todayKey()
@@ -958,8 +959,10 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     }
   }
 
-  function silenceTurn(chatId) {
-    log.info(`${chatId}：她选择不说话`)
+  function silenceTurn(chatId, reason = '') {
+    const why = String(reason || '').replace(/\s+/g, ' ').trim().slice(0, 100)
+    lastSilence = { at: Date.now(), chatId, reason: why }
+    log.info(`${chatId}：她选择不说话${why ? '（' + why + '）' : ''}`)
     if (chatId.startsWith('group:')) {
       const gid = chatId.slice(6)
       groupEngaged.delete(gid)
@@ -992,7 +995,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     if (disposed) return
     text = cleanOutboundText(text, { ...cleaningFor(chatId), onPromptDecision: (allow) => { outputScope.getStore().allowPromptEcho = allow } })
     const r = parseReply(text, cleaningFor(chatId))
-    if (r.silent) return silenceTurn(chatId)
+    if (r.silent) return silenceTurn(chatId, r.reason)
     let items = r.items
     // 说话方式：总开关关着 = 只发文字；四种模式互斥，先统一改好 items，后面只负责发。
     const vmode = cfg.voice.enabled ? cfg.voice.mode : 'text'
@@ -2527,6 +2530,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     get lastOwnerChatAt() { return lastOwnerChatAt },
     lastPrivateAt: (qq) => lastPrivateAt.get(String(qq)) || 0,
     get lastBotToOwner() { return lastBotToOwner },
+    get lastSilence() { return lastSilence },
     get selfId() { return selfId },
     groupNames,
   }

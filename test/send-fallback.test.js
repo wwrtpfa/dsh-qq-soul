@@ -164,3 +164,13 @@ test('群里回 [沉默]：退出话题，不发东西，日志记下她不想�
   assert.ok(s.logs.some((line) => line.includes('她选择不说话')))
 })
 
+test('沉默原因写进日志，能看出她在想什么，且一个字都不发', async (t) => {
+  const s = setup(t, null)
+  await s.hub.deliver('private:1', '[沉默] 主人三个小时没回，别刷屏')
+  assert.equal(s.calls.length, 0, '原因不能发出去')
+  const line = s.logs.find((x) => x.includes('她选择不说话'))
+  assert.ok(line, '要有一行沉默日志')
+  assert.match(line, /主人三个小时没回，别刷屏/, '原因要跟着进日志')
+  assert.deepEqual(s.hub.lastSilence.reason, '主人三个小时没回，别刷屏', '面板能读到最近一次沉默原因')
+})
+

@@ -30,10 +30,20 @@ export function stripMarkdown(text) {
     .trim()
 }
 
+// 沉默标记后面可以跟半句原因（「[沉默] 主人在忙」）：这句原因只进日志，不会发到 QQ。
+// 主动搭话这类「她有权不打扰」的场合让她说清楚为什么，面板日志里就能看到她在想什么。
+const SILENCE_LINE = /^(?:\[沉默\]|［沉默］|\(沉默\)|（沉默）)[\s：:，,、—-]*([\s\S]*)$/
+
 /** 是不是「这次不说话」。 */
 export function isSilence(text) {
   const t = String(text || '').trim()
-  return t === '' || t === SILENCE || t === '［沉默］' || t === '(沉默)' || t === '（沉默）'
+  return t === '' || SILENCE_LINE.test(t)
+}
+
+/** 沉默时顺带写的原因；不是沉默返回 ''。 */
+export function silenceReason(text) {
+  const m = String(text || '').trim().match(SILENCE_LINE)
+  return m ? String(m[1] || '').replace(/\s+/g, ' ').trim().slice(0, 100) : ''
 }
 
 const ZERO_WIDTH_CHARS = new Set(['\u200B', '\u200C', '\u200D', '\uFEFF', '\u2060'])
@@ -326,7 +336,7 @@ export function parseReply(text, options) {
   const cleaned = cleanOutboundText(text, options)
   const code = codeRanges(cleaned)
   const raw = cleaned.replace(/<br\s*\/?>/gi, (tag, offset) => insideCode(code, offset, offset + tag.length) ? tag : '\n').trim()
-  if (isSilence(raw)) return { silent: true, items: [] }
+  if (isSilence(raw)) return { silent: true, reason: silenceReason(raw), items: [] }
   const items = []
   let replyTo = '' // 等着挂到下一条气泡上的「引用回复」编号
   const attach = (from) => {
