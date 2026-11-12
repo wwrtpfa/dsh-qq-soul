@@ -18,8 +18,8 @@ import { mimeOf } from '../chat/inbound.js'
 export const AUTO_MODELS = ['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare', 'gpt-image-2']
 export const QUALITIES = ['low', 'medium', 'high', 'auto']
 const KEY_FIELD = 'OPENAI_API_KEY'
-const REQUEST_TIMEOUT_MS = 180000
-const MODEL_UNAVAILABLE_CODES = new Set(['model_not_found', 'unsupported_model', 'invalid_model', 'sub2_request_rejected'])
+const REQUEST_TIMEOUT_MS = 300000
+const MODEL_UNAVAILABLE_CODES = new Set(['model_not_found', 'unsupported_model', 'invalid_model'])
 
 function apiImageError (code, message) {
   return Object.assign(new Error(message), { code })

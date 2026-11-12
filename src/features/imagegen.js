@@ -80,9 +80,11 @@ export async function resolveDrawImage(image, { hub, chat }) {
 }
 
 const UNSUPPORTED_REFERENCE = '这个生图服务不支持参考图'
-function serviceError(status, message, image, body) {
+// 中转有时会很慢（实测同一张图 20 秒到 2 分钟都有），180 秒会误伤；给 5 分钟。
+const REQUEST_TIMEOUT_MS = 300000
+function serviceError(status, message, image, body, rawMessage = message) {
   const unsupported = [404, 405, 415, 501].includes(status)
-    || ([400, 422].includes(status) && /(?:(?:unsupported|not support|does not support|not available|unknown|unrecognized).*(?:image|edit|model)|(?:image|edit|model).*(?:unsupported|not support|does not support|not available)|不支持.*(?:图|编辑|模型)|(?:图|编辑|模型).*不支持)/i.test(message))
+    || ([400, 422].includes(status) && /(?:(?:unsupported|not support|does not support|not available|unknown|unrecognized).*(?:image|edit|model)|(?:image|edit|model).*(?:unsupported|not support|does not support|not available)|不支持.*(?:图|编辑|模型)|(?:图|编辑|模型).*不支持)/i.test(rawMessage))
   // 把状态码和响应体带上：上层要靠它判断「是模型不可用，换一个再试」
   return Object.assign(new Error(image && unsupported ? UNSUPPORTED_REFERENCE : message), { status, body })
 }
@@ -179,7 +181,16 @@ export function createImageGen({ getConfig, log, local, fetchImpl, codexAuth, ap
    * 接口地址 / 密钥留空时用本机 Codex 配置里的那份（原来是单列的「本地 api-image」）。
    */
   async function viaOpenAI (c, prompt, image) {
-    let base = String(c.baseUrl || '').trim().replace(/\/+$/, '')
+    // 面板让人「填到 /v1 为止」，但直接粘根地址（https://api.xxx.com）也很常见：
+    // 没有路径时补 /v1，免得请求打到 https://api.xxx.com/images/generations 被当成参数错误。
+    const rawBase = String(c.baseUrl || '').trim().replace(/\/+$/, '')
+    let base = rawBase
+    if (/^https?:\/\//i.test(rawBase)) {
+      try {
+        const u = new URL(rawBase)
+        if (!u.pathname || u.pathname === '/') base = rawBase + '/v1'
+      } catch (error) {}
+    }
     let key = String(c.apiKey || '').trim()
     if (!base || !key) {
       const p = codexProvider(c.apiImage || {})
@@ -208,11 +219,17 @@ export function createImageGen({ getConfig, log, local, fetchImpl, codexAuth, ap
   async function openaiOnce ({ base, key, model, quality, prompt, image, size }) {
     const endpoint = `${base}/images/${image ? 'edits' : 'generations'}`
     // 没选尺寸就一个尺寸参数都不发：让接口按提示词自己定（有些服务收到不认识的 size 直接报错）
-    const body = { model, prompt, n: 1, response_format: 'b64_json', ...(size ? { size, image_size: size } : {}) }
+    const body = { model, prompt, n: 1, ...(size ? { size, image_size: size } : {}) }
+    // gpt-image 系列默认就回 b64_json，官方接口也不认 response_format；
+    // 只有 dall-e 这类老模型需要显式要 base64（不然回的是 URL，我们也能下）。
+    if (!/^gpt-image/i.test(String(model || ''))) body.response_format = 'b64_json'
     if (quality) body.quality = quality
     // 参考图的字段名各家不一样：OpenAI 官方是 image，不少代理只认 image[]
     let field = 'image[]'
     let r, j
+    // 这两类参数不是每家都认：被拒了去掉再发。被拒的请求没出图，重发不会多画。
+    const optional = ['response_format', 'image_size', 'quality']
+    const dropped = new Set()
     for (;;) {
       const headers = key ? { authorization: `Bearer ${key}` } : {}
       let payload
@@ -226,19 +243,48 @@ export function createImageGen({ getConfig, log, local, fetchImpl, codexAuth, ap
         headers['content-type'] = 'application/json'
         payload = JSON.stringify(body)
       }
-      r = await fetch(endpoint, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(180000) })
+      try {
+        r = await fetch(endpoint, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+      } catch (error) {
+        // 有些中转在缺尺寸时会把请求挂住；直接抛英文 TimeoutError 用户看不懂
+        if (error?.name === 'TimeoutError' || error?.name === 'AbortError' || /aborted|timeout/i.test(String(error?.message || ''))) {
+          throw new Error(`生图接口 ${REQUEST_TIMEOUT_MS / 1000} 秒没返回（模型 ${model}）。如果构图选了「不指定」，先选「方图 1:1」再试；也可以换模型或稍后再试。`)
+        }
+        throw error
+      }
       j = await r.json().catch(() => ({}))
       if (r.ok) break
       const message = j?.error?.message || j?.message || `HTTP ${r.status}`
-      // response_format / image_size / quality 不是每家都认（官方 OpenAI 就不认）：被拒了去掉再发。
-      // 被拒的请求没出图，重发不会多画
-      const bad = !image && r.status === 400 && ['response_format', 'image_size', 'quality'].find((k) => k in body && message.includes(k))
-      if (bad) { delete body[bad]; continue }
-      // 参考图字段名不认（服务说「缺少 image」这种）：换另一种写法再试一次。
-      // 只说「不支持参考图 / 不认这个参数」的不重试 —— 那是服务压根不支持，换名字也没用
+      // ① 错误里点名了某个可选参数：删掉它重发（例如 "Unknown parameter: 'response_format'"）
+      const named = !image && optional.find((k) => k in body && message.includes(k))
+      if (named) {
+        delete body[named]
+        dropped.add(named)
+        log.warn(`生图接口不认 ${named}，去掉再试（${model}）`)
+        continue
+      }
+      // ② 只回一句「请检查请求参数」、没点名：按最可能不被支持的顺序逐个去掉再试。
+      //    不碰 size —— 那是用户选的构图，静默改掉会画成另一个比例。
+      //    也不碰 API key / 额度这类错误：那跟参数无关，重发只会白等。
+      const paramReject = /(参数|parameter|invalid request|bad request|请求参数|请求格式|未被接受|unrecognized|unknown (?:field|parameter)|extra (?:field|input))/i.test(message)
+      const authOrQuota = /(api\s*key|apikey|unauthorized|forbidden|authentication|invalid token|认证|密钥|令牌|权限|余额|额度|quota|billing)/i.test(message)
+      if (!image && [400, 422].includes(r.status) && paramReject && !authOrQuota) {
+        const next = optional.find((k) => k in body && !dropped.has(k))
+        if (next) {
+          delete body[next]
+          dropped.add(next)
+          log.warn(`生图接口拒绝了这次请求，去掉 ${next} 再试（${model}）：${message}`)
+          continue
+        }
+      }
+      // ③ 参考图字段名不认（服务说「缺少 image」这种）：换另一种写法再试一次。
+      //    只说「不支持参考图 / 不认这个参数」的不重试 —— 那是服务压根不支持，换名字也没用
       const missingField = [400, 422].includes(r.status) && /image/i.test(message) && /(missing|required|缺少|必须)/i.test(message)
       if (image && field === 'image[]' && missingField) { field = 'image'; continue }
-      throw serviceError(r.status, message, image, j)
+      // 带上模型和接口给的错误码：只回一句中文，用户根本不知道该改哪里
+      const issue = j?.error && typeof j.error === 'object' ? j.error : j
+      const code = String(issue?.code || j?.code || '').trim()
+      throw serviceError(r.status, `生图接口拒绝了 ${model}（HTTP ${r.status}${code ? ' · ' + code : ''}）：${message}`, image, j, message)
     }
     const item = (j.data || j.images || [])[0] || {}
     if (item.b64_json) return Buffer.from(item.b64_json, 'base64')
@@ -257,7 +303,7 @@ export function createImageGen({ getConfig, log, local, fetchImpl, codexAuth, ap
       method: req.method,
       headers: req.headers,
       body: req.body,
-      signal: AbortSignal.timeout(180000),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
     const type = String(r.headers.get('content-type') || '')
     // 直接返回图片字节（pollinations 这类）

@@ -184,6 +184,70 @@ test('OpenAI 生图：response_format 被拒后去掉该参数重试并收到图
   }
 })
 
+test('OpenAI 生图：只回「请检查请求参数」时，逐个去掉可选参数重试', async () => {
+  const calls = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body) })
+    if (calls.length <= 2) {
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({ error: { code: 'sub2_request_rejected', message: '模型请求未被接受，请检查请求参数' } }),
+      }
+    }
+    return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: PNG.toString('base64') }] }) }
+  }
+  const gen = imageGen()
+  try {
+    assert.deepEqual(await gen.generate('一颗虚构的星星'), PNG)
+    assert.equal(calls.length, 3, '最多按可选参数个数重试')
+    assert.equal(Object.hasOwn(calls[0].body, 'response_format'), true)
+    assert.equal(Object.hasOwn(calls[1].body, 'response_format'), false)
+    assert.equal(Object.hasOwn(calls[1].body, 'image_size'), true)
+    assert.equal(Object.hasOwn(calls[2].body, 'image_size'), false)
+    assert.equal(calls[2].body.size, '1024x1024', '用户选的尺寸不能被静默去掉')
+  } finally {
+    gen.dispose()
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('OpenAI 生图：gpt-image 系列不发送官方不认的 response_format', async () => {
+  const calls = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body) })
+    return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: PNG.toString('base64') }] }) }
+  }
+  const gen = createImageGen({ getConfig: () => ({ imageGen: { ...imageConfig, model: 'gpt-image-2' } }), log, local: null })
+  try {
+    assert.deepEqual(await gen.generate('一颗虚构的星星'), PNG)
+    assert.equal(calls[0].body.model, 'gpt-image-2')
+    assert.equal(Object.hasOwn(calls[0].body, 'response_format'), false)
+  } finally {
+    gen.dispose()
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('OpenAI 生图：接口地址只填根地址时自动补 /v1', async () => {
+  const calls = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url) => {
+    calls.push(url)
+    return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: PNG.toString('base64') }] }) }
+  }
+  const gen = createImageGen({ getConfig: () => ({ imageGen: { ...imageConfig, baseUrl: 'https://images.example.invalid' } }), log, local: null })
+  try {
+    await gen.generate('一颗虚构的星星')
+    assert.equal(calls[0], 'https://images.example.invalid/v1/images/generations')
+  } finally {
+    gen.dispose()
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('OpenAI 生图：普通 400 原样报错，不重试', async () => {
   const calls = []
   const originalFetch = globalThis.fetch
