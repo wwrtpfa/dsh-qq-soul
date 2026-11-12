@@ -60,37 +60,55 @@ QQ ⇄ NapCat / SnowLuma (OneBot v11, installed by you) ⇄ this plugin ⇄ DSH 
 
 ## 🚀 Quick start
 
-**Requirements:** a machine that runs DeepSeek Harness (Windows is easiest), a spare QQ account for the bot, and a QQ gateway (SnowLuma on Windows; any OneBot v11 implementation on Linux/Docker).
+**3 minutes to talk to her in QQ.** You need: a computer, a spare QQ account, and a gateway that keeps the bot account online.
 
-### 1. Install the plugin
+> Prefer a guided page? Open [`docs/install.html`](docs/install.html) in a browser; it shows only the steps for your OS.
+> Want the long version? See [`docs/quickstart.md`](docs/quickstart.md) (Chinese).
 
-**Windows desktop:**
+### Three required steps
 
-```powershell
-& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add /absolute/path/dsh-qq-soul
-```
+**① Install the plugin**
 
-**Linux / Docker** (replace `<profile>` with yours; run inside the container if applicable):
+In DSH choose **"install from a local directory"** and point it at this folder — **not** a GitHub URL. Restart DSH and **QQ Soul** appears in the sidebar.
+
+CLI equivalent:
 
 ```bash
-dsh plugin --profile <profile> add /absolute/path/dsh-qq-soul
+dsh plugin --profile <profile> add "<plugin directory>"
 ```
 
-Restart DSH; **QQ Soul** appears in the sidebar under *Automation*.
+**② Put the bot account online**
 
-### 2. Follow the setup wizard
+| OS | Gateway | How |
+|---|---|---|
+| **macOS** | NapCat | Install into QQ → open `http://127.0.0.1:6099` and scan the bot account → enable **forward WebSocket** (recommended port `6700`) → back in the panel, **Connection → Start QQ & gateway** |
+| **Windows** | SnowLuma full / NapCat | NapCat already installed? Use it. Otherwise download [SnowLuma](https://github.com/SnowLuma/SnowLuma/releases) full (not lite), extract to an ASCII-only path, accept the EULA yourself, log in the bot account, then click **Start QQ & gateway** |
 
-1. Enter the bot’s QQ number (a spare account) and your own QQ number
-2. Choose a gateway:
-   - **SnowLuma (Windows)**: download & extract [SnowLuma](https://github.com/SnowLuma/SnowLuma/releases) → start it → accept its EULA yourself in the panel (a console password is generated) → log in the bot account → click “attach bot account”
-   - **Existing OneBot bot**: NapCat, LLOneBot, Lagrange or Dockerized SnowLuma all work; paste the forward WebSocket URL (and token). The plugin only connects — it never starts or injects into anything
-3. Start in dry run (replies only, nothing sent) or go live
+> SnowLuma is Windows-only; on macOS the panel preselects NapCat. LLOneBot, Lagrange and any OneBot v11 implementation also work.
 
-> **Linux / Docker notes:** voice needs `python3-venv` or [uv](https://docs.astral.sh/uv/); RVC covers are Windows-only for now; when connecting to OneBot on the host or another container, use a reachable host/port instead of `127.0.0.1`.
+**③ Dry run**
 
-### 3. Upgrade
+Leave **Dry run** on, message the bot from your main account, and check **Overview → Logs** to see what she thought. Turn dry run off when it looks right.
 
-Re-run the install command and restart DSH — settings, persona and memory are preserved. Enable *subscribe to unstable versions* in the panel for beta/rc update notices.
+> ⚠️ Do **not** install the upstream Aurabot plugin alongside this one — same mount ID and data directory, which causes duplicate replies.
+
+### Optional extras (chat works without them)
+
+- **Voice notes / local voices**: panel **Overview → Audio service → Start**, then enable it and preview a line on the **Voice** page. Online edge-tts is the default and needs zero downloads.
+- **Covers / singing with her voice** (macOS ~5 GB, Windows ~8 GB): panel **Song → One-click install**, then import a `.pth` voice model you have rights to use. Pick the install location with the buttons — never type paths by hand.
+- **Desktop pet / image generation**: install from their own panel pages; they do not affect QQ chat.
+
+### Self-check
+
+Panel **Install center** shows five lights: **plugin / QQ gateway / audio service / voice / covers**. The first two must be green; the rest track optional features. The detailed **Connection check** runs `service / deps / gateway / tts / song`; copy any red step's error to an AI.
+
+### Upgrade
+
+Run the local-directory install again and restart DSH. Settings, persona and memory are preserved.
+
+### Audio service & covers (implementation notes)
+
+Voice and singing are served by the bundled `services/` package: **single port `127.0.0.1:9876`, zero third-party deps, off by default, no bundled models**. See [docs/SERVICE.md](docs/SERVICE.md) (Chinese) for endpoints, installers, self-check and backend selection.
 
 ## 🧩 Module system
 
@@ -136,7 +154,7 @@ Apart from the core (config, QQ gateway, chat hub, persona, permissions, panel),
 <details>
 <summary><b>Does it require Windows?</b></summary>
 
-No. The plugin runs on Linux/macOS/Windows; Windows is easiest because of the SnowLuma gateway and RVC cover support. On Linux/Docker, connect your own OneBot v11 bot; voice needs a Python venv.
+No. The plugin runs on Linux/macOS/Windows. macOS uses NapCat as the gateway and its own one-click RVC installer; Windows can use SnowLuma or NapCat. On Linux/Docker, connect your own OneBot v11 bot; voice needs a Python venv.
 </details>
 
 <details>

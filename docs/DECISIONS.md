@@ -39,7 +39,7 @@
 | 「Windows 上是 4.6」（口述含糊） | ⚠️ 待确认，不阻塞 | §7.3 Windows 走 **SnowLuma 完整版 zip（非 lite）**，用户自己下载解压、本人同意 EULA；「4.6」疑为版本号，未写死 |
 | **说话：默认零下载，可选本地 GPT-SoVITS 或千问 MLX** | ✅ 已定 | 决策 4、13、§4.4 三档分发；默认 edge-tts（微软在线）／Breeze（远程，只填 key） |
 | **千问 MLX 就是千问 3-TTS 模型，选模型目录加载** | ✅ 已定 | 决策 13／§4.4「纯手动导入」：`models.json` 给链接 → 选目录加载 → 校验 → 路径持久化；「软件连过去」对应 `paths.*` 与 `service.url` 外部服务模式 |
-| **唱歌 Windows 那边我不管，Mac 用自己的** | ✅ 已定 | 决策 5、7、12；Mac 复用已跑通的 `~/tools/applio` + demucs htdemucs；Windows 沿用上游一键装，不投入 |
+| **唱歌两个平台都走本地 RVC** | ✅ 已定 | 决策 5、7、12；macOS 与 Windows 都由面板「翻唱 → 一键安装」装独立环境，不再依赖作者本机的旧装法 |
 | **常驻进程：一个引擎一个 worker** | ✅ 已定 | 决策 8、14；千问 MLX 与 GPT-SoVITS PyTorch/MPS 不能同进程，是硬约束 |
 | **switch 切换：原来的先断掉，再切入** | ✅ 已定 | 决策 14：`switch(kind, engine)` = terminate 旧进程 → 起新进程，靠 OS 回收内存；探针音验证 |
 | **安装包不带大模型，给下载路径** | ✅ 已定 | 决策 13；本机实测 GPT-SoVITS 7.7 GB + Applio 2.0 GB + 音色 565 MB + qwen 488 MB ≈ 10.8 GB；仓库目标 <5 MB 纯代码、零权重 |
@@ -72,7 +72,7 @@
 
 ### 2.3 安装、模型、分发
 
-12. **双平台一键安装**：共用上层 UX（检测表／6 步进度／断点续传／镜像 fallback／sha256／手动拖入／人话报错），底下拆 `installer/mac` 与 `installer/win` 两个 provider。**Mac 首版只做「检测 + 复用已装 `~/tools/applio` + 手动加载」，不自动装 torch**（MPS 组合最易翻车，先保住能跑）。
+12. **双平台一键安装**：共用上层 UX（检测表／6 步进度／断点续传／镜像 fallback／sha256／手动拖入／人话报错），底下拆 `installer/mac` 与 `installer/win` 两个 provider。**两个平台都支持面板「翻唱 → 一键安装」**：macOS 装独立 `env/`（CPU / MPS 版 PyTorch），Windows 装 CUDA 版；也保留检测并复用已装环境。
 13. **安装包不带大模型**：三档分发（零下载默认 / 按需轻量 / 纯手动导入）；链接清单 `models.json`；仓库 <5 MB 纯代码、零权重。
 14. **ModelRegistry**：统一管 `tts / rvc / separator`；一个引擎一个独立 worker 进程；`switch` = terminate 旧 → 起新；三层回收（引擎互斥 → idle 8 分钟 → 音色 LRU=2）；切换后合成探针音返回 `{from, to, releasedMB, probeOk}`。配置热重载归上游，**模型生命周期归 service 包**，全程无需重启 DSH。
 15. **网关方向**：现状 NapCat **反向** WS 连桥 6700 → 目标插件去连 OneBot **正向** WS。这是唯一无法靠配置绕过的硬改动，P6 单独验收。迁移时要关掉 NapCat 里连 6700 的 `websocketClients`，否则同一 QQ 号被两个消费者抢答。

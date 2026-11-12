@@ -336,7 +336,11 @@ export function parseReply(text, options) {
   const cleaned = cleanOutboundText(text, options)
   const code = codeRanges(cleaned)
   const raw = cleaned.replace(/<br\s*\/?>/gi, (tag, offset) => insideCode(code, offset, offset + tag.length) ? tag : '\n').trim()
-  if (isSilence(raw)) return { silent: true, reason: silenceReason(raw), items: [] }
+  if (isSilence(raw)) {
+    const reason = silenceReason(raw)
+    // 没说原因的沉默保持原来的形状（silent + items），只有真写了 `[沉默] 原因` 才多一个 reason 字段
+    return reason ? { silent: true, reason, items: [] } : { silent: true, items: [] }
+  }
   const items = []
   let replyTo = '' // 等着挂到下一条气泡上的「引用回复」编号
   const attach = (from) => {

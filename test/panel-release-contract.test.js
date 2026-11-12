@@ -64,7 +64,7 @@ test('概览页给出带本机目录的音频服务启动命令', () => {
   assert.ok(body.includes('python3 -m services --serve'), 'macOS 启动命令不对')
   assert.ok(host.includes('pluginDir: ROOT'), 'host 没把插件目录交给面板')
   assert.ok(host.includes('platform: process.platform'), 'host 没把平台交给面板')
-  assert.ok(client.includes('h(ServiceCard, { st, draft, setDraft, toast })'), '概览页没挂音频服务卡片')
+  assert.ok(client.includes('h(ServiceCard, { st, draft, setDraft, toast, go })'), '概览页没挂音频服务卡片')
 })
 
 test('翻唱页有音乐源管理，试唱把 url / 候选交给 service', () => {

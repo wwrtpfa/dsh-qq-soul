@@ -10,7 +10,7 @@
 
 | 项              | 结论                                                                                                                                                              |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 现在在做的          | **B 路线**：`/Users/pengfanao/code/dsh-qq-soul`，基于 `aureth-labs/`但本质上， v1.2.0（MIT，HEAD `a41519c`）二开，产品名「懂你的QQ大肥鱼」。**P0 已完成**（去品牌、断上游回连、自有素材、前端原型、测试无新增红），下一步原计划 P1 |
+| 现在在做的          | **B 路线**：`<本仓库>`，基于 `aureth-labs/`但本质上， v1.2.0（MIT，HEAD `a41519c`）二开，产品名「懂你的QQ大肥鱼」。**P0 已完成**（去品牌、断上游回连、自有素材、前端原型、测试无新增红），下一步原计划 P1 |
 | 用户记混的关键        | **存在两套同名的 A / B / C**。一套是 11-07 调研报告里的「技术选型三条路线」，一套是 11-08 晚「项目必要性反思」里的「投入量级三条路线」。用户这次问的「A 和 C 是轻量级的」= **第二套**                                                  |
 | 第二套定义          | **A 收** = 不建新项目，只修 3 个 bug + 一键脚本 + 软解耦（1~~2 天）；**B 放** = P0~~P6 全套开源产品；**C 验** = 只做 P1（service 包剥离）+ 最小向导，找 2~3 人真装一次再决定                                       |
 | 用户最新倾向（尚未正式拍板） | 「不想做那么重，但想要解耦，又要把翻唱和 TTS 加进去，还有发图片」→ 精确对应 **C 的范围 + 三个能力必达**，本文称 **C′**；等价于「在 B 路线上按 C 收口：保留 P0，只做 P1，暂停 P2–P6」                                                 |
@@ -23,11 +23,11 @@
 
 | 名字     | 绝对路径                                                                                                                 | 是什么                                                      | 不是什么                                              |
 | ------ | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------- |
-| 抖音直播项目 | `/Users/pengfanao/code/dsh-pet-indesktop`                                                                            | 本会话的工作目录；含 Python 包 `pet.douyin_live`、9890 控制台、翻唱曲库与配置   | 不是 QQ 机器人产品                                       |
-| 旧桥     | `/Users/pengfanao/.dsh/profiles/desktop/node_modules/dsh-qq-onebot-bridge`（v0.8.5）                                   | **通道层**适配器 + 消息消费者：DSH Agent 的回复搬进/搬出 QQ；自带 8799 调试台     | 不是「大脑」，名字里的 bridge 一直误导人；也不是 NapCat               |
-| 新项目    | `/Users/pengfanao/code/dsh-qq-soul`                                                                                  | **产品层**：Aurabot 完整副本（人格、记忆、心情、审批、定时任务、25 页面板、5 步向导、模块系统） | 上游只是代码来源与 merge 源头，**不是运行时依赖**                    |
+| 抖音直播项目 | `<旧项目>`                                                                            | 本会话的工作目录；含 Python 包 `pet.douyin_live`、9890 控制台、翻唱曲库与配置   | 不是 QQ 机器人产品                                       |
+| 旧桥     | `~/.dsh/profiles/desktop/node_modules/dsh-qq-onebot-bridge`（v0.8.5）                                   | **通道层**适配器 + 消息消费者：DSH Agent 的回复搬进/搬出 QQ；自带 8799 调试台     | 不是「大脑」，名字里的 bridge 一直误导人；也不是 NapCat               |
+| 新项目    | `<本仓库>`                                                                                  | **产品层**：Aurabot 完整副本（人格、记忆、心情、审批、定时任务、25 页面板、5 步向导、模块系统） | 上游只是代码来源与 merge 源头，**不是运行时依赖**                    |
 | 运行副本   | `~/tools/gsv-run/`                                                                                                   | 真正被 `qq-stack.sh` 执行的脚本副本                                | 与仓库 `docs/qq-voice-kit/scripts/` 是两份，改错地方不生效（坑 2） |
-| NapCat | `~/Library/Containers/com.tencent.qq/Data/Documents/napcat/`；安装器已移到 `/Users/pengfanao/Downloads/NapCatInstaller.app` | **QQ 网关**：QQ → OneBot v11。注入进 QQ.app 同一进程                | 不是第二个 QQ、不是容器里的小号                                 |
+| NapCat | `~/Library/Containers/com.tencent.qq/Data/Documents/napcat/`；安装器已移到 `<NapCat 安装器>` | **QQ 网关**：QQ → OneBot v11。注入进 QQ.app 同一进程                | 不是第二个 QQ、不是容器里的小号                                 |
 | DSH    | DeepSeek Harness，用户已装                                                                                                | 宿主；提供 `dsh.llm`，两个插件共用同一个 LLM 底座                         | 不做安装引导                                            |
 
 **三坐标（判断「这东西属于谁」）**：运行位置 / 注册作用域 / 逻辑归属。  
@@ -134,7 +134,7 @@ DSH Agent 回复文字
 
 ### 3.1 第一套：11-07 调研报告里的「技术选型三条路线」
 
-出处：`/Users/pengfanao/code/dsh-pet-indesktop/docs/qq-voice-research.html:1097-1117`。
+出处：`<旧项目>/docs/qq-voice-research.html:1097-1117`。
 
 |   | 名称        | 内容                                                                 | 适合               |
 | - | --------- | ------------------------------------------------------------------ | ---------------- |
@@ -148,7 +148,7 @@ DSH Agent 回复文字
 
 ### 3.2 第二套：11-08 23:45「我为什么要做这个项目」给出的「投入量级三条路线」
 
-出处：`/Users/pengfanao/code/dsh-pet-indesktop/.workbuddy/memory/2026-11-08.md` 第七轮；用户这次问的就是它。
+出处：`<旧项目>/.workbuddy/memory/2026-11-08.md` 第七轮；用户这次问的就是它。
 
 |       | 名称              | 定义                                                        | 量级      |
 | ----- | --------------- | --------------------------------------------------------- | ------- |
@@ -261,7 +261,7 @@ DSH Agent 回复文字
    - `network.websocketServers` 从 `[]` 改成 `[{ "enable": true, "port": 3001, ... }]`（正向 WS 服务端）；
    - **必须关掉** `network.websocketClients` 里 `{name:"dsh-bridge", url:"ws://127.0.0.1:6700"}` 这一条，否则同一个 QQ 号被两个消费者订阅 → **抢答 / 双份回复**，不是扩容。
 3. `dsh-qq-soul` 的 `src/core/config.js:27-29` 明确：`gateway:'onebot'` 时插件「只按 wsUrl 去连，不启动、不注入任何东西」；`src/onebot/client.js:156` 是 `new WebSocket(url)`，token 走 `access_token` query。
-4. 只装**一个**插件：`dsh plugin --profile desktop add /Users/pengfanao/code/dsh-qq-soul`（本地目录安装，避免坑 2）。**绝对不能同时装上游** `dsh-aurabot-qq`：挂载 `id: aurabot`、`dataDir()` `~/.dsh/plugins-data/aurabot/`、preset ID 三者相同，会撞配置/记忆目录/QQ 消息流。
+4. 只装**一个**插件：`dsh plugin --profile desktop add <本仓库>`（本地目录安装，避免坑 2）。**绝对不能同时装上游** `dsh-aurabot-qq`：挂载 `id: aurabot`、`dataDir()` `~/.dsh/plugins-data/aurabot/`、preset ID 三者相同，会撞配置/记忆目录/QQ 消息流。
 
 ### 5.2 只做 B 的 P1（service 包剥离）
 
@@ -364,22 +364,22 @@ POST /image/generate          → { prompt, ref? }        → { file } 或 base6
 
 | 用途 | 路径 |
 |---|---|
-| **本交接文档** | `/Users/pengfanao/code/dsh-qq-soul/docs/HANDOFF-BACKGROUND.md` |
-| 决策单一事实源（25 条决策、合规边界、测试基线） | `/Users/pengfanao/code/dsh-qq-soul/docs/DECISIONS.md` |
-| P0~P6 实施方案 / service HTTP 契约 / 目录结构 | `/Users/pengfanao/code/dsh-qq-soul/docs/IMPLEMENTATION-PLAN.md` |
-| 面板设计输入（技能形态、记忆、面板四块、视觉风格） | `/Users/pengfanao/code/dsh-qq-soul/docs/PANEL-DESIGN-INPUT.md` |
-| 可双击打开的前端原型（59 KB 单文件） | `/Users/pengfanao/code/dsh-qq-soul/docs/prototype/index.html` |
-| 11-07 调研报告（含**第一套** A/B/C、8 个坑、成本表） | `/Users/pengfanao/code/dsh-pet-indesktop/docs/qq-voice-research.html` |
-| 可分发的语音技能包说明（端口、控制台、唱歌开关） | `/Users/pengfanao/code/dsh-pet-indesktop/docs/qq-voice-kit/README.md` |
-| 桥补丁模板（`qq_sing` 完整插入点与代码） | `/Users/pengfanao/code/dsh-pet-indesktop/docs/qq-voice-kit/skills/qq-sing/references/patch.md` |
-| 一键启停脚本（端口与启动顺序的权威来源） | `/Users/pengfanao/code/dsh-pet-indesktop/docs/qq-voice-kit/scripts/qq-stack.sh` |
-| 三引擎说话服务（`/synth` 契约） | `/Users/pengfanao/code/dsh-pet-indesktop/docs/qq-voice-kit/scripts/voice_cli.py` |
-| 旧桥 TTS 实现（三个 bug 之一） | `/Users/pengfanao/.dsh/profiles/desktop/node_modules/dsh-qq-onebot-bridge/lib/tts.js` |
-| 本地接口槽定义（image / song / tts / asr / video） | `/Users/pengfanao/code/dsh-qq-soul/src/local/local.js` |
-| 生图实现（OpenAI 兼容 / custom / Codex / local 优先） | `/Users/pengfanao/code/dsh-qq-soul/src/features/imagegen.js` |
-| 翻唱现状（Windows-only 硬编码，整体替换对象） | `/Users/pengfanao/code/dsh-qq-soul/src/song/studio.js` |
+| **本交接文档** | `<本仓库>/docs/HANDOFF-BACKGROUND.md` |
+| 决策单一事实源（25 条决策、合规边界、测试基线） | `<本仓库>/docs/DECISIONS.md` |
+| P0~P6 实施方案 / service HTTP 契约 / 目录结构 | `<本仓库>/docs/IMPLEMENTATION-PLAN.md` |
+| 面板设计输入（技能形态、记忆、面板四块、视觉风格） | `<本仓库>/docs/PANEL-DESIGN-INPUT.md` |
+| 可双击打开的前端原型（59 KB 单文件） | `<本仓库>/docs/prototype/index.html` |
+| 11-07 调研报告（含**第一套** A/B/C、8 个坑、成本表） | `<旧项目>/docs/qq-voice-research.html` |
+| 可分发的语音技能包说明（端口、控制台、唱歌开关） | `<旧项目>/docs/qq-voice-kit/README.md` |
+| 桥补丁模板（`qq_sing` 完整插入点与代码） | `<旧项目>/docs/qq-voice-kit/skills/qq-sing/references/patch.md` |
+| 一键启停脚本（端口与启动顺序的权威来源） | `<旧项目>/docs/qq-voice-kit/scripts/qq-stack.sh` |
+| 三引擎说话服务（`/synth` 契约） | `<旧项目>/docs/qq-voice-kit/scripts/voice_cli.py` |
+| 旧桥 TTS 实现（三个 bug 之一） | `~/.dsh/profiles/desktop/node_modules/dsh-qq-onebot-bridge/lib/tts.js` |
+| 本地接口槽定义（image / song / tts / asr / video） | `<本仓库>/src/local/local.js` |
+| 生图实现（OpenAI 兼容 / custom / Codex / local 优先） | `<本仓库>/src/features/imagegen.js` |
+| 翻唱现状（Windows-only 硬编码，整体替换对象） | `<本仓库>/src/song/studio.js` |
 | NapCat 实锤配置 | `~/Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/NapCat/config/onebot11_<QQ号>.json` |
-| 对话与调研全记录（**第二套** A/B/C 出处在 11-08 第七轮） | `/Users/pengfanao/code/dsh-pet-indesktop/.workbuddy/memory/2026-11-08.md`、`2026-11-09.md` |
+| 对话与调研全记录（**第二套** A/B/C 出处在 11-08 第七轮） | `<旧项目>/.workbuddy/memory/2026-11-08.md`、`2026-11-09.md` |
 
 ---
 
@@ -387,7 +387,7 @@ POST /image/generate          → { prompt, ref? }        → { file } 或 base6
 
 ```
 背景：见 docs/HANDOFF-BACKGROUND.md（先完整读一遍，不要重新调研历史）。
-项目：/Users/pengfanao/code/dsh-qq-soul（产品名「懂你的QQ大肥鱼」），
+项目：<本仓库>（产品名「懂你的QQ大肥鱼」），
       基座 aureth-labs/dsh-aurabot-qq v1.2.0 / MIT，P0 已完成。
 
 用户诉求：觉得 B（P0~P6 全套）太重；要轻量、要解耦，

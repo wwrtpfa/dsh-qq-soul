@@ -2,7 +2,7 @@
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 
 let studio
@@ -170,7 +170,34 @@ test('安装：报错翻译成人话、安装位置检查、列出各个盘', as
     const drives = studio.listDrives()
     assert.ok(drives.some((d) => d.drive === 'C:' && d.root === 'C:\\Aurabot\\rvc' && d.totalGB > 0))
   })
+  await t.test('macOS：绝对路径能通过、盘符路径不再被当成合法', { skip: process.platform !== 'darwin' && '只在 macOS 上验证 POSIX 路径' }, () => {
+    const root = join(homedir(), 'Aurabot', 'rvc')
+    const r = studio.checkRoot(root)
+    assert.equal(r.ok, true)
+    assert.equal(r.warn, '', 'macOS 的用户目录带空格是常态，不该提示「中文或空格」')
+    // 以前这里会把任何非 C:\ 路径判成非法，并让用户去填 D:\Aurabot\rvc
+    assert.equal(studio.checkRoot('D:\\Aurabot\\rvc').ok, false)
+    assert.match(studio.checkRoot('D:\\Aurabot\\rvc').message, /Aurabot/)
+    assert.ok(studio.checkRoot(root).freeGB > 0)
+    const drives = studio.listDrives()
+    assert.ok(drives.some((d) => d.label === '系统盘' && d.root === root && d.totalGB > 0), 'macOS 至少要有系统盘')
+    const p = studio.pathsOf('/tmp/qqsoul-rvc')
+    assert.ok(p.python.endsWith(join('env', 'bin', 'python')), 'macOS 的 python 在 env/bin 下')
+    assert.ok(p.separatorExe.endsWith(join('env', 'bin', 'audio-separator')))
+    assert.equal(p.ffmpeg, join('/tmp/qqsoul-rvc', 'bin', 'ffmpeg'), 'macOS 的 ffmpeg 没有 .exe')
+  })
   assert.equal(studio.INSTALL_STEPS.length, 6)
+})
+
+test('uv 下载源：Windows 走国内镜像的 wheel，macOS 拿对应架构的 tar.gz', () => {
+  const win = studio.uvSourcesFor('win32', 'x64')
+  assert.ok(win[0].url.includes('mirrors.aliyun.com') && win[0].sha256 && win[0].kind === 'zip')
+  const mac = studio.uvSourcesFor('darwin', 'arm64')
+  assert.equal(mac.length, 1)
+  assert.match(mac[0].url, /uv-aarch64-apple-darwin\.tar\.gz$/)
+  assert.equal(mac[0].kind, 'tar')
+  assert.equal(mac[0].bin, 'uv')
+  assert.match(studio.uvSourcesFor('darwin', 'x64')[0].url, /uv-x86_64-apple-darwin\.tar\.gz$/)
 })
 
 test('翻唱缓存只留最新的几个', async () => {

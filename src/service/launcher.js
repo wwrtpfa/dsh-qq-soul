@@ -8,7 +8,9 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const DEFAULT_URL = 'http://127.0.0.1:9876'
-const LAUNCHD_LABEL = 'com.pengfanao.qqsoul-service'
+// 开源版用中性 label；老安装可能还是作者 ID 的 job，启动时两个都试一下，不强制用户重装。
+const LAUNCHD_LABEL = 'com.qqsoul.service'
+const LAUNCHD_LABELS = [LAUNCHD_LABEL, 'com.pengfanao.qqsoul-service']
 
 /** Windows 没有 python3 这个命令：优先用配置里的绝对路径，再退回 python；macOS/Linux 用 python3。 */
 function pythonCommand(platform, env, exists) {
@@ -97,9 +99,10 @@ export function createServiceLauncher({
 
     if (platform === 'darwin') {
       const uid = typeof process.getuid === 'function' ? process.getuid() : 501
-      const domain = `gui/${uid}/${LAUNCHD_LABEL}`
-      const loaded = await execImpl('launchctl', ['print', domain])
-      if (loaded.ok) {
+      for (const label of LAUNCHD_LABELS) {
+        const domain = `gui/${uid}/${label}`
+        const loaded = await execImpl('launchctl', ['print', domain])
+        if (!loaded.ok) continue
         const kicked = await execImpl('launchctl', ['kickstart', '-k', domain])
         if (kicked.ok && await waitUp()) {
           return { ok: true, started: true, message: '音频服务已启动（Applio 会由它自己带起来）' }

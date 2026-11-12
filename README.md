@@ -60,171 +60,69 @@ QQ ⇄ NapCat / SnowLuma（OneBot v11，你自己安装）⇄ 本插件 ⇄ DSH 
 
 ## 🚀 快速开始
 
-**你需要：** 一台能跑 DeepSeek Harness 的电脑（Windows 最省事）、一个当机器人的 QQ 小号、一个让机器人号上线的 QQ 网关（Windows 用 SnowLuma 最方便，Linux/Docker 用任何 OneBot v11 实现）。
+**3 分钟，装完就能在 QQ 里说话。** 你只需要：一台电脑、一个 QQ 小号、一个让机器人号上线的网关。
 
-### 1. 安装插件
+> 不想看文档？双击 [`docs/install.html`](docs/install.html)，浏览器直接打开，按系统只显示一条路。
+> 想一次装明白？看 [`docs/quickstart.md`](docs/quickstart.md)。
 
-**Windows 桌面版：**
+### 必装三步
 
-```powershell
-& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add /绝对路径/dsh-qq-soul
-```
+**① 装插件**
 
-**Linux / Docker（换成你在用的 profile；容器里就进容器执行）：**
+DSH 里选「**从本地目录安装**」，指向你解压出来的项目文件夹，**不要填 GitHub 地址**；装完重启 DSH，左侧栏出现「懂你的QQ大肥鱼」。
 
-```bash
-dsh plugin --profile <profile> add /绝对路径/dsh-qq-soul
-```
-
-装好后重启 DSH，左侧栏「自动化任务」下面会出现 **懂你的QQ大肥鱼**。
-
-> 开发期请用**本地目录安装**（pnpm `link:` 软链，改的就是跑的那份），不要再用 `github:` 地址装，否则会变成「改仓库版、跑 node_modules 副本」。
-
-### 2. 跟着设置向导走
-
-1. 填机器人 QQ 号（小号）和你的 QQ 号
-2. 选 QQ 网关：
-   - **用 SnowLuma（Windows）**：下载解压 [SnowLuma](https://github.com/SnowLuma/SnowLuma/releases) → 启动 → 面板里本人同意它的协议（控制台密码自动生成）→ 登录机器人号 → 点「接入机器人号」
-   - **接已有的 OneBot 机器人**：NapCat、LLOneBot、Lagrange、Docker 版 SnowLuma 都行；把正向 WebSocket 地址（和 token）填进向导即可，插件只连接、不启动
-3. 先试运行（只回话不真发），或者直接上线
-
-> **Linux / Docker 注意：** 语音要 `python3-venv` 或 [uv](https://docs.astral.sh/uv/)；上游「翻唱（RVC）只支持 Windows」的说法在本项目不适用——macOS 复用 `~/tools/applio`，见下面 §4；容器连宿主机/别的容器上的 OneBot，地址用容器能访问到的主机名和端口，别填 `127.0.0.1`。
-
-### 3. 升级
-
-重新跑一遍安装命令，然后重启 DSH。设置、人格、记忆都会保留。本地开发阶段不回连上游仓库，也不做在线更新检查；`origin` 建好后再接自己的更新源。
-
-### 4. 音频服务（可选，P1–P6 已全部落地）
-
-说话与唱歌由仓库自带的 `services/` 包提供，**单端口 `127.0.0.1:9876`、零第三方依赖、默认关闭、不预装任何大模型**。聊天功能不需要它；只有要发语音条 / 翻唱时才起。
+命令行等价：
 
 ```bash
-# Windows（本机主用；先 cd /d D:\dsh-qq-soul）
-python -m services --check-deps        # 依赖体检（只查文件，不下载、不启动模型）
-python -m services --serve              # 起服务
-python -m services --stub --serve       # 无模型自检：假 TTS / 假翻唱，先验证接口
-python -m services --once --text "你好呀，我是大肥鱼"   # 不起后台，直接合成一句
-set QQSOUL_SERVICE_TOKEN=自定义串 && python -m services --serve   # cmd 开鉴权；PowerShell 用 $env:QQSOUL_SERVICE_TOKEN="自定义串"
-
-# macOS / Linux：把上面的 python 换成 python3 即可
+dsh plugin --profile <profile> add "<插件目录>"
 ```
 
-> **macOS / Linux** 用 `python3` 代替 `python`。必须在**插件仓库目录**里运行；面板「概览 → 音频服务」会直接给出带本机目录的完整命令，可一键复制。
-> 服务的配置、模型和翻唱缓存放在 `~/.dsh/plugins-data/qqsoul/service/`（Windows 是 `%USERPROFILE%\.dsh\plugins-data\qqsoul\service\`），与插件自己的配置分开。
+**② 让机器人号上线**
 
-- 渠道：默认 **edge-tts（零下载）**；可选 Breeze 远程（只填 key）、GPT-SoVITS / 千问 3-TTS MLX（选目录加载或连已跑着的服务）、任意 HTTP。长文本自动分句合成 + 静音拼接。
-- 模型目录见 `models.json`，三档分发（零下载 / 按需轻量 / 手动导入），安装包不带权重。
-- 主要接口：`/healthz`、`/status`（驻留清单 + 当前策略）、`/tts/speak`、`/tts/switch`、`/models/catalog`、`/models/load`、`/song/strategy`（读/存翻唱策略）、`/song/sources`（读/存有序音乐源）、`/song/search`、`/song/request`、`/song/jobs`、`/song/jobs/{id}`（分阶段进度）、`/song/jobs/{id}/energy`（能量曲线）、`/song/jobs/{id}/events`（SSE）、`/deps/check`、`/panel`（托管面板）、`/files/*`。
-- 插件侧的 `src/service/client.js` 是薄客户端，**默认关闭**；开启前现有语音 / 翻唱模块行为完全不变。开启后 `src/service/song-bridge.js` 接管点歌 → 等作业 → 发语音条。面板与运维大屏对语音、音色、翻唱策略、音乐源读写**同一份服务配置**。
-- Python 回归：`python -m pytest tests/ -q`（macOS / Linux 用 `python3`；沙箱环境加 `--basetemp` 指到可写目录）。
-
-### 4.0 Windows 快速 RVC（技能包 `D:\大肥鱼进QQ-技能包-v6` 那套装法）
-
-Windows 上**不要照 macOS 的 Applio 装法配**。技能包的快速 RVC 是另一套：`D:\tools\rvc\rvc_convert.py`
-+ `infer/vc/pipeline.py`（fcpe 提 F0、CUDA half、30 秒分块），配 `D:\tools\rvc\venv312`。
-本机实测 `torch 2.8.0+cu128`、CUDA 可用：模型冷载 1.3 s、2 秒音频推理 1.4 s；接成常驻驱动后
-**单句换声 281 ms**。服务会按目录里实际有的文件自动选后端：
-
-| 目录里有 | 后端 | 换声走 |
+| 系统 | 网关 | 怎么做 |
 |---|---|---|
-| `core.py` | `applio` | `from core import run_infer_script` |
-| `rvc_convert.py` + `infer/` | `fast-rvc` | 常驻 `infer.vc.pipeline.Pipeline` |
+| **macOS** | NapCat | 装进 QQ → 打开 `http://127.0.0.1:6099` 扫码登录小号 → 开「正向 WebSocket」（本机推荐 `6700`）→ 回面板「连接」页点「启动 QQ 与网关」 |
+| **Windows** | SnowLuma 完整版 / NapCat | 有 NapCat 就直接用；没有就下载 [SnowLuma](https://github.com/SnowLuma/SnowLuma/releases) 完整版，解压到纯英文目录（例如 `C:\qq-soul\snowluma`），本人同意协议、登录小号 → 回面板点「启动 QQ 与网关」 |
 
-`config.json` 里对应这么写（Windows 已按本机对齐）：
+> SnowLuma 只有 Windows 版；macOS 面板会默认帮你选 NapCat。也支持 LLOneBot、Lagrange、Docker 里的任何 OneBot v11。
 
-```json
-{
-  "tts":  { "engine": "edge", "gptsovitsUrl": "http://127.0.0.1:9881" },
-  "paths": {
-    "python":     "D:/tools/rvc/venv312/Scripts/python.exe",
-    "applio":     "D:/tools/rvc",
-    "models":     "D:/tools/rvc/models",
-    "rvcConvert": "D:/tools/rvc/rvc_convert.py",
-    "qwenModel":  ""
-  },
-  "song": {
-    "model": "D:/tools/rvc/models/feiyu-rvc/FeiyuVoice-RVC-v1.pth",
-    "index": "D:/tools/rvc/models/feiyu-rvc/FeiyuVoice-RVC-v1.index",
-    "voiceName": "feiyu", "indexRate": 0.15
-  },
-  "stack": { "script": "D:/NapCat/napcat.bat", "qqAccount": "3085955462" }
-}
-```
+**③ 试运行**
 
-几点别踩坑：
+面板右上角先开着「试运行」，用主号给小号发句话，回「概览 → 日志」看她怎么想的。确认没问题再关掉试运行，正式上线。
 
-- **说话渠道**：默认 `edge`（秒级、零依赖）；要零样本克隆音色就切 `gptsovits`。
-  本机 GPT-SoVITS **实测可用**，但启动时必须用 `启动GPT-SoVITS.bat` 里的
-  `-c GPT_SoVITS/configs/tts_infer.cpu.yaml`。旧脚本少了 `-c`，默认读 `tts_infer.yaml`
-  的 `cuda + is_half`；这台机器是 RTX 5060（Blackwell / sm_120），整合包自带的
-  `torch 2.0.0+cu118` 不认新架构，会退化到 `126 s/it`（一句 50 小时）。CPU 配置实测
-  首句冷加载约 70 秒，之后一句 13–28 秒。9881 是 `api_v2.py`，9882 是技能包的响度代理
-  （补 8 dB、规整 WAV），插件直连 9881。
-- **9890 控制台**：`http://127.0.0.1:9890/` 是技能包的 Windows 控制台，能启停 9881/9882、
-  挑参考音频、试听本地音色；插件面板「声音」页和运维大屏都加了直达按钮。
-  注意别点「全部停止」（会把 QQ 一起关掉）；第一屏的 `BRIDGE 6700` 只是端口名，
-  实际是 NapCat 的正向 WS 服务端，不是旧桥。
-- **千问 3-TTS / MLX 是 Apple 专用**：Windows 的「模型」页不会列出它，旧配置迁移也会跳过
-  `qwenModel` / `qwenPython`，配置里保持 `""`。
-- **唱歌永远只走本地 RVC**，与说话渠道无关；技能包自带的 `feiyu-rvc` / `ncd-rvc` 音色
-  直接放到 `D:/tools/rvc/models/` 就能被扫到。
-- **人声分离降级**：本机没装 `onnx` / `demucs`，分离会自动降级为「原曲转 16k 人声 + 等长静音伴奏」，
-  成品是纯换声人声，链路不会断。装了 `onnx` + MDX 模型或 `demucs` 后自动恢复真分离。
-- **不要用技能包的 `qq-stack.ps1` 当 `stack.script`**：它按旧桥的反向 WS 6700 启动，
-  与本插件的正向 WS 服务端冲突。这里用 NapCat.Shell 官方 `napcat.bat`，配
-  `qqAccount` 自动加 `-q` 快速登录（本机实测 `start-napcat.bat` 注入器带不起 6099/6700）。
-- **一键起 QQ 网关**：双击 `启动QQ-NapCat.bat`，等价于面板「启动 QQ 与网关」按钮：
-  `napcat.bat -q <机器人号>` → 等 6099 → 打开 `http://127.0.0.1:6099/webui/web_login`。
-  按钮在网关端口 6700 已监听时不会重复启动（NapCat.Shell 不产生 `QQ.exe` 进程）。
-- 换目录时设 `QQSOUL_FAST_RVC_DIR`；ffmpeg 不在 PATH 时设 `QQSOUL_FFMPEG`（面板配置会自动传下来）。
-- 想单独跑一首整歌（不走插件流水线）：双击 `快速翻唱.bat`，或
-  `D:\tools\rvc\venv312\Scripts\python.exe D:\tools\rvc\rvc_convert.py --input 原曲.mp3 --output 成品.wav`。
+> ⚠️ **别同时装上游 Aurabot 插件**：挂载 ID、配置目录完全相同，会撞车、双份回复。
 
-### 4.1 面板 10 分钟跑通（P4）
+### 可选增强（不装也能聊天）
 
-1. **起服务**：`python -m services --check-deps` 看必需项 → `python -m services --serve`（macOS / Linux 用 `python3`）。还没装模型时先加 `--stub` 自检。
-2. **打开面板**：浏览器开 `http://127.0.0.1:9876/panel`，或双击 `docs/prototype/index.html`；装进 DSH 后也可在「翻唱」页点「打开运维大屏」。
-3. **连接**：点右上「连接 service」→ 地址默认已填好，token 没设就留空 → 连接；左上角变成「实时」即连上。双击打开也能连（service 允许 `null` origin 的 CORS）。
-4. **看体检**：向导第 3 步与「依赖体检」页逐项显示真状态，缺哪行按「修复动作」补。
-5. **说一句**：「语音渠道」页点「合成语音条」，默认 edge-tts 零下载，成品可直接播放。
-6. **唱一首**（需 Applio + 音色）：「翻唱策略」页选分离器 / 前奏处理 / 取窗 / `index_rate` → 保存策略 → 「点一首试试」提交作业；SSE 实时推进度，完成后点作业行看**能量曲线缩略图 + 每阶段耗时**，还能试听成品。
+<details>
+<summary><b>语音条 / 本地音色</b>（默认在线音色零下载）</summary>
 
-> 自检模式（`--stub`）不跑 demucs / RVC，曲线与 24.6 s 起唱点是服务端标了 `stub:true` 的演示数据；去掉 `--stub` 才是真链路。
-> 「模型管理」只给链接 + 选目录加载 + 立即释放，**安装包不带任何权重**。
+面板「概览 → 音频服务」点「启动服务」，再打开「启用音频服务」，到「语音」页试听一句。没起来时在插件目录跑 `python3 -m services --serve`（Windows 用 `python`）。想换本地音色，再在「语音」页选渠道。
+</details>
 
-### 4.2 双平台安装器（P5）
+<details>
+<summary><b>翻唱 / 用自己的声音唱歌</b>（macOS 约 5 GB，Windows 约 8 GB）</summary>
 
-上层 UX 共用，平台差异只在 `services/installer/plan.py` 的两个 provider：
+面板「翻唱」→「一键安装」，装完在「音色模型」导入你有权使用的 `.pth`。「装到哪里」点按钮选，不用手打路径。这是可选能力：不装也能聊天、发语音，只是唱不了。
+</details>
 
-- **macOS**：只检测 + 复用已装 `~/tools/applio` + 给链接 / 手动拖入，**不自动装 torch**；唯一允许自动执行的轻量动作是私有 venv 里 `pip install edge-tts`。
-- **Windows**：给完整一键装步骤；SnowLuma 因 EULA 仍由用户自己下载解压、本人同意。
-- 六步进度 `GET /install/plan`；模型四态 `GET /install/check`（未安装 / 已下载待加载 / 已加载 / 路径失效）；路径持久化 `POST /install/paths`（合并写回 `config.json`，立即生效）。
-- 下载底座：sha256 校验（占位值如实标 `placeholder`，**不假装通过**）、镜像 fallback、`.part` 断点续传、手动拖入校验。
-- Node 侧 `src/installer/`：`detectUpstreamConflict()` 在向导里拦住「上游插件还装着」这个双份回复坑；`checkDistribution()` 做分发门禁。
+<details>
+<summary><b>桌宠 / 生图</b></summary>
 
-```bash
-npm run package:verify    # 只检查：<5 MB / 零权重 / 无上游回连 / 许可齐全 / 不带测试
-npm run package           # 产出 dist/dsh-qq-soul/ + manifest.json（逐文件 sha256）
-npm run package -- --zip  # 额外压成 zip（本机有 zip 命令时）
-```
+面板「桌宠」「生图」页各自装或接服务，不影响 QQ 聊天。
+</details>
 
-### 4.3 网关方向与五步自检（P6）
+### 装完自检
 
-本插件是 **OneBot 正向 WebSocket 客户端**：`createOneBotClient` 主动连 `wsUrl`，不监听端口、不启动网关、不注入 QQ（契约测试钉住）。
+面板「安装中心」看五盏灯：**插件 / QQ 网关 / 音频服务 / 声音 / 翻唱**。前两盏必须亮，后三盏是可选能力的进度。更细的「连接体检」看 `service / deps / gateway / tts / song` 五步，有红的把那一步的报错原文复制给 AI。
 
-- 迁移重点：NapCat 里若还留着 `websocketClients` 反向连 `ws://127.0.0.1:6700`，同一 QQ 号会被两个消费者抢答。`checkGateway()` / `checkReverseWsResidue()` 会给出可枚举 code 和人话提示。
-- 插件通过 `POST /gateway/report` 上报**脱敏结论**（只有方向与 host，token 一律拒绝），`GET /gateway/report` 可查。
-- `GET /selfcheck` 五步：service → deps → gateway → tts → song；`POST /selfcheck {"deep":true}` 会真唱一首。每步都是 code + 一句人话，大屏只转述不诊断。
+### 升级
 
-### 4.4 其余已补齐的能力
+重新用本地目录安装一次，然后重启 DSH。设置、人格、记忆都会保留。
 
-| 决策 | 落地 |
-|---|---|
-| 工具 / 技能分组 + 各自开关 | `src/skills/grouping.js`，面板路由 `/panel/ops/skills` |
-| Markdown Skill 加载器 | `src/skills/loader.js`：frontmatter、白名单权限（`read` / `llm`）、关键词命中、上下文截断 |
-| Token 统计 | `src/features/usage.js`：先探 `dsh.llm` 的结构化 `usage`，无则按字符**估算并标注**，绝不解析模型输出正文；`/panel/ops/usage` |
-| 统一时间线 | `src/features/timeline.js`：合并 activity / 记忆 / 翻唱 history，**7 天、含正文**；`/panel/ops/timeline` |
-| 串行写队列 | `src/core/write-queue.js`：定时任务与前台写入排队，防后写覆盖 |
+### 音频服务与翻唱（实现说明）
+
+说话与唱歌由仓库自带的 `services/` 包提供，**单端口 `127.0.0.1:9876`、零第三方依赖、默认关闭、不预装任何大模型**。接口清单、双平台安装器、五步自检、换声后端选择等实现细节见 [docs/SERVICE.md](docs/SERVICE.md)。
 
 ## 🧩 模块系统
 
@@ -261,7 +159,11 @@ npm run package -- --zip  # 额外压成 zip（本机有 zip 命令时）
 
 | 文档 | 内容 |
 |---|---|
-| [用户手册](docs/USER-MANUAL.md) | 安装后的每一项配置、QQ 命令、面板说明——**先看这个** |
+| [快速开始（详细版）](docs/quickstart.md) | 按系统分步装、可选能力、失败怎么办、升级卸载——**第一次装看这个** |
+| [离线安装引导](docs/install.html) | 双击即可看，按系统只显示一条路，不用等服务起来 |
+| [让 AI 带你装](docs/INSTALL-WITH-AI.md) | 整段提示词复制给 DSH 里的 AI |
+| [用户手册](docs/USER-MANUAL.md) | 安装后的每一项配置、QQ 命令、面板说明 |
+| [音频服务与翻唱](docs/SERVICE.md) | 服务接口、双平台安装器、五步自检的实现细节 |
 | [写模块教程](docs/MODULE-TUTORIAL.md) | 从零写一个模块；怎么热重载、怎么套用改写挂钩 |
 | [模块 API](src/modules/API.md) | 扩展接口、工具、上下文、命令行、定时任务完整说明 |
 | [更新记录](CHANGELOG.md) | 每个版本改了什么 |

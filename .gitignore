@@ -13,3 +13,8 @@ jobs/
 audio/
 # 只忽略根目录的打包产物；src/vendor/unrar/dist/ 是随仓库分发的运行时，必须入库
 /dist/
+
+# 本地 AI 记忆，不入开源仓库
+.workbuddy/
+.workbuddy-ai/
+.perch/

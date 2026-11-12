@@ -1031,6 +1031,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     // ---------------- 标签页 ----------------
     const TABS = [
       { id: 'overview', label: '概览' },
+      { id: 'install', label: '安装中心' },
       { id: 'connect', label: '连接' },
       { id: 'character', label: '人格' },
       { id: 'access', label: '权限' },
@@ -1066,7 +1067,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     // 两层导航：上面一排是分组，下面一排是这组里的页面；每组记住上次看的那页，Alt+K 查找功能
     // （分组导航的思路来自社区贡献的「导航布局」扩展，这里改成面板自己实现）
     const NAV_GROUPS = [
-      { id: 'home', label: '概览', icon: 'M3 10.5 12 3l9 7.5M5.5 9v11.5h13V9M10 20.5v-6h4v6', tabs: ['overview'] },
+      { id: 'home', label: '概览', icon: 'M3 10.5 12 3l9 7.5M5.5 9v11.5h13V9M10 20.5v-6h4v6', tabs: ['overview', 'install'] },
       { id: 'self', label: '人设', icon: 'M12 12.5a4.25 4.25 0 1 0 0-8.5 4.25 4.25 0 0 0 0 8.5zM4.5 20.5c.9-3.6 3.9-5.5 7.5-5.5s6.6 1.9 7.5 5.5', tabs: ['character', 'group', 'speakup', 'mood', 'persona'] },
       { id: 'express', label: '表达', icon: 'M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.4A8 8 0 1 1 20.5 11.5zM9 13.2s1.1 1.5 3 1.5 3-1.5 3-1.5M9.5 9.6h.01M14.5 9.6h.01', tabs: ['voice', 'stickers', 'imagegen', 'song', 'pet'] },
       { id: 'platform', label: '平台', icon: 'M3.5 6.5h17v11h-17zM10.5 9.8v4.4l3.8-2.2z', tabs: ['diary', 'bili', 'douyin', 'heybox'] },
@@ -1193,7 +1194,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     }
 
     /** 音频服务：说话/唱歌唯一的开关与地址。双端（Web / 桌面）改的是同一份插件配置。 */
-    function ServiceCard({ st, draft, setDraft, toast }) {
+    function ServiceCard({ st, draft, setDraft, toast, go }) {
       const f = useField(draft, setDraft)
       const [health, setHealth] = useState(null)
       const [busy, setBusy] = useState(false)
@@ -1238,7 +1239,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         h('div', { className: 'ab-flex', style: { marginTop: 10, flexWrap: 'wrap' } },
           h(Btn, { small: true, kind: 'primary', disabled: busy, onClick: boot }, busy ? h(Fragment, null, h('i', { className: 'ab-spin' }), ' 处理中…') : '启动服务'),
           h(Btn, { small: true, disabled: busy, onClick: test }, busy ? '测试中…' : '测试连接'),
-          h(Btn, { small: true, onClick: () => openPanel('#wizard') }, '安装向导'),
+          h(Btn, { small: true, onClick: () => (go ? go('install') : openPanel('#wizard')) }, '安装中心'),
           h(Btn, { small: true, onClick: () => openPanel('') }, '打开运维大屏'),
           health ? h('span', { className: 'ab-small', style: { color: health.ok ? 'var(--ab-ok)' : 'var(--ab-warn)' } },
             health.ok ? '在线 · 端口 ' + (health.port || '') + (health.version ? ' · v' + health.version : '') : (health.message || '连不上')) : null),
@@ -1306,7 +1307,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h('p', { className: 'ab-muted ab-small', style: { marginTop: 10, marginBottom: 0 } }, '人格在 personas/、时间线在 ops/（保留 7 天）；模型、试听和翻唱成品在音频服务的「目录与路径」页，能一键复制。'),
           h('p', { className: 'ab-muted ab-small', style: { marginTop: 6, marginBottom: 0 } }, '找功能看顶部分组：人设 / 群聊 / 主动搭话 / 心情 / 人物记忆在「人设」，语音 / 表情包 / 生图 / 翻唱 / 桌宠在「表达」，空间日记 / B站 / 抖音 / 小黑盒在「平台」，网关 / 模型 / 目录 / 权限 / 备份 / 日志在「系统」。'),
         ),
-        h(ServiceCard, { st, draft, setDraft, toast }),
+        h(ServiceCard, { st, draft, setDraft, toast, go }),
         h(RecentLogs, { go }),
       )
     }
@@ -1421,11 +1422,21 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     }
 
     /** 用什么接 QQ：插件帮你管 SnowLuma，或接你已有的 OneBot v11 机器人。 */
-    function GatewayChoice({ draft, setDraft }) {
-      return h(Choices, { value: draft.gateway || 'snowluma', onChange: (v) => setDraft(setPath(draft, 'gateway', v)), options: [
-        { value: 'snowluma', label: '用 SnowLuma（Windows，推荐）', desc: '插件帮你启动、接入机器人号、断线重连' },
-        { value: 'onebot', label: '接我已有的 OneBot 机器人', desc: 'NapCat、LLOneBot、Lagrange、Docker 里的 SnowLuma 等任何 OneBot v11 实现；Linux / Docker 部署选这个' },
-      ] })
+    function GatewayChoice({ draft, setDraft, platform }) {
+      const mac = platform === 'darwin'
+      // SnowLuma 只有 Windows 版。macOS 上把它摆在第一位只会让人点错，所以换顺序、改说明，
+      // 默认值也跟后端一致（macOS 默认 onebot，Windows 默认 snowluma）。
+      return h(Choices, {
+        value: draft.gateway || (mac ? 'onebot' : 'snowluma'),
+        onChange: (v) => setDraft(setPath(draft, 'gateway', v)),
+        options: mac ? [
+          { value: 'onebot', label: '用 NapCat（macOS 推荐）', desc: 'NapCat 装在 QQ 里，开一个正向 WebSocket，插件连上去；也支持 LLOneBot、Lagrange、Docker 里的任何 OneBot v11' },
+          { value: 'snowluma', label: 'SnowLuma（仅 Windows）', desc: 'SnowLuma 没有 macOS 版，选了也启动不了；这台电脑请用上面的 NapCat' },
+        ] : [
+          { value: 'snowluma', label: '用 SnowLuma（Windows，推荐）', desc: '插件帮你启动、接入机器人号、断线重连' },
+          { value: 'onebot', label: '接我已有的 OneBot 机器人', desc: 'NapCat、LLOneBot、Lagrange、Docker 里的 SnowLuma 等任何 OneBot v11 实现；Linux / Docker 部署选这个' },
+        ],
+      })
     }
 
     /** 已有 OneBot 机器人的地址和令牌。 */
@@ -1468,7 +1479,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         h(Btn, { small: true, onClick: async () => { const r = await get('/onebot/test'); toast(r.message) } }, '测试连接'),
         h(Btn, { small: true, onClick: async () => { const r = await post('/onebot/reconnect'); toast(r.message, r.ok ? 'ok' : 'err'); reload() } }, '重新连接'))
       return h('div', { className: 'ab-grid' },
-        h(Card, { title: '用什么接 QQ', right: openWizard ? h(Btn, { small: true, kind: 'ghost', onClick: openWizard }, '重新走一遍设置向导') : null }, h(GatewayChoice, { draft, setDraft })),
+        h(Card, { title: '用什么接 QQ', right: openWizard ? h(Btn, { small: true, kind: 'ghost', onClick: openWizard }, '重新走一遍设置向导') : null }, h(GatewayChoice, { draft, setDraft, platform: st.platform })),
         external ? h(Card, { title: '接上 QQ（已有的 OneBot 机器人）', desc: '让你的 OneBot 服务登录机器人号 ' + (draft.botQQ || '') + '，把它的正向 WebSocket 地址填在这里，保存后插件就会去连。插件只连接，不会启动或注入任何东西；连上后会先核对登录的是不是机器人号，不是就断开。' },
           h(Doctor, { toast, reload }),
           h(OneBotFields, { draft, f }),
@@ -5118,8 +5129,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       return h('div', { style: { width: '100%' } },
         h('div', { className: 'ab-drives' },
           h('button', { type: 'button', className: cx('ab-drive', !val && 'on'), onClick: () => pick(s.defaultRoot) }, h('b', null, '默认位置'), h('small', null, s.defaultRoot)),
-          drives.map((d) => h('button', { key: d.drive, type: 'button', className: cx('ab-drive', val.toLowerCase() === d.root.toLowerCase() && 'on', d.freeGB < 10 && 'low'), onClick: () => pick(d.root) },
-            h('b', null, d.drive + ' 盘'), h('small', null, '剩 ' + d.freeGB + ' GB / 共 ' + Math.round(d.totalGB) + ' GB'),
+          drives.map((d) => h('button', { key: d.drive, type: 'button', className: cx('ab-drive', val.toLowerCase() === d.root.toLowerCase() && 'on', d.freeGB < 10 && 'low'), onClick: () => pick(d.root), title: d.root },
+            h('b', null, d.label || (d.drive + ' 盘')), h('small', null, '剩 ' + d.freeGB + ' GB / 共 ' + Math.round(d.totalGB) + ' GB'),
             h('span', { className: 'bar' }, h('i', { style: { width: Math.round((1 - d.freeGB / d.totalGB) * 100) + '%' } }))))),
         h('input', { className: 'ab-input wide', style: { marginTop: 8 }, value: val, placeholder: '或者自己填路径，留空 = 默认位置（' + s.defaultRoot + '）', onChange: (e) => setDraft(setPath(draft, 'song.root', e.target.value)) }),
         chk ? h('div', { className: 'ab-small', style: { marginTop: 4, color: !chk.ok || chk.warn ? 'var(--ab-warn)' : 'var(--ab-sub)' } },
@@ -5301,6 +5312,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [sources, setSources] = useState([])
       const [source, setSource] = useState('')
       const serviceOn = !!(s && s.service)
+      // 同一个安装器现在两边都能跑，但体积、速度、显卡要求不一样，文案不能共用一份
+      const isMac = st.platform === 'darwin'
       const load = () => get('/song/status').then((r) => r.ok && setS(r))
       // 安装中 / 正在唱的时候每 3 秒刷新一次进度
       useEffect(() => {
@@ -5344,8 +5357,9 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         load()
       }
       return h('div', { className: 'ab-grid' },
-        h(Card, { title: '翻唱', right: f.sw('song.enabled'), desc: '让ta用自己的声音唱歌：点歌 → 按「音乐源」顺序下载原曲 → 分离人声和伴奏 → 用 RVC 换成ta的声音 → 混音 → 发语音条。主人在 QQ 里说「唱首歌」，或者发 /sing 歌名 都行。装插件的步骤看「安装引导」（docs/install.html），这一页只管翻唱本身。' },
+        h(Card, { title: '翻唱', right: f.sw('song.enabled'), desc: '让ta用自己的声音唱歌：点歌 → 按「音乐源」顺序下载原曲 → 分离人声和伴奏 → 用 RVC 换成ta的声音 → 混音 → 发语音条。主人在 QQ 里说「唱首歌」，或者发 /sing 歌名 都行。这是可选能力：不装也能正常聊天，只是唱不了。' },
           h('div', { className: cx('ab-note', s.ready ? '' : 'warn') }, s.message),
+          s.unsupported ? h('div', { className: 'ab-note err' }, s.unsupported) : null,
           h('div', { className: 'ab-checks', style: { marginTop: 12 } },
             SONG_PARTS.map(([k, label, why]) => h('div', { key: k, className: cx('ab-check', s.parts[k] && 'done') },
               h('i', null, s.parts[k] ? '✓' : '·'),
@@ -5356,20 +5370,23 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               h('span', null, h('b', { style: { fontWeight: 500 } }, s.voices.length ? '音色模型 ×' + s.voices.length : '音色模型（在下面导入）'),
                 h('span', { className: 'ab-muted ab-small', style: { display: 'block' } }, '你自己的 .pth 音色；没有它就只能唱原声，别人给的音色包也能直接导入')))),
           // 先讲清「一键安装到底下什么」，再让人点按钮。
-          h('div', { className: 'ab-note', style: { marginTop: 10 } },
-            h('b', null, '一键安装会下载什么：'),
-            '约 8 GB —— Python 运行环境、Applio 推理脚本、demucs 人声分离 + 分离模型、ffmpeg、RVC 预训练权重。已经下好的部分不会重下。',
+          s.unsupported ? null : h('div', { className: 'ab-note', style: { marginTop: 10 } },
+            h('b', null, isMac ? '一键安装会下载什么（macOS）：' : '一键安装会下载什么（Windows）：'),
+            isMac
+              ? '约 5 GB —— 独立的 Python 环境（PyPI 的 CPU / MPS 版 PyTorch，不装 CUDA）、Applio 推理脚本、人声分离 + 分离模型、ffmpeg、RVC 预训练权重。已经下好的部分不会重下。'
+              : '约 8 GB —— 独立的 Python 环境、Applio 推理脚本、人声分离 + 分离模型、ffmpeg、RVC 预训练权重。已经下好的部分不会重下。',
             h('div', { className: 'ab-muted ab-small', style: { marginTop: 4 } },
-              'macOS 会复用你本机的 python / Applio（有就用，没有才装），Windows 装一套独立的；两种系统都',
-              h('b', null, '不需要 NVIDIA 显卡'), '——有独显只是跑得快些，CPU 也能跑，就是慢。')),
-          s.install.running ? null : h('div', { style: { marginTop: 12 } },
-            h(Row, { label: '装到哪里', hint: '装完约 8 GB，音色模型也放这里。改了要先保存设置再点安装' }, h(RootPicker, { draft, setDraft, s })),
+              isMac
+                ? 'Apple 芯片会用 MPS 加速，没加速到的算子自动退回 CPU；不需要独立显卡，只是慢一些。装在你的用户目录下，不碰系统自带的 Python。'
+                : '两种显卡都能用：有 NVIDIA 独显会快很多，没有也能用 CPU 跑，就是慢。装一套独立环境，不碰系统 Python。')),
+          s.install.running || s.unsupported ? null : h('div', { style: { marginTop: 12 } },
+            h(Row, { label: '装到哪里', hint: (isMac ? '装完约 5 GB' : '装完约 8 GB') + '，音色模型也放这里。改了要先保存设置再点安装' }, h(RootPicker, { draft, setDraft, s })),
             h(Row, { label: '下载源', hint: '自动：安装前先测一下，官方源慢就用国内镜像（阿里云 / 南京大学 / npmmirror）' },
               h(Select, { value: draft.song.pypiMirror || 'auto', width: 220, onChange: (v) => setDraft(setPath(draft, 'song.pypiMirror', v)), options: [{ value: 'auto', label: '自动（推荐）' }, { value: 'cn', label: '一直用国内镜像' }, { value: 'off', label: '只用官方源' }] }))),
-          h('div', { className: 'ab-flex', style: { marginTop: 12 } },
+          s.unsupported ? null : h('div', { className: 'ab-flex', style: { marginTop: 12 } },
             h(Btn, { kind: 'primary', small: true, disabled: s.install.running || (draft.song.root || '') !== (st.config.song.root || ''), onClick: async () => { const r = await post('/song/install'); toast(r.message); setTimeout(load, 800) } },
-              s.install.running ? h(Fragment, null, h('i', { className: 'ab-spin' }), ' 正在安装…') : Object.values(s.parts).every(Boolean) ? '重新检查 / 修复安装' : '一键安装'),
-            h('span', { className: 'ab-muted ab-small' }, (draft.song.root || '') !== (st.config.song.root || '') ? '安装位置改了，先保存设置' : 'NVIDIA 显卡不是必需，有独显只是快一些；装在 ' + s.root)),
+              s.install.running ? h(Fragment, null, h('i', { className: 'ab-spin' }), ' 正在安装…') : Object.values(s.parts).every(Boolean) ? '重新检查 / 修复安装' : (isMac ? '一键安装（约 5 GB）' : '一键安装（约 8 GB）')),
+            h('span', { className: 'ab-muted ab-small' }, (draft.song.root || '') !== (st.config.song.root || '') ? '安装位置改了，先保存设置' : '装在 ' + s.root)),
           s.install.running ? h(InstallProgress, { inst: s.install }) : null,
           s.install.ok === true && !s.install.running ? h('div', { className: 'ab-note', style: { marginTop: 8 } }, '✓ ' + s.install.message) : null,
           s.install.log.length ? h('details', { style: { marginTop: 8 } }, h('summary', { className: 'ab-muted ab-small', style: { cursor: 'pointer' } }, '详细日志'),
@@ -7009,7 +7026,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           d.canAutoFix
             ? h(Btn, { small: true, kind: 'primary', disabled: Boolean(busy), title: '改好 NapCat 方向，再启动带网关的 QQ（Windows / macOS 都支持）', onClick: () => run('fix') }, busy === 'fix' ? '正在修…' : '一键修复并启动')
             : h(Btn, { small: true, kind: 'primary', disabled: Boolean(busy), title: '和「连接」页「本机服务」里的是同一个按钮；已在跑就不会重复启动', onClick: () => run('qq') }, busy === 'qq' ? '正在启动…' : '启动 QQ 与网关')),
-        h('div', { className: 'ab-muted ab-small', style: { margin: '-2px 0 8px' } }, '「启动 QQ 与网关」和「连接」页「本机服务」卡片是同一个动作，点一次就够；装插件的五步看离线安装引导 docs/install.html。'),
+        h('div', { className: 'ab-muted ab-small', style: { margin: '-2px 0 8px' } }, '「启动 QQ 与网关」和「连接」页「本机服务」卡片是同一个动作，点一次就够；装插件的完整步骤看「安装中心」，离线版是 docs/install.html。'),
         h('div', { className: 'ab-kv' }, d.rows.map((r) => h(Fragment, { key: r.id },
           h('span', null, h('span', { className: 'ab-flex' }, h('i', { className: cx('ab-dot', r.ok === null ? 'warn' : r.ok ? 'ok' : 'err') }), r.label)),
           h('span', { className: 'ab-small' }, r.detail,
@@ -7022,13 +7039,53 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     }
 
     // ---------------- 首次使用向导 ----------------
-    const WIZ_STEPS = ['你们的 QQ 号', '接 QQ 网关', '启动并同意协议', '连上机器人号', '完成']
+    const WIZ_STEPS = ['你们的 QQ 号', '接 QQ 网关', '启动网关', '连上机器人号', '完成']
 
-    function Wizard({ st, draft, setDraft, save, toast, reload, onClose }) {
+    /** 安装中心顶部的五盏灯：回答「现在到底能不能用」，不用用户自己对照清单。 */
+    function StatusLights({ st }) {
+      const [health, setHealth] = useState(null)
+      useEffect(() => { get('/service/health').then((r) => setHealth(r || { ok: false })).catch(() => setHealth({ ok: false })) }, [])
+      const conn = st.onebot && st.onebot.state === 'connected'
+      const voice = st.voice || {}
+      const song = st.song || {}
+      const ttsOn = Boolean(st.config.voice && st.config.voice.enabled) || Boolean(voice.edgeInstalled)
+      const lights = [
+        { label: '插件', on: true, note: 'v' + st.version },
+        { label: 'QQ 网关', on: conn, note: conn ? ((st.onebot.login && st.onebot.login.nickname) || '已连上') : '还没连上' },
+        { label: '音频服务', on: Boolean(health && health.ok), note: health && health.ok ? ('在跑' + (health.version ? ' · v' + health.version : '')) : (health ? '没启动，声音和翻唱会不可用' : '检测中…') },
+        { label: '声音', on: ttsOn, note: ttsOn ? '会说话' : '还没开' },
+        { label: '翻唱', on: Boolean(song.ready), note: song.ready ? '可以点歌' : '可选能力，不装也能聊天' },
+      ]
+      return h('div', { className: 'ab-flex', style: { flexWrap: 'wrap', gap: 8 } },
+        lights.map((l) => h('span', { key: l.label, className: 'ab-pill', title: l.note },
+          h('i', { className: cx('ab-dot', l.on ? 'ok' : '') }), l.label)))
+    }
+
+    /** 可选增强：默认折叠，写清体积和「不装会怎样」，别挡在必装步骤前面。 */
+    function OptionalExtras({ st, nav }) {
+      const isMac = st.platform === 'darwin'
+      const items = [
+        { tab: 'song', title: '翻唱 / 用自己的声音唱歌', desc: isMac ? '约 5 GB · 装一套独立环境（CPU / MPS），不碰系统 Python' : '约 8 GB · 装一套独立环境，有 NVIDIA 独显会快很多' },
+        { tab: 'voice', title: '本地音色（TTS）', desc: '不想用在线音色时再装；在线渠道零下载就能说话' },
+        { tab: 'pet', title: '桌宠', desc: '让她在桌面上陪着你，可选' },
+        { tab: 'imagegen', title: '生图', desc: '接入生图模型后她才能发自己画的图，可选' },
+      ]
+      return h('details', { style: { marginTop: 14 } },
+        h('summary', { className: 'ab-muted ab-small', style: { cursor: 'pointer' } }, '可选增强（不装也能正常聊天）'),
+        h('div', { style: { marginTop: 8 } },
+          items.map((it) => h('div', { key: it.tab, className: 'ab-flex', style: { padding: '7px 0', borderBottom: '1px solid var(--ab-line)', gap: 10 } },
+            h('div', { style: { flex: '1 1 auto' } },
+              h('b', { style: { fontWeight: 500, fontSize: 13 } }, it.title),
+              h('div', { className: 'ab-muted ab-small' }, it.desc)),
+            nav ? h(Btn, { small: true, onClick: () => nav(it.tab) }, '去设置') : null))))
+    }
+
+    function Wizard({ st, draft, setDraft, save, toast, reload, onClose, nav }) {
       const [step, setStep] = useState(() => { try { return Number(localStorage.getItem('aurabot.wiz') || 0) } catch (e) { return 0 } })
       const go = (i) => { setStep(i); try { localStorage.setItem('aurabot.wiz', String(i)) } catch (e) {} }
       const f = useField(draft, setDraft)
-      const sl = st.snowluma
+      const sl = st.snowluma || {}
+      const isMac = st.platform === 'darwin'
       const conn = st.onebot.state === 'connected'
       const login = st.onebot.login
       const [procs, setProcs] = useState(null)
@@ -7057,16 +7114,25 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h(Row, { label: '机器人 QQ 号', hint: '强烈建议用小号：非官方 QQ 工具有被限制的风险' }, f.text('botQQ', { placeholder: '例如 123456789' })),
           h(Row, { label: '你的 QQ 号（主人）', hint: '群管、操作电脑这些只听主人的' }, f.text('ownerQQ', { placeholder: '你的大号' })),
           h(Row, { label: 'ta怎么称呼你' }, f.text('ownerName', { placeholder: '主人' })),
-          h(Row, { label: '工作区文件夹', hint: 'ta在 QQ 会话里读写文件的地方，C 盘空间紧就放到别的盘，比如 D:\\qq-soul\\qq-chats。填完整路径，留空用默认位置。以后想换，在「连接」页能搬。聊天记录和记忆在用户目录的 .dsh 里，不在这个文件夹' }, f.text('workspaceDir', { size: 'wide', placeholder: st.workspaceDir || '' })),
+          h(Row, { label: '工作区文件夹', hint: isMac
+            ? 'ta在 QQ 会话里读写文件的地方，留空用默认位置（你的用户目录下）。以后想换，在「连接」页能搬。聊天记录和记忆在 ~/.dsh 里，不在这个文件夹'
+            : 'ta在 QQ 会话里读写文件的地方，C 盘空间紧就放到别的盘，比如 D:\\qq-soul\\qq-chats。填完整路径，留空用默认位置。以后想换，在「连接」页能搬。聊天记录和记忆在用户目录的 .dsh 里，不在这个文件夹' }, f.text('workspaceDir', { size: 'wide', placeholder: st.workspaceDir || '' })),
           draft.botQQ && draft.ownerQQ && draft.botQQ === draft.ownerQQ ? h('div', { className: 'ab-note err' }, '机器人号和主人号不能是同一个。') : null),
         // 1. SnowLuma，或接已有的 OneBot 机器人
         external ? h('div', null,
-          h(GatewayChoice, { draft, setDraft }),
+          h(GatewayChoice, { draft, setDraft, platform: st.platform }),
           h('div', { style: { marginTop: 12 } }, h(Doctor, { toast, reload })),
-          h('p', { className: 'ab-desc', style: { marginTop: 10 } }, '让你的 OneBot 服务（NapCat、LLOneBot、Lagrange、Docker 里的 SnowLuma……）登录机器人号，把它的正向 WebSocket 地址填在下面。插件只连接，不会启动或注入任何东西。'),
+          h('p', { className: 'ab-desc', style: { marginTop: 10 } }, isMac
+            ? '让你的 NapCat（或 LLOneBot、Lagrange、Docker 里的 OneBot v11）登录机器人号，把它的正向 WebSocket 地址填在下面。插件只连接，不会启动或注入任何东西。'
+            : '让你的 OneBot 服务（NapCat、LLOneBot、Lagrange、Docker 里的 SnowLuma……）登录机器人号，把它的正向 WebSocket 地址填在下面。插件只连接，不会启动或注入任何东西。'),
           h(OneBotFields, { draft, f })) :
+        isMac ? h('div', null,
+          h(GatewayChoice, { draft, setDraft, platform: st.platform }),
+          h('div', { className: 'ab-note warn', style: { marginTop: 10 } },
+            '这台电脑是 macOS，SnowLuma 只有 Windows 版，启动不了。选上面的「用 NapCat」，或者选「接我已有的 OneBot 机器人」。'),
+          h('div', { style: { marginTop: 10 } }, h(Btn, { small: true, kind: 'primary', onClick: () => setDraft(setPath(draft, 'gateway', 'onebot')) }, '改成 NapCat / OneBot'))) :
         h('div', null,
-          h(GatewayChoice, { draft, setDraft }),
+          h(GatewayChoice, { draft, setDraft, platform: st.platform }),
           h('p', { className: 'ab-desc', style: { marginTop: 10 } }, 'SnowLuma 是让机器人号上线的 QQ 网关。它的协议不允许别的程序自动下载安装，所以这一步要你自己来（只用做一次）。'),
           h('div', { className: 'ab-steps' },
             h('div', { className: 'ab-step' }, h('div', null, h('b', null, '下载'), h('div', { className: 'ab-muted ab-small' }, '下载 Windows 完整版，文件名类似 SnowLuma-v2.x.x-win-x64.zip（不带 lite）。'),
@@ -7107,13 +7173,17 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h(Btn, { small: true, onClick: async () => { await save({ ...draft, enabled: true, dryRun: false }); const r = await post('/test-send'); toast(r.message); await save({ ...draft, enabled: true, dryRun: live === 'dry' }) } }, '给我发一条自测消息'))),
       ][step]
       return h('div', { className: 'ab-card', style: { padding: '20px 22px' } },
-        h('div', { className: 'ab-flex', style: { marginBottom: 6 } }, h('h3', { style: { margin: 0, fontSize: 16 } }, '设置向导'), h('span', { className: 'ab-muted ab-small' }, '第 ' + (step + 1) + ' / ' + WIZ_STEPS.length + ' 步 · ' + WIZ_STEPS[step]), h('div', { className: 'ab-spacer' }),
-          st.config.setupDone && onClose ? h(Btn, { small: true, kind: 'ghost', onClick: onClose }, '关闭向导') : null),
+        h('div', { className: 'ab-flex', style: { marginBottom: 6 } }, h('h3', { style: { margin: 0, fontSize: 16 } }, '安装中心'), h('span', { className: 'ab-muted ab-small' }, '第 ' + (step + 1) + ' / ' + WIZ_STEPS.length + ' 步 · ' + WIZ_STEPS[step]), h('div', { className: 'ab-spacer' }),
+          st.config.setupDone && onClose ? h(Btn, { small: true, kind: 'ghost', onClick: onClose }, '关闭') : null),
+        h('div', { className: 'ab-muted ab-small', style: { margin: '0 0 10px' } },
+          isMac ? '这台是 macOS：网关用 NapCat，装完就能在 QQ 里说话。前面几步是必装的，翻唱之类在最后，不装也不影响聊天。'
+            : '这台是 Windows：网关用 SnowLuma，装完就能在 QQ 里说话。前面几步是必装的，翻唱之类在最后，不装也不影响聊天。'),
+        h(StatusLights, { st }),
         !st.config.setupDone ? h('details', { style: { marginTop: 10 } }, h('summary', { className: 'ab-small' }, '换电脑了？从备份恢复'), h('div', { style: { marginTop: 10 } }, h(Backup, { toast }))) : null,
         upstream && upstream.conflict ? h('div', { className: 'ab-note warn', style: { marginTop: 10 } },
           h('b', null, '⚠ 装之前先卸载上游插件：'), upstream.message,
           h('div', { className: 'ab-small', style: { marginTop: 6 } }, '卸载命令：', h('b', null, upstream.uninstallCommand))) : null,
-        h('div', { className: 'ab-wiz-bar' }, WIZ_STEPS.map((s, i) => h('button', { key: s, type: 'button', className: cx('seg', i < step && 'done', i === step && 'on'), onClick: () => i <= step && go(i), title: s }, h('span', null, s)))),
+        h('div', { className: 'ab-wiz-bar', style: { marginTop: 12 } }, WIZ_STEPS.map((s, i) => h('button', { key: s, type: 'button', className: cx('seg', i < step && 'done', i === step && 'on'), onClick: () => i <= step && go(i), title: s }, h('span', null, s)))),
         verified && !st.config.setupDone ? h('div', { className: 'ab-note', style: { marginTop: 12 } }, '机器人号已经连接并核对通过。', ' ', h(Btn, { small: true, onClick: useExisting }, '使用现有连接，进入面板')) : null,
         h('div', { style: { minHeight: 220, marginTop: 14 } }, body),
         h('div', { className: 'ab-flex', style: { marginTop: 16, borderTop: '1px solid var(--ab-line)', paddingTop: 12 } },
@@ -7125,7 +7195,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               if (!(await save({ ...draft, enabled: true, dryRun: live === 'dry' }))) return
               const r = await post('/setup/done'); toast(r.message, r.ok ? 'ok' : 'err')
               if (r.ok) { try { localStorage.removeItem('aurabot.wiz') } catch (e) {} reload(); onClose && onClose() }
-            } }, '完成，让大肥鱼上线')))
+            } }, '完成，让大肥鱼上线')),
+        st.config.setupDone ? h(OptionalExtras, { st, nav }) : null)
+    }
+
+    /** 「安装中心」这一页：首启时是向导，装好以后还能随时回来复查和补装。 */
+    function InstallCenter(props) {
+      return h('div', { className: 'ab-grid' }, h(Wizard, { ...props, nav: props.go }))
     }
 
     // ---------------- 面板主体 ----------------
@@ -7221,7 +7297,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const conn = st.onebot.state === 'connected'
       const status = !cfg.enabled ? { cls: '', text: '休息中（总开关关着）' } : !conn ? { cls: 'err', text: 'QQ 没连上' } : cfg.dryRun ? { cls: 'warn', text: '在线 · 试运行' } : { cls: 'ok', text: '在线' }
       const persona = st.personas.find((p) => p.id === cfg.persona.current)
-      const props = { st, draft, setDraft: setD, toast, reload, go, openWizard: () => setWizardOpen(true) }
+      const props = { st, draft, setDraft: setD, toast, reload, go, save, openWizard: () => setWizardOpen(true) }
       const showWizard = !cfg.setupDone || wizardOpen
       // 标签页：内置的按模块在不在跑决定显示；自己写的模块有设置或面板的各占一页
       const mods = st.modules || []
@@ -7236,12 +7312,12 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       tabs.splice(tabs.findIndex((t) => t.id === 'logs'), 0, ...extTabs)
       const curTab = tabs.find((t) => t.id === tab) || tabs[0]
       const body = curTab.ext ? ExtPage : {
-        overview: Overview, connect: Connect, character: Persona, access: Access, group: Group, model: Model, voice: Voice,
+        overview: Overview, install: InstallCenter, connect: Connect, character: Persona, access: Access, group: Group, model: Model, voice: Voice,
         library: Library, files: Files,
         stickers: Stickers, imagegen: ImageGen, diary: Diary, speakup: SpeakUp, pet: PetPanel, mood: Mood, persona: PersonaMemory, song: Song, bili: Bili, douyin: Douyin, heybox: Heybox, local: LocalApi, security: Security, market: Market, modules: Modules, logs: Logs, about: About, backup: Backup, ops: Ops,
       }[curTab.id] || Overview
       // 哪些标签有没保存的改动
-      const TAB_KEYS = { overview: ['service'], connect: ['snowluma', 'botQQ'], access: ['ownerQQ', 'ownerName', 'ownerLevel', 'approvalNotify', 'approvalViaQQ', 'qqApi', 'longTasks', 'profilePerms', 'allow'], group: ['group', 'merge', 'titleFilter', 'chat'], model: ['model', 'chatModels'], voice: ['voice'], library: ['song', 'voice', 'resources'], files: ['resources', 'voice', 'song'], stickers: ['stickers'], imagegen: ['imageGen'], diary: ['diary', 'qzoneSocial'], speakup: ['speakUp'], pet: [], mood: ['mood', 'memory'], song: ['song'], bili: ['bili'], douyin: ['douyin'], heybox: ['heybox'], local: ['local'], security: ['security', 'update'] }
+      const TAB_KEYS = { overview: ['service'], install: [], connect: ['snowluma', 'botQQ'], access: ['ownerQQ', 'ownerName', 'ownerLevel', 'approvalNotify', 'approvalViaQQ', 'qqApi', 'longTasks', 'profilePerms', 'allow'], group: ['group', 'merge', 'titleFilter', 'chat'], model: ['model', 'chatModels'], voice: ['voice'], library: ['song', 'voice', 'resources'], files: ['resources', 'voice', 'song'], stickers: ['stickers'], imagegen: ['imageGen'], diary: ['diary', 'qzoneSocial'], speakup: ['speakUp'], pet: [], mood: ['mood', 'memory'], song: ['song'], bili: ['bili'], douyin: ['douyin'], heybox: ['heybox'], local: ['local'], security: ['security', 'update'] }
       const tabDirty = (id) => {
         if (!dirty) return false
         if (id.startsWith('ext:')) { const k = id.slice(4); return JSON.stringify((draft.ext || {})[k]) !== JSON.stringify((cfg.ext || {})[k]) }

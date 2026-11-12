@@ -103,13 +103,20 @@ class ServiceConfig:
         explicit = self.paths.get("applio") or os.environ.get("QQSOUL_APPLIO_DIR")
         if explicit:
             return Path(str(explicit)).expanduser()
-        # Windows 常见装法在 D 盘 / tools 下；没有再回落 macOS 时代的 ~/tools/applio。
+        # 先按面板「翻唱」一键安装的位置找（两个系统都一样：~/Aurabot/rvc/Applio），
+        # 再兼容老装法：Windows 常见在 D 盘 / tools 下，macOS 老版本放在 ~/tools/applio。
+        installed = _home("Aurabot", "rvc", "Applio")
+        if (installed / "core.py").is_file():
+            return installed
+        candidates = []
         if os.name == "nt":
-            for candidate in (Path("D:/tools/rvc"), Path("C:/tools/rvc"),
-                              Path("D:/tools/applio"), Path("C:/tools/applio")):
-                if candidate.is_dir():
-                    return candidate
-        return _home("tools", "applio")
+            candidates += [Path("D:/tools/rvc"), Path("C:/tools/rvc"),
+                           Path("D:/tools/applio"), Path("C:/tools/applio")]
+        candidates.append(_home("tools", "applio"))
+        for candidate in candidates:
+            if candidate.is_dir():
+                return candidate
+        return installed
 
     def rvc_convert_path(self) -> Path:
         """本机快速 RVC（技能包 Windows 版）的主程序，配置/环境没填就在引擎目录里找。"""
@@ -131,12 +138,15 @@ class ServiceConfig:
         if explicit:
             return Path(explicit).expanduser()
         exe = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        #: 面板「翻唱」一键安装把环境放在 Applio 的同级 env/；老装法是 Applio 里的 .venv
+        candidates = [self.applio_dir().parent / "env" / exe]
         #: 本机快速 RVC 用的是 ``venv312``，不是 Applio 的 ``.venv``
         for name in ("venv312", ".venv"):
-            candidate = self.applio_dir() / name / exe
+            candidates.append(self.applio_dir() / name / exe)
+        for candidate in candidates:
             if candidate.is_file():
                 return candidate
-        return self.applio_dir() / ".venv" / exe
+        return candidates[-1]
 
     def ffmpeg(self) -> str:
         import shutil
@@ -147,10 +157,12 @@ class ServiceConfig:
         found = shutil.which("ffmpeg")
         if found:
             return found
-        for candidate in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg",
-                          "C:/tools/ffmpeg/bin/ffmpeg.exe", "D:/tools/ffmpeg/bin/ffmpeg.exe"):
+        exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+        for candidate in (self.applio_dir().parent / "bin" / exe,
+                          Path("/opt/homebrew/bin/ffmpeg"), Path("/usr/local/bin/ffmpeg"),
+                          Path("C:/tools/ffmpeg/bin/ffmpeg.exe"), Path("D:/tools/ffmpeg/bin/ffmpeg.exe")):
             if Path(candidate).is_file():
-                return candidate
+                return str(candidate)
         return ""
 
     def voice_model(self) -> tuple[str, str]:
@@ -161,12 +173,11 @@ class ServiceConfig:
             hint = str(self.paths.get("models") or "").strip()
             if hint:
                 bases = [Path(hint).expanduser()]
-            elif os.name == "nt":
-                #: Windows 上快速 RVC 的音色就放在引擎目录的 models/ 下，
-                #: 别再默认去 ~/tools/models 找 macOS 装法留下的目录。
-                bases = [self.applio_dir() / "models", _home("tools", "models")]
             else:
-                bases = [_home("tools", "models")]
+                #: 面板「翻唱」一键安装把音色放在 Applio 同级的 models/；
+                #: 再兼容老装法（Windows 的引擎目录、macOS 的 ~/tools/models）。
+                bases = [self.applio_dir().parent / "models", self.applio_dir() / "models",
+                         _home("tools", "models")]
             for base in bases:
                 for stem in ("FeiyuVoice-RVC-v1", "NCD"):
                     folder = "feiyu-rvc" if stem.startswith("Feiyu") else "ncd-rvc"
