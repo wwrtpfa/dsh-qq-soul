@@ -393,13 +393,33 @@ def _asr_text(cfg, audio: Path) -> str:
     return ""
 
 
+def _sibling_text(audio: Path) -> str:
+    """只读「这一段音频自己的」同名逐字稿（``x.gsv.wav`` → ``x.gsv.txt``）。
+
+    截短过音频时不能退回去读 ``x.txt``：那是完整音频的稿，和截出来的 9 秒
+    逐字不一致。实测 9 秒音频配按比例截出的 30 字，GPT-SoVITS 提前 EOS，
+    15 字的目标文本只合成 0.94 秒；同一段音频把稿子留空能正常出 3.02 秒。
+    """
+    for f in (audio.with_suffix(".txt"), audio.parent / (audio.name + ".txt")):
+        try:
+            if f.is_file():
+                text = f.read_text(encoding="utf-8-sig", errors="replace").strip()
+                if text:
+                    return text
+        except OSError:
+            continue
+    return ""
+
+
 def prepare_ref_text(cfg, path: str = "", draft: str = "", force: bool = False) -> dict:
     """「自动读取参考音频文本」的完整流程：规整音频 + 自动写好逐字稿。
 
     1. 音频超过 10 秒（GPT-SoVITS 上限）→ 截前 9 秒成 ``<原名>.gsv.wav``；
-    2. 找源逐字稿：同名 .txt > 原名 .txt > 旧目录 > 面板输入框 > 同一音频的配置文本
-       > 可选 ASR；**不会拿另一段音频的稿子来凑**；
-    3. 截取过音频就按 ``秒数比例`` 把逐字稿截到句末标点（`_trim_prompt`）；
+    2. 没截过：找源逐字稿 同名 .txt > 原名 .txt > 旧目录 > 面板输入框
+       > 同一音频的配置文本 > 可选 ASR；**不会拿另一段音频的稿子来凑**；
+    3. 截过：**只认截出来那段自己的同名稿**，或用户这次刚改过的输入框内容
+       （和配置里一样的旧稿会被当成残留丢掉）；都没有就留空。旧稿是按
+       完整音频写的，按比例截出来也对不上，宁可留空（空稿能正常合成）；
     4. 把结果写成新音频同名的 ``.txt``，并回填 ``refAudio`` / ``refText`` 到配置；
     5. 返回文本给面板直接填进「这段音频说的是」。
 
@@ -415,29 +435,39 @@ def prepare_ref_text(cfg, path: str = "", draft: str = "", force: bool = False) 
     final = Path(final)
     trimmed = ratio < 0.999
 
-    #: force=「重新听写」：跳过已有的 .txt（可能是别的音频留下的错稿），
-    #: 直接对当前音频做语音识别并覆盖写回。
-    found = {"text": "", "source": ""} if force else read_ref_text(cfg, str(audio))
-    text = str(found.get("text") or "").strip()
-    src = str(found.get("source") or "")
-    #: 面板切了参考音频却还留着上一段的稿子时，不能把这份「残留稿」当成
-    #: 用户给新音频写的内容，否则一键读取会把错稿固化进新音频的 .txt。
-    stale = str(cfg.tts.get("refText") or "").strip()
-    stale_from_other = bool(stale) and str(cfg.tts.get("refAudio") or "") != str(audio)
-    if not text and not force and str(draft or "").strip():
-        typed = str(draft).strip()
-        if not (stale_from_other and typed == stale):
+    if trimmed:
+        #: force=「重新听写」时连同名稿也不认，直接对截出来的音频重听。
+        own = "" if force else _sibling_text(final)
+        stale = str(cfg.tts.get("refText") or "").strip()
+        typed = "" if force else str(draft or "").strip()
+        if own:
+            text, src = own, "同名逐字稿"
+        elif typed and typed != stale:
+            #: 用户刚在框里改过：这是他自己确认过的稿，保留；
+            #: 和配置里一模一样的旧稿则视为残留，不能再次固化。
             text, src = typed, "面板输入框"
-    if not text and str(cfg.tts.get("refAudio") or "") == str(audio):
-        text, src = stale, "当前配置"
+        else:
+            text, src = "", ""
+    else:
+        #: force=「重新听写」：跳过已有的 .txt（可能是别的音频留下的错稿），
+        #: 直接对当前音频做语音识别并覆盖写回。
+        found = {"text": "", "source": ""} if force else read_ref_text(cfg, str(audio))
+        text = str(found.get("text") or "").strip()
+        src = str(found.get("source") or "")
+        #: 面板切了参考音频却还留着上一段的稿子时，不能把这份「残留稿」当成
+        #: 用户给新音频写的内容，否则一键读取会把错稿固化进新音频的 .txt。
+        stale = str(cfg.tts.get("refText") or "").strip()
+        stale_from_other = bool(stale) and str(cfg.tts.get("refAudio") or "") != str(audio)
+        if not text and not force and str(draft or "").strip():
+            typed = str(draft).strip()
+            if not (stale_from_other and typed == stale):
+                text, src = typed, "面板输入框"
+        if not text and str(cfg.tts.get("refAudio") or "") == str(audio):
+            text, src = stale, "当前配置"
     if not text:
         heard = _asr_text(cfg, final)
         if heard:
             text, src = heard, "自动听写"
-    #: 自动听写是对「截取后的新音频」做的，稿子天然就对应那段音频，
-    #: 不能再按比例截一次（会平白截短）。只有从完整稿读来的才需要截。
-    if text and trimmed and src != "自动听写":
-        text = _trim_prompt(text, ratio)
 
     txt_file = final.with_suffix(".txt")
     if text:
@@ -446,8 +476,10 @@ def prepare_ref_text(cfg, path: str = "", draft: str = "", force: bool = False) 
         bits = []
         if note:
             bits.append(note)
-        if trimmed:
-            bits.append("逐字稿按比例截到标点")
+        if trimmed and src == "同名逐字稿":
+            bits.append("逐字稿就是截出来这段音频的稿")
+        if trimmed and src == "面板输入框":
+            bits.append("逐字稿按你刚填的内容保存（要确保它说的就是截出来这一段）")
         if src == "自动听写":
             bits.append("本机 FunASR 自动听写（可手动补标点）")
         bits.append("已写好 " + txt_file.name + " 并回填配置")
@@ -455,14 +487,16 @@ def prepare_ref_text(cfg, path: str = "", draft: str = "", force: bool = False) 
                 "textFile": str(txt_file), "source": src, "trimmed": trimmed,
                 "message": "；".join(bits)}
 
-    # 听写也没出结果：音频照样规整好、配置指向正确文件，并把旧稿清空，
-    # 绝不让上一段音频的逐字稿继续跟着新音频。
+    # 没找到能对上的稿：音频照样规整好、配置指向正确文件，并把旧稿清空，
+    # 绝不让「配完整音频写的稿」继续跟着截出来的这一段。
     cfg.save_tts({"refAudio": str(final), "refText": ""})
     extra = ("；" + note) if note else ""
+    head = ("截出来的这段还没有自己的逐字稿，旧稿是按完整音频写的、对不上，已清空"
+            if trimmed else "自动听写没出结果")
     return {"ok": False, "text": "", "audio": str(final), "textFile": "",
             "source": "", "trimmed": trimmed,
-            "message": "自动听写没出结果" + extra +
-                       "。可在框里手写一句，点「自动读取」即存成 " + txt_file.name +
+            "message": head + extra +
+                       "。可在框里手写这句，点「自动读取」即存成 " + txt_file.name +
                        " 并回填（旧稿已清空，不会串稿）"}
 
 
@@ -477,23 +511,6 @@ def _probe_duration(ffprobe: str, path: Path) -> float:
         return max(0.0, float((out.stdout or "").strip()))
     except (OSError, ValueError, subprocess.SubprocessError):
         return 0.0
-
-
-def _trim_prompt(text: str, ratio: float) -> str:
-    """参考音频被截短后，逐字稿按比例截到标点，别让后半句对不上嘴。"""
-    import re
-
-    if not text or ratio >= 0.999:
-        return text
-    parts = re.split(r"(?<=[。！？!?；;])", str(text))
-    total = sum(len(part) for part in parts) or 1
-    limit = total * max(0.1, ratio)
-    kept = ""
-    for part in parts:
-        if kept and len(kept) + len(part) > limit:
-            break
-        kept += part
-    return kept.strip() or str(text)
 
 
 def _normalize_gsv_ref(cfg, path: str, folder: Path) -> tuple[str, str, float]:
@@ -570,7 +587,10 @@ def set_ref(cfg, *, path: str = "", text: str = "", use: str = "tts") -> dict:
         if use in ("song", "both"):
             patch["song"] = {"refAudio": target}
     if text:
-        patch["refText"] = _trim_prompt(text, ratio) if ratio < 1.0 else text
+        #: 截短过音频时，手写的稿是按完整音频写的，直接跟着用会提前 EOS；
+        #: 只认截出来那段自己的同名稿，没有就留空（空稿能正常合成）。
+        own = _sibling_text(Path(target)) if ratio < 0.999 else ""
+        patch["refText"] = text if ratio >= 0.999 else own
     if patch.get("song"):
         song_patch = patch.pop("song")
         cfg.song = dict(cfg.song)
@@ -581,6 +601,9 @@ def set_ref(cfg, *, path: str = "", text: str = "", use: str = "tts") -> dict:
     message = "参考音频已保存：%s" % (Path(target).name if target else "只更新了逐字稿")
     if note:
         message += "；" + note
+    if ratio < 0.999 and text and not patch.get("refText"):
+        message += ("；旧逐字稿是按完整音频写的，对不上截出来的这一段，已清空"
+                    "（可留空，或点「自动读取」对截出来的音频重新听写）")
     return {"ok": True, "refs": refs(cfg), "saved": patch, "message": message}
 
 

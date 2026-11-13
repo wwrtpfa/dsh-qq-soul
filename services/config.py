@@ -503,14 +503,22 @@ class ServiceConfig:
                 continue
             incoming[key] = text
         #: 参考音频的硬约束在这里兜住：面板「选文件」→ 保存也会走到这。
-        #: 长音频截前 9 秒（另存 .gsv.wav，原文件不动），逐字稿按比例截到标点。
+        #: 长音频截前 9 秒（另存 .gsv.wav，原文件不动）。截短后旧逐字稿一定
+        #: 对不上（实测会让 GPT-SoVITS 提前 EOS），所以只认截出来那段自己的
+        #: 同名 .txt，没有就清空——空稿能正常合成，只是音色相似度略低。
         if incoming.get("refAudio"):
             incoming["refAudio"], note, ratio = self._normalize_ref(incoming["refAudio"])
-            if ratio < 0.999 and incoming.get("refText"):
+            if ratio < 0.999:
                 from . import tools as tools_mod
-                incoming["refText"] = tools_mod._trim_prompt(incoming["refText"], ratio)
-                if not note:
-                    note = "参考音频已截短，逐字稿按比例截到标点"
+
+                own = tools_mod._sibling_text(Path(incoming["refAudio"]))
+                had = str(incoming.get("refText", self.tts.get("refText") or "")).strip()
+                if had and had != own:
+                    note = (note + "；" if note else "") + (
+                        "逐字稿已换成截出来这段音频自己的同名稿" if own else
+                        "逐字稿是按完整音频写的，对不上截出来的这一段，已清空"
+                        "（可留空，或点「自动读取」重新听写）")
+                incoming["refText"] = own
             self.last_ref_note = note
         if "volume" in incoming:
             try:

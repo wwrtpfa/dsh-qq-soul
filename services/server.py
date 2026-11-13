@@ -495,7 +495,7 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                                                          use=str(body.get("use") or "tts")))
 
             # 「这段音频说的是」旁的自动读取：GET 只读；POST 会规整音频、
-            # 按比例截逐字稿、写同名 .txt 并回填配置与输入框。
+            # 挑与截出来那段逐字对得上的稿（没有就留空）、写同名 .txt 并回填。
             if method == "GET" and path == "/refs/text":
                 return self._json(200, tools_mod.read_ref_text(
                     ctx.cfg, str((query.get("path") or [""])[0] or "")))

@@ -90,13 +90,18 @@ def test_gptsovits_synth_refuses_before_calling_upstream(tmp_path, monkeypatch):
 # 点试听时 GPT-SoVITS 回 400「参考音频在3~10秒范围外」。保存和合成都得兜住。
 
 def _long_pair(tmp_path):
-    """14 秒参考音频 + 对应逐字稿；规整后应当是 9 秒 + 截短的稿子。"""
+    """14 秒参考音频 + 对应逐字稿；规整后应当是 9 秒，旧稿因为对不上会被清空。"""
     audio = _wav(tmp_path / "refs" / "温柔声音.wav", 14.0)
     text = "今天也要好好吃饭哦。" * 4
     return audio, text
 
 
-def test_save_tts_trims_long_ref_audio_and_text(tmp_path, monkeypatch):
+def test_save_tts_trims_long_ref_audio_and_clears_stale_text(tmp_path, monkeypatch):
+    """截短音频后必须清空旧稿：按比例截出来的稿会让 GPT-SoVITS 提前 EOS。
+
+    现场实测：9 秒音频配按比例截出的 30 字，15 字目标只合成 0.94 秒；
+    同一段音频把稿子留空，正常出 3.02 秒。所以宁可留空，也不能留旧稿。
+    """
     from services import tools
     from services.config import ServiceConfig
 
@@ -107,8 +112,25 @@ def test_save_tts_trims_long_ref_audio_and_text(tmp_path, monkeypatch):
     cfg = ServiceConfig(data_dir=tmp_path / "service")
     saved = cfg.save_tts({"refAudio": str(audio), "refText": text})
     assert saved["refAudio"] == str(final), "保存时就该换成截好的那一段"
-    assert len(saved["refText"]) < len(text), "逐字稿要跟着按比例截，否则 GPT-SoVITS 会把整段念进去"
+    assert saved["refText"] == "", "旧稿配的是完整音频，截短后一定对不上，必须清空"
     assert "9 秒" in cfg.last_ref_note, "页面要立刻知道音频被截短了"
+    assert "已清空" in cfg.last_ref_note, "也要说明稿子为什么没了"
+
+
+def test_save_tts_uses_the_trimmed_audio_own_text(tmp_path, monkeypatch):
+    """截出来的那段自己有同名稿时（x.gsv.txt）就用它，不要清掉。"""
+    from services import tools
+    from services.config import ServiceConfig
+
+    audio, text = _long_pair(tmp_path)
+    final = _wav(tmp_path / "refs" / "温柔声音.gsv.wav", 9.0)
+    own = "这句话是截出来那段音频自己说的。"
+    (tmp_path / "refs" / "温柔声音.gsv.txt").write_text(own, encoding="utf-8")
+    monkeypatch.setattr(tools, "_normalize_gsv_ref",
+                        lambda cfg, path, folder: (str(final), "已自动截成 9 秒", 9.0 / 14.0))
+    cfg = ServiceConfig(data_dir=tmp_path / "service")
+    saved = cfg.save_tts({"refAudio": str(audio), "refText": text})
+    assert saved["refText"] == own, "同名稿和截出来的音频逐字一致，可以继续用"
 
 
 def test_gptsovits_synth_uses_trimmed_ref_and_writes_back(tmp_path, monkeypatch):
@@ -151,5 +173,42 @@ def test_gptsovits_synth_uses_trimmed_ref_and_writes_back(tmp_path, monkeypatch)
     cfg = Cfg()
     providers.GPTSoVITSProvider(cfg).synth("晚安啦", tmp_path / "out.wav")
     assert bodies[0]["ref_audio_path"] == str(final), "送上游的必须是截好的 9 秒音频"
-    assert len(bodies[0]["prompt_text"]) < len(text)
+    assert bodies[0]["prompt_text"] == "", "旧稿对不上截出来的音频，宁可留空"
     assert cfg.saved and cfg.saved["refAudio"] == str(final), "截好的路径要写回配置，别每句都重算"
+    assert cfg.saved["refText"] == "", "清空也要写回，否则下一句又把旧稿拿回来"
+
+
+def test_prepare_ref_text_keeps_newly_typed_text(tmp_path, monkeypatch):
+    """截短后用户刚改过输入框：那是他自己确认过的稿，不能一起清掉。"""
+    from services import tools
+    from services.config import ServiceConfig
+
+    audio = _wav(tmp_path / "refs" / "长音频.wav", 14.0)
+    final = _wav(tmp_path / "refs" / "长音频.gsv.wav", 9.0)
+    monkeypatch.setattr(tools, "_normalize_gsv_ref",
+                        lambda cfg, path, folder: (str(final), "已自动截成 9 秒", 9.0 / 14.0))
+    monkeypatch.setattr(tools, "_asr_text", lambda cfg, path: "")
+    cfg = ServiceConfig(data_dir=tmp_path / "service")
+    cfg.tts = dict(cfg.tts, refText="这是完整音频的旧稿，特别长。" * 5)
+    typed = "截出来这一段说的是这句话。"
+    out = tools.prepare_ref_text(cfg, path=str(audio), draft=typed)
+    assert out["ok"] is True and out["text"] == typed
+    assert out["source"] == "面板输入框"
+
+
+def test_prepare_ref_text_refuses_text_from_the_full_audio(tmp_path, monkeypatch):
+    """一键读取遇到截短音频时不能拿完整音频的稿按比例凑，否则就回到 1 秒残句。"""
+    from services import tools
+    from services.config import ServiceConfig
+
+    audio = _wav(tmp_path / "refs" / "长音频.wav", 14.0)
+    (tmp_path / "refs" / "长音频.txt").write_text("完整音频的逐字稿，很长。" * 6, encoding="utf-8")
+    final = _wav(tmp_path / "refs" / "长音频.gsv.wav", 9.0)
+    monkeypatch.setattr(tools, "_normalize_gsv_ref",
+                        lambda cfg, path, folder: (str(final), "已自动截成 9 秒", 9.0 / 14.0))
+    monkeypatch.setattr(tools, "_asr_text", lambda cfg, path: "")
+    cfg = ServiceConfig(data_dir=tmp_path / "service")
+    out = tools.prepare_ref_text(cfg, path=str(audio))
+    assert out["ok"] is False and out["text"] == ""
+    assert "已清空" in out["message"]
+    assert cfg.tts.get("refText") == ""

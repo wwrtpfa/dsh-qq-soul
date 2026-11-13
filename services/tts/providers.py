@@ -249,8 +249,10 @@ def _usable_ref(cfg, path, text) -> tuple[str, str, str]:
     """保证送进 GPT-SoVITS 的参考音频在 3–10 秒，返回 (音频, 逐字稿, 说明)。
 
     旧配置里可能存着 10 秒以上的参考音频，``api_v2.py`` 会直接回 400
-    「参考音频在3~10秒范围外」。这里合成前再规整一次，并把截好的路径
-    （以及按比例截过的稿子）写回配置，下一句就不用再算。
+    「参考音频在3~10秒范围外」。这里合成前再规整一次，并把截好的路径和
+    与它逐字对得上的稿子写回配置，下一句就不用再算。截短时旧稿一律不沿用，
+    只认截出来那段自己的同名稿（或留空），因为按比例截出来的稿会让模型提前
+    EOS，产出只有零点几秒的残句。
     缺 ffmpeg / 文件读不出来时保持原样，交给上游报错，别把整条链路拦死。
     """
     raw = str(path or "").strip()
@@ -274,15 +276,24 @@ def _usable_ref(cfg, path, text) -> tuple[str, str, str]:
         return raw, text, ""
     final = str(final)
     _REF_AUDIO_CACHE[str(src)] = (mtime, final)
-    if ratio < 0.999 and text:
-        text = tools_mod._trim_prompt(text, ratio)
+    note_text = note
+    if ratio < 0.999:
+        #: 截短后旧稿一定对不上：实测 9 秒音频配按比例截出的 30 字，15 字
+        #: 目标只合成 0.94 秒就 EOS；同一段音频留空稿正常出 3.02 秒。
+        #: 只认截出来那段自己的同名稿，没有就清空（空稿能正常合成）。
+        own = tools_mod._sibling_text(Path(final))
+        if own != text:
+            text = own
+            note_text = (note_text + "；" if note_text else "") + (
+                "逐字稿已换成截短音频自己的同名稿" if own else
+                "旧逐字稿对不上截出来的音频，已清空（可留空，或重新听写）")
     #: 截短 / 转码后路径变了就写回：否则每句都要重新 ffprobe + 转码。
-    if final != raw:
+    if final != raw or ratio < 0.999:
         try:
-            cfg.save_tts({"refAudio": final, **({"refText": text} if text else {})})
+            cfg.save_tts({"refAudio": final, "refText": text})
         except Exception:  # noqa: BLE001
             pass
-    return final, text, note
+    return final, text, note_text
 
 
 class GPTSoVITSProvider(BaseProvider):
