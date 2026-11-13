@@ -150,6 +150,19 @@ def _platform_ok(engine: str) -> bool:
     return sys.platform in DOWNLOAD_SPECS[engine]["platforms"]
 
 
+def _runtime_plan(cfg, engine: str) -> dict:
+    """这一步只下权重，服务程序能不能顺带自动补齐，进页面就先说清楚。
+
+    延迟导入：runtime_fetch 顶层 import local_tts，这边也是；放函数里避免模块加载顺序依赖。
+    """
+    try:
+        from . import runtime_fetch as runtime_mod
+        p = runtime_mod.plan(cfg, engine)
+    except Exception as exc:  # noqa: BLE001 - 体检失败不该让下载页打不开
+        return {"available": False, "entry": "", "installed": False, "message": str(exc)}
+    return {k: p.get(k) for k in ("available", "entry", "installed", "message")}
+
+
 def plan(cfg, engine: str) -> dict:
     """不联网：面板进页面就能知道能不能下、有几个档、大概多大。"""
     engine = str(engine or "").strip().lower()
@@ -166,6 +179,7 @@ def plan(cfg, engine: str) -> dict:
         "profiles": list(spec["profiles"]),
         "target": str(target),
         "hosts": list(HF_HOSTS),
+        "runtime": _runtime_plan(cfg, engine),
         "message": ("可以从 %s 一键下载到固定目录" % spec["repo"]) if available
                    else ("%s 只在 %s 上提供；这台机器请自己下好后用「选目录导入」（导入是移动，不会留两份）"
                          % (spec["label"], "、".join(spec["platforms"]))),
@@ -582,6 +596,45 @@ def _run(cfg, engine, rows, target, state, cancel, auto_start, timeout) -> None:
             cfg.save_paths({spec["modelKey"]: str(target)})
             cfg.mark_downloaded("local-tts-" + engine, str(target))
             entry = local_tts_mod._find_entry(cfg, engine)
+            runtime_note = ""
+            if entry is None:
+                # 权重下完了，服务程序也得跟上。以前这里只打个 needRuntime 标记，
+                # 用户下完 1.6 GB 才被通知「还差一个程序，请自己再点一次」——
+                # 每个渠道都要重来一遍，很折磨人。有公开源就在这里一次补齐。
+                try:
+                    from . import runtime_fetch as runtime_mod
+                    rp = runtime_mod.plan(cfg, engine)
+                    if rp.get("available") and not rp.get("installed"):
+                        got = runtime_mod.fetch_sync(cfg, engine)
+                        if got.get("ok"):
+                            state["runtimeFetched"] = True
+                            runtime_note = got.get("message") or ""
+                            entry = local_tts_mod._find_entry(cfg, engine)
+                        else:
+                            state["runtimeFetchError"] = got.get("message") or "服务程序没补齐"
+                    elif not rp.get("available"):
+                        state["runtimeManualOnly"] = True
+                        state["runtimeEntry"] = rp.get("entry") or ""
+                except Exception as exc:  # noqa: BLE001 - 补程序失败不能把已下好的权重判成失败
+                    state["runtimeFetchError"] = str(exc)
+            # 程序放到 runtime/ 还不算完：mlx_audio / torch 没装，进程会秒退。
+            # 用户要的是「一键装好」，所以依赖也在这条线程里装完再启动，
+            # 不再留一个「装依赖」按钮让他自己回来点。
+            if auto_start and entry is not None:
+                try:
+                    from . import runtime_fetch as runtime_mod
+                    missing = runtime_mod.missing_deps(cfg, engine, timeout=30)
+                    if missing:
+                        state["message"] = ("服务程序已放好，正在自动装依赖（%s）；"
+                                            "装完会自动启动，面板可以关掉" % "、".join(missing))
+                        flush(True)
+                        got = runtime_mod.install_deps_sync(cfg, engine)
+                        if got.get("ok"):
+                            state["depsInstalled"] = True
+                        else:
+                            state["depsError"] = got.get("message") or "依赖没装上"
+                except Exception as exc:  # noqa: BLE001 - 依赖失败不能把已下好的权重判成失败
+                    state["depsError"] = str(exc)
             if auto_start and entry is not None:
                 state["startAttempted"] = True
                 try:
@@ -594,14 +647,28 @@ def _run(cfg, engine, rows, target, state, cancel, auto_start, timeout) -> None:
                     state["startError"] = str(exc)
             if entry is None:
                 state["needRuntime"] = True
+            port = local_tts_mod.ENGINE_SPEC[engine]["port"]
+            prefix = (runtime_note + "；") if runtime_note else ""
+            if state.get("depsInstalled"):
+                prefix += "依赖也自动装好了；"
+            elif state.get("depsError"):
+                prefix += "依赖没自动装上（%s），点「装依赖」重试一次就行；" % str(state["depsError"])[:120]
             if state.get("autoStarted"):
-                tail = "已自动把本机服务带起来，看到「● 在线」下一句就生效"
+                tail = prefix + "已自动把 %d 端口的本机服务带起来，看到「● 在线」下一句就生效" % port
             elif state.get("startError"):
-                tail = "自动启动还没起来（%s），点「启动」或「刷新状态」再确认" % state["startError"]
+                tail = prefix + "自动启动还没起来（%s），点「启动」或「刷新状态」再确认" % state["startError"]
             elif entry is None:
-                tail = "还差 9883/9881 的启动入口整包，用第 ② 步「导入整包」把服务脚本移动进来就能启动"
+                if state.get("runtimeFetchError"):
+                    tail = "服务程序没自动补齐（%s）：点「③ 一键获取服务程序」重试一次就行，权重不用重下" % state["runtimeFetchError"]
+                elif state.get("runtimeManualOnly"):
+                    name = state.get("runtimeEntry") or "服务脚本"
+                    tail = ("权重齐了，但这个渠道没有可自动下载的服务程序：%d 端口需要 %s，"
+                            "得自己准备好后用第 ② 步「导入整包」放进数据目录。"
+                            "只是想用本地语音的话，别的已在线渠道直接可用，不必卡在这里" % (port, name))
+                else:
+                    tail = "还差 %d 端口的服务程序，用第 ② 步「导入整包」把服务脚本移动进来就能启动" % port
             else:
-                tail = "点「启动」把它带起来"
+                tail = prefix + "点「启动」把它带起来"
             state["message"] = ("下载完成并已放到固定目录 %s：全部文件校验通过。%s" % (target, tail))
         flush(True)
     except Exception as exc:  # 后台线程不能把异常吞得无声无息

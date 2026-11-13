@@ -53,9 +53,28 @@ def _warmup_file(path: str) -> None:
     sf.write(path, np.zeros(int(24000 * 0.4), dtype="float32"), 24000)
 
 
+def resolve_core_dir(engine_dir: str | Path) -> Path:
+    """把「安装根目录」归一成主程序所在目录（``<root>/Applio/core.py`` 这种）。
+
+    这里单独实现一份、不复用 ``services.config.engine_root``：本文件是被引擎
+    venv 的解释器当**脚本**跑起来的，没有包上下文，导入不到 services。
+    """
+    root = Path(engine_dir)
+    for candidate in (root, root / "Applio"):
+        if (candidate / "core.py").is_file() or (candidate / "rvc_convert.py").is_file():
+            return candidate
+    try:
+        for child in sorted(child for child in root.iterdir() if child.is_dir()):
+            if (child / "core.py").is_file() or (child / "rvc_convert.py").is_file():
+                return child
+    except OSError:
+        pass
+    return root
+
+
 def detect_backend(engine_dir: str | Path) -> str:
     """按引擎目录里实际有的文件选后端，不猜平台、不看配置。"""
-    root = Path(engine_dir)
+    root = resolve_core_dir(engine_dir)
     if (root / "core.py").is_file():
         return "applio"
     if (root / "rvc_convert.py").is_file() and (root / "infer" / "vc" / "pipeline.py").is_file():
@@ -174,6 +193,9 @@ def main(argv: list[str]) -> int:
         print("usage: rvc_driver.py <engine_dir> <model.pth> <index.index>", file=sys.stderr)
         return 2
     engine_dir, model, index = argv[1], argv[2], argv[3]
+    #: 传进来的可能是安装根目录（里面才是 Applio/）：chdir 和 sys.path 都必须落在
+    #: core.py 那一层，否则 ``from core import ...`` 和它内部的相对路径全错。
+    engine_dir = str(resolve_core_dir(engine_dir))
     proto = _protocol_stream()
 
     def reply(payload: dict) -> None:

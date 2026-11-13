@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from ..config import engine_root
 from .trim import frame_rms_dbfs
 
 log = logging.getLogger("qqsoul")
@@ -162,25 +163,32 @@ def fast_rvc_dir() -> Path | None:
 
 
 def engine_paths(config) -> tuple[Path, Path]:
-    """``(RVC 引擎目录, 它的 venv 解释器)``；配置留空就用本机实际装法。"""
+    """``(RVC 引擎主程序目录, 它的 venv 解释器)``；配置留空就用本机实际装法。
+
+    面板填进来的可能是**安装根目录**（``<root>/Applio/core.py`` + ``<root>/env``），
+    也可能是主程序目录本身，这里统一归一——以前只认 ``<root>/core.py``，于是
+    ``~/tools/applio/Applio/core.py`` 这种一键安装的布局被判成「换声引擎找不到」。
+    """
     payload = config if isinstance(config, dict) else {}
     raw = str(payload.get("engine_dir") or "").strip()
     if raw:
-        engine = Path(raw).expanduser()
+        engine = engine_root(Path(raw).expanduser())
     else:
         env_dir = os.environ.get("QQSOUL_APPLIO_DIR")
-        engine = (Path(env_dir).expanduser() if env_dir
-                  else fast_rvc_dir() or Path(DEFAULT_ENGINE_DIR).expanduser())
+        engine = engine_root(Path(env_dir).expanduser() if env_dir
+                             else fast_rvc_dir() or Path(DEFAULT_ENGINE_DIR).expanduser())
     exe = "Scripts/python.exe" if os.name == "nt" else "bin/python"
-    #: 快速 RVC 用的是 venv312，Applio 用 .venv；两个都认。
-    default_py = None
-    for name in ("venv312", ".venv"):
-        candidate = engine / name / exe
-        if candidate.is_file():
-            default_py = candidate
-            break
-    default_py = default_py or engine / ".venv" / exe
-    python = Path(str(payload.get("python") or "").strip() or default_py)
+    #: 一键安装的环境在引擎的同级 ``env/``；老装法是引擎里的 ``.venv``；
+    #: 快速 RVC 用 ``venv312``。存在的优先，别让配置里的死路径挡住真 venv。
+    candidates: list[Path] = []
+    configured = str(payload.get("python") or "").strip()
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    for base in (engine.parent, engine):
+        candidates.append(base / "env" / exe)
+    for name in ("venv312", ".venv", "venv", "env"):
+        candidates.append(engine / name / exe)
+    python = next((p for p in candidates if p.is_file()), candidates[0])
     #: 服务进程自己的解释器（如 D:\Python312\python.exe）没装 torch，拿它去跑
     #: RVC 只会得到「No module named torch」或「can't open file core.py」。
     #: 本机快速 RVC 一律纠正回引擎自己的 venv312，别让上游传错污染整条链。
@@ -204,6 +212,7 @@ def toolchain_problem(config) -> str:
         fast is not None and fast.resolve() == engine.resolve()
     )
     if not core.is_file() and not fast_here:
+        #: 报错里给出「归一前」的路径也一并说清，用户才知道自己填的是哪一层
         return (f"换声引擎找不到：{core}（Applio）或 "
                 f"{engine / 'rvc_convert.py'}（本机快速 RVC）")
     if not python.is_file():
@@ -603,7 +612,7 @@ def _convert_once(
     - 有 ``rvc_convert.py`` → 技能包快速 CLI，输入已是分离好的人声，
       用 ``--no-separate --acapella`` 只出纯人声 WAV，混音仍交给上层。
     """
-    engine = Path(engine_dir)
+    engine = engine_root(Path(engine_dir))
     py = Path(python)
     fast = fast_rvc_dir()
     if fast is not None and engine.resolve() == fast.resolve():

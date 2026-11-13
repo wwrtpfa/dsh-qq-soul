@@ -73,7 +73,8 @@ test('渠道参数只显示当前渠道用得上的字段', () => {
 
   const qwen = detail({ qwenUrl: 'http://127.0.0.1:9883' }, 'qwen', true)
   assert.match(texts(qwen), /本机服务地址/)
-  assert.doesNotMatch(texts(qwen), /参考音频|Token/)
+  assert.match(texts(qwen), /参考音频/, '千问 Base 权重只做声音克隆，必须能在这里选参考音频')
+  assert.doesNotMatch(texts(qwen), /Token/)
 })
 
 test('Breeze：回显真实 voice id，不给上游不存在的别名', () => {
@@ -270,9 +271,225 @@ test('程序已就位时，按钮变成「重新获取」并显示程序路径',
   assert.match(text, /装依赖（已经齐了）/)
 })
 
+test('下载前就预告服务程序怎么补齐，别等下完 1.6 GB 才说', () => {
+  const card = renderLocalTts({
+    1: gsvStatus,
+    2: { ok: true, phase: 'idle', files: [], plan: {
+      available: true, repo: 'lj1995/GPT-SoVITS', sizeHint: '约 1.11 GiB', target: '/x/models',
+      runtime: { available: true, entry: 'api_v2.py', installed: false } } },
+    3: { ok: true, phase: 'idle', running: false, missingDeps: [], message: '',
+      plan: { available: true, entry: 'api_v2.py', installed: false } },
+  })
+  assert.ok(rendered(card))
+  assert.match(texts(card), /一次装好/, '要明说这一次下载会把服务程序一起补齐')
+  assert.match(texts(card), /api_v2\.py/)
+})
+
+test('qwen 没有公开服务程序：不显示一键获取按钮，也不误写成 api_v2.py', () => {
+  const qwenStatus = {
+    ...gsvStatus, engine: 'qwen', label: '千问 3-TTS', port: 9883,
+    steps: gsvStatus.steps.map((s) => s.id === 'entry'
+      ? { ...s, hint: '还差让 9883 端口跑起来的程序（qwen_tts_server.py）' } : s),
+    message: '千问 3-TTS 还没装好，还差：服务程序。这个渠道没有公开可下载的服务程序',
+  }
+  const ctl = loadControlled('LocalTtsCard', {
+    1: qwenStatus,
+    2: { ok: true, phase: 'idle', files: [], plan: {
+      available: true, repo: 'mlx-community/Qwen3-TTS', sizeHint: '约 1.59 GiB', target: '/x/models',
+      runtime: { available: false, entry: 'qwen_tts_server.py', installed: false } } },
+    3: { ok: true, phase: 'idle', running: false, missingDeps: [], message: '',
+      plan: { available: false, entry: 'qwen_tts_server.py', installed: false, message: '没有公开的服务程序仓库' } },
+  })
+  const card = ctl.LocalTtsCard({ engine: 'qwen', toast: noop })
+  assert.ok(rendered(card))
+  const text = texts(card)
+  assert.match(text, /qwen_tts_server\.py/, '要说清缺的是哪个脚本')
+  assert.doesNotMatch(text, /api_v2\.py/, '不能张冠李戴成 GPTs 的脚本名')
+  assert.doesNotMatch(text, /一键获取服务程序/, '按钮不渲染，文案就不能叫用户去点')
+  assert.match(text, /导入整包/)
+  assert.match(text, /服务程序没就位/, '启动按钮要讲清为什么点不动')
+})
+
+test('下载完仍缺程序且无公开源：说清要自备，不再写两个端口混在一起的黑话', () => {
+  const card = renderLocalTts({
+    1: gsvStatus,
+    2: { ok: true, phase: 'done', files: [], green: 13, total: 13,
+      needRuntime: true, runtimeManualOnly: true, runtimeEntry: 'qwen_tts_server.py',
+      message: '全部文件校验通过', plan: null },
+    3: { ok: true, phase: 'idle', running: false, missingDeps: [], message: '',
+      plan: { available: false, entry: 'qwen_tts_server.py', installed: false } },
+  })
+  assert.ok(rendered(card))
+  assert.match(texts(card), /没有公开下载源/)
+  assert.doesNotMatch(texts(card), /9883 \/ 9881 的启动入口整包/)
+})
+
 test('长路径不会顶破卡片：ab-check 和 code 都允许断行', () => {
   // 截图里 /opt/homebrew/opt/python@3.12/bin/python... 直接溢出到卡片外面
   assert.match(src, /\.ab-check>span\{min-width:0;overflow-wrap:anywhere/)
   assert.match(src, /code\{overflow-wrap:anywhere/)
   assert.match(src, /\.ab-note,\.ab-check,\.ab-check>span,\.ab-li\{overflow-wrap:anywhere\}/)
+})
+
+test('启动秒退时面板说「启动失败」并摆出日志尾部，不能一直显示读取中', () => {
+  // 用户现场：点了启动，进程被 argparse 判非法参数秒退，面板却永远「启动中」，
+  // 点刷新也没反应。失败必须是一个看得见、说得清的状态。
+  const card = renderLocalTts({
+    1: { ...gsvStatus, phase: 'failed', online: false, pollAfterMs: 0,
+         message: 'GPT-SoVITS 启动后立刻退出了（PID 4517），端口没开。最后一行：api_v2.py: error: unrecognized arguments: --host 127.0.0.1',
+         logTail: 'usage: api_v2.py [-h] [-c TTS_CONFIG] [-a BIND_ADDR] [-p PORT]\napi_v2.py: error: unrecognized arguments: --host 127.0.0.1' },
+    2: { ok: true, phase: 'idle', files: [], plan: null },
+    3: { ok: true, phase: 'done', running: false, missingDeps: [], message: '',
+         plan: { available: true, entry: 'api_v2.py', installed: true, entryPath: '/x/api_v2.py' } },
+  })
+  const text = texts(card)
+  assert.match(text, /✕ 启动失败/, '不能把失败也显示成「读取中」')
+  assert.doesNotMatch(text, /读取中/)
+  assert.match(text, /unrecognized arguments/, '日志尾部要直接摆出来')
+  assert.match(text, /重试启动/, '失败后按钮该是「重试启动」')
+})
+
+test('刷新按钮有进行中态，点了不会像没反应', () => {
+  assert.match(src, /const \[refreshing, setRefreshing\] = useState\(false\)/)
+  assert.match(src, /refreshing \? '刷新中…' : '刷新状态'/)
+  assert.match(src, /toast\('已刷新：' \+ phaseText\(s\)/)
+})
+
+test('在线但语言模型没下时，提前说第一句要下 125 MB', () => {
+  const card = renderLocalTts({
+    1: { ...gsvStatus, phase: 'online', online: true, langModelReady: false },
+    2: { ok: true, phase: 'idle', files: [], plan: null },
+    3: { ok: true, phase: 'idle', running: false, missingDeps: [], message: '', plan: { available: true, entry: 'api_v2.py', installed: true } },
+  })
+  const text = texts(card)
+  assert.match(text, /125 MB/)
+  assert.match(text, /第一次合成/)
+})
+
+test('日志块用等宽可滚动样式，长路径不顶破卡片', () => {
+  assert.match(src, /\.ab-log\{[^}]*overflow:auto/)
+  assert.match(src, /\.ab-log\{[^}]*white-space:pre-wrap/)
+  assert.match(src, /\.ab-log\{[^}]*overflow-wrap:anywhere/)
+})
+
+test('千问没有语言模型那一步，不该被套上「要下 125 MB」的提示', () => {
+  // langModelReady 只对 GPT-SoVITS 有意义；千问恒为 true，不能让它误报
+  const card = renderLocalTts({
+    1: { ...gsvStatus, engine: 'qwen', label: '千问 3-TTS', phase: 'online', online: true,
+         langModel: '', langModelReady: true, port: 9883 },
+    2: { ok: true, phase: 'idle', files: [], plan: null },
+    3: { ok: true, phase: 'idle', running: false, missingDeps: [], message: '', plan: { available: false } },
+  })
+  assert.doesNotMatch(texts(card), /125 MB/)
+})
+
+test('千问没有语言模型那一步，不该被套上「要下 125 MB」的提示', () => {
+  // langModelReady 只对 GPT-SoVITS 有意义；千问恒为 true，不能让它误报
+  const card = renderLocalTts({
+    1: { ...gsvStatus, engine: 'qwen', label: '千问 3-TTS', phase: 'online', online: true,
+         langModel: '', langModelReady: true, port: 9883 },
+    2: { ok: true, phase: 'idle', files: [], plan: null },
+    3: { ok: true, phase: 'idle', running: false, missingDeps: [], message: '', plan: { available: false } },
+  })
+  assert.doesNotMatch(texts(card), /125 MB/)
+})
+
+test('参考音频旁边有「按音频自动填」，逐字稿不用手写', () => {
+  // 手写逐字稿对不上时 GPT-SoVITS 会把稿子也念进结果，用户听到的就是「内容不对」
+  const gs = detail({ gptsovitsUrl: 'http://127.0.0.1:9881', refAudio: '/tmp/a.wav', refText: '你好' }, 'gptsovits', true)
+  const text = texts(gs)
+  assert.match(text, /按音频自动填/)
+  assert.match(text, /会把这段文字也念进结果/, '要说明为什么必须逐字一致')
+  assert.match(src, /post\('\/voice\/asr-ref', \{ path: d\.refAudio \}\)/)
+})
+
+test('保存时参考音频对不上，用错误样式直接提醒', () => {
+  // 现在提示会带上「音频被截短」的 refNote，但错误样式不能丢
+  assert.match(src, /if \(out\.warning\) toast\([\s\S]{0,90},\s*'err'\)/)
+})
+
+// ------------------------------------------------------------------ 千问 1.6 GB 说明
+// 用户现场：权重全绿了，问「1.6GB 派上用场是什么意思」。面板得自己把这笔账讲清，
+// 且不能依赖 9876 已重启（旧进程仍会显示「点③一键获取服务程序」的死路文案）。
+const qwenStatus = {
+  ok: true, engine: 'qwen', label: '千问 3-TTS', phase: 'not-installed', online: false,
+  port: 9883, platform: 'mac', modelFiles: 11, modelBytes: 1709654240,
+  dirs: { models: '/Users/pengfanao/.dsh/plugins-data/qqsoul/service/models/qwen',
+          runtime: '/Users/pengfanao/.dsh/plugins-data/qqsoul/service/runtime/qwen' },
+  steps: [], message: '千问 3-TTS 还没装好，还差：服务程序。',
+}
+
+function renderQwen(patches) {
+  return loadControlled('LocalTtsCard', patches).LocalTtsCard({ engine: 'qwen', toast: noop })
+}
+
+test('千问渠道把 1.6GB 是什么、为什么起不来、现在用哪个讲清楚', () => {
+  const card = renderQwen({
+    1: qwenStatus,
+    2: { ok: true, phase: 'done', files: Array.from({ length: 13 }, (_, i) => ({ name: 'f' + i, done: true })), plan: null },
+    3: { ok: true, phase: 'idle', running: false, plan: { available: false, entry: 'qwen_tts_server.py', installed: false } },
+  })
+  assert.ok(rendered(card), '不该渲染报错')
+  const t = texts(card)
+  assert.match(t, /1\.59/, '要回显真实权重体积，不写死 1.6')
+  assert.match(t, /13 个文件/, '和文件校验清单一致')
+  assert.match(t, /models\/qwen/, '给出权重在本机的绝对路径')
+  assert.match(t, /模型的参数/, '讲清权重不是程序')
+  assert.match(t, /qwen_tts_server\.py/, '点明缺的那个程序')
+  assert.match(t, /MLX 版权重/, '说明和 /synth 契约不配套')
+  assert.match(t, /GPT-SoVITS/, '给出当下可用的替代渠道')
+  assert.match(t, /派上用场/, '回答「什么时候才用得上」')
+  assert.doesNotMatch(t, /github\.com/, '去品牌回归：不写上游外链')
+})
+
+test('千问服务程序是内置的：说清「随插件分发」，不再让用户去别处找', () => {
+  const card = loadControlled('LocalTtsCard', {
+    1: { ...qwenStatus, modelBytes: 1709654240, modelFiles: 11 },
+    2: { ok: true, phase: 'idle', files: [], plan: null },
+    3: { ok: true, phase: 'idle', running: false, plan: {
+      available: true, source: 'builtin', entry: 'qwen_tts_server.py', installed: false,
+      message: '千问 3-TTS 服务程序（插件内置）随插件内置，安装时自动放到 runtime/qwen' } },
+  }).LocalTtsCard({ engine: 'qwen', toast: noop })
+  const t = texts(card)
+  assert.match(t, /随插件一起分发/, '内置程序要说清来源，不能写成「在源码仓库里」')
+  assert.match(t, /放好内置服务程序/, '按钮要如实说是「放好」，不是「获取」')
+  assert.doesNotMatch(t, /一键获取服务程序/)
+  assert.doesNotMatch(t, /GiB 是什么/, '能自动装好了就不该再显示「用不上」的警告')
+})
+
+test('内置服务程序装好、依赖齐全时，只差一句「点启动」', () => {
+  const card = loadControlled('LocalTtsCard', {
+    1: { ...qwenStatus, phase: 'installed', message: '千问 3-TTS 装好了但没启动；点「启动」把它带起来', modelBytes: 1709654240, modelFiles: 11 },
+    2: { ok: true, phase: 'idle', files: [], plan: null },
+    3: { ok: true, phase: 'idle', running: false, missingDeps: [], plan: {
+      available: true, source: 'builtin', entry: 'qwen_tts_server.py', installed: true, entryPath: '/x/runtime/qwen/qwen_tts_server.py' } },
+  }).LocalTtsCard({ engine: 'qwen', toast: noop })
+  const t = texts(card)
+  assert.match(t, /装好了但没启动/)
+  assert.match(t, /启动/)
+  assert.ok(!/服务程序没就位/.test(t), '程序已就位就不该再拦启动按钮')
+})
+
+test('千问已在线或服务程序有公开源时，不再重复这块警告', () => {
+  const online = renderQwen({
+    1: { ...qwenStatus, online: true, phase: 'online' },
+    2: { ok: true, phase: 'done', files: [], plan: null },
+    3: { ok: true, phase: 'idle', running: false, plan: { available: false } },
+  })
+  assert.doesNotMatch(texts(online), /GiB 是什么/)
+
+  const hasRepo = renderQwen({
+    1: qwenStatus,
+    2: { ok: true, phase: 'idle', files: [], plan: null },
+    3: { ok: true, phase: 'idle', running: false, plan: { available: true, entry: 'server.py' } },
+  })
+  assert.doesNotMatch(texts(hasRepo), /GiB 是什么/)
+
+  // GPT-SoVITS 渠道不该出现千问的说明
+  const gs = loadControlled('LocalTtsCard', {
+    1: { ...gsvStatus },
+    2: { ok: true, phase: 'idle', files: [], plan: null },
+    3: { ok: true, phase: 'idle', running: false, plan: { available: true, entry: 'api_v2.py' } },
+  }).LocalTtsCard({ engine: 'gptsovits', toast: noop })
+  assert.doesNotMatch(texts(gs), /GiB 是什么/)
 })

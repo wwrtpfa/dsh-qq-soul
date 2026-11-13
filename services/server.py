@@ -48,7 +48,7 @@ from . import local_tts as local_tts_mod
 from . import model_download as model_download_mod
 from . import runtime_fetch as runtime_fetch_mod
 from .tts.pipeline import TTSEngine
-from .tts.providers import ServiceError
+from .tts.providers import ServiceError, ref_mismatch
 
 PANEL_HTML = Path(__file__).resolve().parents[1] / "docs" / "prototype" / "index.html"
 INSTALL_DOC = Path(__file__).resolve().parents[1] / "docs" / "INSTALL-WITH-AI.md"
@@ -239,6 +239,41 @@ def _catalog_items(ctx: ServiceContext) -> list[dict]:
     if isinstance(result, dict):
         return list(result.get("items", []))
     return list(result or [])
+
+
+#: 本地常驻服务：一个渠道一套进程，各自几 GB 内存 + 一个端口。
+LOCAL_TTS_ENGINES = ("gptsovits", "qwen")
+
+
+def _release_local_engines(cfg, keep: str) -> list[str]:
+    """切换说话渠道后，把不再用的本地服务停掉：一次只留一个，别白占内存和端口。
+
+    只停**插件自己拉起的**进程（``local_tts-state.json`` 里记的 PID）；外部自己起的
+    服务不碰 —— 那是别人的进程，杀了会连带影响别的东西。停不掉的如实说明。
+    """
+    keep = str(keep or "").strip().lower()
+    notes: list[str] = []
+    for engine in LOCAL_TTS_ENGINES:
+        if engine == keep:
+            continue
+        try:
+            st = local_tts_mod.status(cfg, engine)
+        except Exception:  # noqa: BLE001 —— 状态读不出来不该挡住保存
+            continue
+        if not st.get("online") and not st.get("pid"):
+            continue  # 本来就没开，不用报一句「已停」
+        label = str(st.get("label") or engine)
+        port = int(st.get("port") or 0)
+        try:
+            out = local_tts_mod.stop(cfg, engine)
+        except Exception as exc:  # noqa: BLE001
+            notes.append("%s 没停掉（%s），它可能还占着 %d 端口" % (label, exc, port))
+            continue
+        if int(out.get("pid") or 0) == 0 and not out.get("online"):
+            notes.append("%s 已停，%d 端口已释放" % (label, port))
+        else:
+            notes.append("%s 还在跑：%s" % (label, out.get("message") or "没停掉"))
+    return notes
 
 
 def _make_handler(ctx: ServiceContext, quiet: bool):
@@ -746,14 +781,32 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                     return self._json(200, {"ok": True, "engine": ctx.cfg.tts_engine,
                                             "tts": dict(ctx.cfg.tts)})
                 body = self._body()
+                before = str(ctx.cfg.tts_engine or "").strip().lower()
                 try:
                     saved = ctx.cfg.save_tts(body)
                 except ValueError as exc:
                     #: Windows 上渠道跑不通时给一句能照做的提示，别静默写坏配置
                     return self._json(409, {"ok": False, "code": "ENGINE_UNAVAILABLE",
                                             "message": str(exc)})
-                return self._json(200, {"ok": True, "engine": ctx.cfg.tts_engine, "tts": saved,
-                                        "message": "说话参数已保存，下一句生效"})
+                after = str(ctx.cfg.tts_engine or "").strip().lower()
+                # 换了渠道就把上一个本地服务停掉：两个都开着白占几 GB 内存和端口，
+                # 而一次只会用一个。只停插件自己拉起的那个，外部的不碰。
+                stopped = _release_local_engines(ctx.cfg, after) if before != after else []
+                message = "说话参数已保存，下一句生效"
+                if stopped:
+                    message += "；" + "，".join(stopped)
+                #: 保存时顺手把超长参考音频截到 GPT-SoVITS 能收的长度：
+                #: 页面要立刻说清楚，别等点试听才收到 400。
+                ref_note = str(getattr(ctx.cfg, "last_ref_note", "") or "")
+                if ref_note:
+                    message += "；" + ref_note
+                # 保存时就查「参考音频 / 逐字稿对不对得上」：等点生成才报错太晚了，
+                # 而且对不上时上游返回的是 200 + 内容错的音频，最难自查。
+                warning = ref_mismatch(saved.get("refAudio"), saved.get("refText"))
+                return self._json(200, {"ok": True, "engine": after, "tts": saved,
+                                        "stopped": stopped, "warning": warning,
+                                        "refNote": ref_note,
+                                        "message": message})
 
             if method == "GET" and path == "/install/prompt":
                 prompt = _install_prompt()

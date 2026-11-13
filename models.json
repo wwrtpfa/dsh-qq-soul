@@ -78,7 +78,7 @@
       "sha256": "verify-on-download",
       "platforms": ["macOS"],
       "required": false,
-      "importHint": "macOS / Apple Silicon 专用 MLX 权重（不是那个 4B 大脑模型）。语音页「一键下载」直接从 HF 拉取 14 个文件到固定目录 models/qwen/Qwen3-TTS-12Hz-0.6B-Base-4bit，逐文件真校验 + 断点续传；Windows 用本机 9883 常驻服务整包（自己下好后「选目录导入」，导入是移动不留两份）"
+      "importHint": "macOS / Apple Silicon 专用 MLX 权重（不是那个 4B 大脑模型）。语音页「① 一键下载」从 HF 拉 13 个文件到 models/qwen/Qwen3-TTS-12Hz-0.6B-Base-4bit，逐文件真校验 + 断点续传；下完自动把插件内置的服务程序（qwen_tts_server.py）放到 runtime/qwen、自动装 mlx-audio 依赖并启动，一步到位，不需要再导入一遍。服务程序是插件自带的薄适配层，把 mlx-audio 包成插件认的 /synth。Base 权重只做声音克隆、没有预设音色，要在「参考音频」里选一段 3–10 秒人声（与 GPT-SoVITS 共用同一组，选一次两边都生效）。Windows 仍走本机 9883 常驻服务整包导入"
     },
     {
       "id": "gpt-sovits",
@@ -91,7 +91,7 @@
       "sha256": "verify-on-download",
       "platforms": ["macOS", "Windows"],
       "required": false,
-      "importHint": "分两样：① 预训练权重可在语音页「一键下载」（精简档 v2 约 1.11 GiB / 10 个文件、完整档约 6.41 GiB / 29 个文件，Mac / Windows 通用），落到固定目录 models/gptsovits/GPT-SoVITS-pretrained；② 服务程序（api_v2.py）点「③ 一键获取服务程序」从 GitHub 下源码包（约 7 MB）解压到 runtime/gptsovits，再点「装依赖」补 torch 等（约 2–3 GB）。权重只是模型参数，没有程序 9881 起不来。插件自管 9881 并显示在线状态，不用再手动起服务"
+      "importHint": "权重和程序是两样东西，但一次点完就够：语音页「① 一键下载」下预训练权重（精简档 v2 约 1.11 GiB / 10 个文件、完整档约 6.41 GiB / 29 个文件）到 models/gptsovits/GPT-SoVITS-pretrained，下载线程结束时自动把服务程序 api_v2.py 的源码包（约 7 MB）解压到 runtime/gptsovits，依赖齐就直接自动启动 9881；只有 Python 依赖（torch 等，约 2–3 GB）可能要再点一次「装依赖」。万一自动补程序失败，才需要点「③ 一键获取服务程序」重试，权重不用重下。插件自管进程并显示在线状态"
     },
     {
       "id": "rvc-voice",

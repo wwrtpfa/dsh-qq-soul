@@ -189,6 +189,36 @@ export default {
       return { ok: Boolean(heard), said: text, heard, ms: Date.now() - t }
     })
 
+    // 参考音频的逐字稿：GPT-SoVITS 要求 prompt_text 和参考音频逐字一致，手写极容易对不上
+    // （实测：音频 9 秒、稿子写了 95 字 → 它会把稿子也念进结果，产出 17.7 秒的错误音频）。
+    // 这里用 DSH 自带的识别把这段音频转一遍，比让用户自己听写准得多。
+    api.route('/voice/asr-ref', async (req) => {
+      const b = req.method === 'POST' ? await http.body(req) : {}
+      const ref = String(b.path || '')
+      if (!ref || !existsSync(ref)) return { ok: false, message: '还没选参考音频：先选一段 3–10 秒的干净人声' }
+      if (!/\.(wav|mp3|m4a|flac|ogg|aac)$/i.test(ref)) return { ok: false, message: '这个文件不是音频：' + ref }
+      const s0 = stt()
+      if (!s0 || typeof s0.resolve !== 'function' || typeof s0.transcribe !== 'function') {
+        return { ok: false, message: 'DSH 里没开启「语音输入」，自动转写用不了；这段文字手写也行' }
+      }
+      const snap = typeof s0.snapshot === 'function' ? s0.snapshot() : null
+      const pid = snap?.selection?.providerId
+      const prov = snap?.providers?.find((p) => p.id === pid)
+      if (prov && prov.preparation && !['ready', 'standby'].includes(prov.preparation.phase)) {
+        try { s0.prepare(pid) } catch (error) {}
+        return { ok: false, message: '识别模型还在准备（' + prov.preparation.phase + '），下好再点一次' }
+      }
+      try {
+        const spec = s0.resolve({ audio: new Uint8Array(toMono16k(readFileSync(ref))) })
+        const r = await s0.transcribe(spec, AbortSignal.timeout(120000))
+        const heard = typeof r === 'string' ? r : r?.text || r?.transcript
+        if (!heard) return { ok: false, message: '这段音频没听出文字（太吵或太短），手写也行' }
+        return { ok: true, text: String(heard).trim() }
+      } catch (error) {
+        return { ok: false, message: '转写失败：' + String(error.message || error) }
+      }
+    })
+
     return { speak, edgeInstalled }
   },
 }

@@ -21,6 +21,38 @@ def _home(*parts: str) -> Path:
 #: 选它是因为检索稳定、时长短，真链路一分钟左右能跑完。
 DEFAULT_SELFCHECK_SONG = "步步"
 
+#: 引擎主程序的文件名：有 ``core.py`` 是 Applio，有 ``rvc_convert.py`` 是快速 RVC。
+_ENGINE_FILES = ("core.py", "rvc_convert.py")
+
+
+def _has_engine(path: Path) -> bool:
+    return any((path / name).is_file() for name in _ENGINE_FILES)
+
+
+def engine_root(path: Path | str) -> Path:
+    """把「安装根目录」归一成**主程序所在目录**。
+
+    面板「翻唱」一键安装的布局是 ``<root>/Applio/core.py`` + ``<root>/env``，
+    老装法（包括 ``~/tools/applio``）是 ``<root>/core.py`` + ``<root>/.venv``。
+    用户两种目录都可能填进来，代码只认一种就会报「换声引擎找不到」——所以
+    统一从这里归一，调用方别再自己拼 ``engine / "core.py"``。
+    """
+    root = Path(path).expanduser()
+    if _has_engine(root):
+        return root
+    nested = root / "Applio"
+    if _has_engine(nested):
+        return nested
+    try:
+        children = sorted(child for child in root.iterdir() if child.is_dir())
+    except OSError:
+        return root
+    #: 只看一层：别为了找一个文件把整个磁盘走一遍
+    for child in children:
+        if _has_engine(child):
+            return child
+    return root
+
 
 @dataclass
 class ServiceConfig:
@@ -60,6 +92,8 @@ class ServiceConfig:
         self.song = dict(self.song)
         self.tts = dict(self.tts)
         self.installed = dict(self.installed)
+        #: save_tts 顺手规整参考音频时给页面的一句话（不落盘，只在这次响应里用）
+        self.last_ref_note = ""
 
     # ---------------------------------------------------------------- 载入
     @classmethod
@@ -100,9 +134,21 @@ class ServiceConfig:
 
     # ---------------------------------------------------------------- 派生
     def applio_dir(self) -> Path:
+        """换声引擎**主程序目录**（含 ``core.py`` / ``rvc_convert.py`` 的那一层）。
+
+        配置里填的可能是「安装根目录」（``<root>/Applio/core.py`` + ``<root>/env``），
+        也可能是主程序目录本身，两种都归一到这里——统一在 ``engine_root`` 做，
+        别在调用点各自拼 ``engine / "core.py"``。
+        """
         explicit = self.paths.get("applio") or os.environ.get("QQSOUL_APPLIO_DIR")
         if explicit:
-            return Path(str(explicit)).expanduser()
+            return engine_root(str(explicit))
+        #: 面板「翻唱」的安装根目录（song.root）：主程序在 <root>/Applio
+        root = str(self.song.get("root") or "").strip()
+        if root:
+            found = engine_root(root)
+            if _has_engine(found):
+                return found
         # 先按面板「翻唱」一键安装的位置找（两个系统都一样：~/Aurabot/rvc/Applio），
         # 再兼容老装法：Windows 常见在 D 盘 / tools 下，macOS 老版本放在 ~/tools/applio。
         installed = _home("Aurabot", "rvc", "Applio")
@@ -113,10 +159,13 @@ class ServiceConfig:
             candidates += [Path("D:/tools/rvc"), Path("C:/tools/rvc"),
                            Path("D:/tools/applio"), Path("C:/tools/applio")]
         candidates.append(_home("tools", "applio"))
+        fallback = None
         for candidate in candidates:
-            if candidate.is_dir():
-                return candidate
-        return installed
+            if _has_engine(engine_root(candidate)):
+                return engine_root(candidate)
+            if fallback is None and candidate.is_dir():
+                fallback = engine_root(candidate)  # 装了一半：如实指向那里，别谎称没有
+        return fallback or installed
 
     def rvc_convert_path(self) -> Path:
         """本机快速 RVC（技能包 Windows 版）的主程序，配置/环境没填就在引擎目录里找。"""
@@ -134,19 +183,29 @@ class ServiceConfig:
         return ""
 
     def engine_python(self) -> Path:
+        """引擎 venv 的解释器：**存在的优先**，配置里的死路径不能挡住真 venv。
+
+        用户换过目录、重装过环境之后，``paths.python`` 常常还指着旧的
+        ``.venv``（已不存在），以前会原样返回 → 报「解释器找不到」，明明
+        ``env/bin/python`` 就在旁边。这里按「配置 > 同级 env > 引擎内 venv」找，
+        只有全都没有时才把配置里那个交出去（错误信息里能看到它）。
+        """
         explicit = str(self.paths.get("python") or "").strip()
-        if explicit:
-            return Path(explicit).expanduser()
         exe = "Scripts/python.exe" if os.name == "nt" else "bin/python"
-        #: 面板「翻唱」一键安装把环境放在 Applio 的同级 env/；老装法是 Applio 里的 .venv
-        candidates = [self.applio_dir().parent / "env" / exe]
+        engine = self.applio_dir()
+        candidates: list[Path] = []
+        if explicit:
+            candidates.append(Path(explicit).expanduser())
+        #: 面板「翻唱」一键安装把环境放在 Applio 的同级 env/；老装法是引擎里的 .venv
+        for base in (engine.parent, engine):
+            candidates.append(base / "env" / exe)
         #: 本机快速 RVC 用的是 ``venv312``，不是 Applio 的 ``.venv``
-        for name in ("venv312", ".venv"):
-            candidates.append(self.applio_dir() / name / exe)
+        for name in ("venv312", ".venv", "venv", "env"):
+            candidates.append(engine / name / exe)
         for candidate in candidates:
             if candidate.is_file():
                 return candidate
-        return candidates[-1]
+        return candidates[0]
 
     def ffmpeg(self) -> str:
         import shutil
@@ -405,12 +464,29 @@ class ServiceConfig:
                 "（CPU 配置，权重加载约 1-3 分钟），或打开 http://127.0.0.1:9890/ 在「01 启停」"
                 "点全部启动；等 9881 起来后再选。临时用 edge-tts 也可以" % (host, port))
 
+    def _normalize_ref(self, path: str) -> tuple[str, str, float]:
+        """把参考音频规整成 GPT-SoVITS 能收的 3–10 秒，返回 (路径, 说明, 截短比例)。
+
+        GPT-SoVITS 的 ``api_v2.py`` 对 3 秒以下 / 10 秒以上的参考音频直接回
+        HTTP 400「参考音频在3~10秒范围外」。以前只有「导入参考音频」那条路会截，
+        面板「选文件 → 保存」走 ``/tts/config`` 时原样落盘，点试听才报错。
+        这里在保存时就截好：长音频截前 9 秒，另存 ``<原名>.gsv.wav``，不动原文件。
+        """
+        try:
+            from . import tools as tools_mod
+            folder = tools_mod.dir_for(self, "refs")
+            folder.mkdir(parents=True, exist_ok=True)
+            return tools_mod._normalize_gsv_ref(self, str(path), folder)
+        except Exception:  # noqa: BLE001 —— 缺 ffmpeg / 探测失败时保留原路径，别挡住保存
+            return str(path), "", 1.0
+
     def save_tts(self, patch: dict) -> dict:
         """说话渠道「保存即生效」：音色 / 语速 / 音量 / 远程 key。
 
         只认白名单键，别的一律丢掉——面板传什么都不能把 config.json 写花。
         语速沿用 edge-tts 的百分比写法（``+10%``）；音量存 0–2 的倍数，1.0 为原声。
         """
+        self.last_ref_note = ""
         allowed = ("engine", "voice", "edgeVoice", "rate", "volume", "breezeKey",
                    "breezeEndpoint", "breezeUrl", "breezeToken", "breezeVoice",
                    "refAudio", "refText", "httpUrl", "httpToken", "qwenUrl", "gptsovitsUrl",
@@ -426,6 +502,16 @@ class ServiceConfig:
             if not text and key != "refText":
                 continue
             incoming[key] = text
+        #: 参考音频的硬约束在这里兜住：面板「选文件」→ 保存也会走到这。
+        #: 长音频截前 9 秒（另存 .gsv.wav，原文件不动），逐字稿按比例截到标点。
+        if incoming.get("refAudio"):
+            incoming["refAudio"], note, ratio = self._normalize_ref(incoming["refAudio"])
+            if ratio < 0.999 and incoming.get("refText"):
+                from . import tools as tools_mod
+                incoming["refText"] = tools_mod._trim_prompt(incoming["refText"], ratio)
+                if not note:
+                    note = "参考音频已截短，逐字稿按比例截到标点"
+            self.last_ref_note = note
         if "volume" in incoming:
             try:
                 incoming["volume"] = str(max(0.0, min(2.0, float(incoming["volume"]))))

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import time
 import urllib.error
@@ -25,6 +26,72 @@ class ServiceError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+#: 中文正常语速 4–6 字/秒。留足余地，但超出这个区间基本就是「稿子和音频不是同一段」。
+_REF_MIN_CPS = 1.8
+_REF_MAX_CPS = 8.5
+
+
+def _port_alive(host: str, port: int, timeout: float = 1.0) -> bool:
+    """本机端口通不通：判断「插件自己拉起的服务」在不在，别让用户非得手填地址。"""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def audio_seconds(path) -> float:
+    """音频多长：ffprobe 优先（wav / mp3 / m4a 都行），没有 ffprobe 就用 wave 兜底。"""
+    p = Path(str(path or ""))
+    if not p.is_file():
+        return 0.0
+    probe = shutil.which("ffprobe")
+    if probe:
+        try:
+            out = subprocess.run(
+                [probe, "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(p)],
+                capture_output=True, text=True, timeout=15, check=False)
+            value = float((out.stdout or "").strip() or 0)
+            if value > 0:
+                return value
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    try:
+        import wave
+
+        with wave.open(str(p)) as w:
+            return w.getnframes() / float(w.getframerate() or 1)
+    except Exception:  # noqa: BLE001 —— 读不出来就当不知道，别挡住合成
+        return 0.0
+
+
+def ref_mismatch(ref_audio, ref_text) -> str:
+    """参考音频和「这段音频说的是」对不上时，返回一句能照做的说明。
+
+    GPT-SoVITS 的 ``prompt_text`` 必须和 ``ref_audio`` 逐字一致。对不上时它不会报错，
+    而是**把参考文本也念进结果里** —— 用户听到的就是「我要它念 A，它念成了 A+B」，
+    时长还明显偏长（实测：9 秒音频配 95 字稿 → 输出 17.7 秒；同一句配空稿 → 3.8 秒）。
+    这种事不提前拦，用户只会觉得「模型坏了」。
+    """
+    text = "".join(str(ref_text or "").split())
+    if not text:
+        return ""
+    seconds = audio_seconds(ref_audio)
+    if seconds <= 0:
+        return ""
+    cps = len(text) / seconds
+    if _REF_MIN_CPS <= cps <= _REF_MAX_CPS:
+        return ""
+    low = int(seconds * 4)
+    high = int(seconds * 6)
+    return ("参考音频只有 %.1f 秒，但「这段音频说的是」写了 %d 字（%.1f 字/秒，正常 4–6 字），"
+            "两边对不上。GPT-SoVITS 要求逐字一致，否则它会把这段文字也念进结果里 —— "
+            "你听到的就不是你输入的那句。按 %.1f 秒算，这段文字大约该是 %d–%d 字；"
+            "实在不确定就先留空（音色会差一点，但不会念错内容）。"
+            % (seconds, len(text), cps, seconds, low, high))
 
 
 def _rate_arg(value) -> str:
@@ -173,6 +240,51 @@ class BreezeProvider(BaseProvider):
         return Path(out)
 
 
+#: 参考音频规整缓存：path → (mtime, 实际用的路径)。面板保存时已经截过；
+#: 这里兜住旧配置 / 手工改过 config.json 的情况，避免每句都跑一次 ffprobe。
+_REF_AUDIO_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def _usable_ref(cfg, path, text) -> tuple[str, str, str]:
+    """保证送进 GPT-SoVITS 的参考音频在 3–10 秒，返回 (音频, 逐字稿, 说明)。
+
+    旧配置里可能存着 10 秒以上的参考音频，``api_v2.py`` 会直接回 400
+    「参考音频在3~10秒范围外」。这里合成前再规整一次，并把截好的路径
+    （以及按比例截过的稿子）写回配置，下一句就不用再算。
+    缺 ffmpeg / 文件读不出来时保持原样，交给上游报错，别把整条链路拦死。
+    """
+    raw = str(path or "").strip()
+    text = str(text or "")
+    if not raw:
+        return "", text, ""
+    src = Path(raw).expanduser()
+    try:
+        mtime = src.stat().st_mtime
+    except OSError:
+        return raw, text, ""
+    hit = _REF_AUDIO_CACHE.get(str(src))
+    if hit and hit[0] == mtime:
+        return hit[1], text, ""
+    try:
+        from .. import tools as tools_mod
+        folder = tools_mod.dir_for(cfg, "refs")
+        folder.mkdir(parents=True, exist_ok=True)
+        final, note, ratio = tools_mod._normalize_gsv_ref(cfg, str(src), folder)
+    except Exception:  # noqa: BLE001 —— 规整失败也照原样送，上游会给具体原因
+        return raw, text, ""
+    final = str(final)
+    _REF_AUDIO_CACHE[str(src)] = (mtime, final)
+    if ratio < 0.999 and text:
+        text = tools_mod._trim_prompt(text, ratio)
+    #: 截短 / 转码后路径变了就写回：否则每句都要重新 ffprobe + 转码。
+    if final != raw:
+        try:
+            cfg.save_tts({"refAudio": final, **({"refText": text} if text else {})})
+        except Exception:  # noqa: BLE001
+            pass
+    return final, text, note
+
+
 class GPTSoVITSProvider(BaseProvider):
     """连已经跑着的 GPT-SoVITS API（默认 127.0.0.1:9881），不负责启动它。
 
@@ -185,11 +297,20 @@ class GPTSoVITSProvider(BaseProvider):
 
     def synth(self, text: str, out: Path, *, voice: str = "") -> Path:
         base = str(self.cfg.tts.get("gptsovitsUrl") or os.environ.get("QQ_GPT_URL") or "http://127.0.0.1:9881")
+        ref_audio = str(self.cfg.tts.get("refAudio") or self.cfg.paths.get("refAudio") or "")
+        ref_text = str(self.cfg.tts.get("refText") or "")
+        # 参考音频超过 10 秒上游直接 400；旧配置 / 手工改的也要能直接用
+        ref_audio, ref_text, _note = _usable_ref(self.cfg, ref_audio, ref_text)
+        # 先查「稿子和音频是不是同一段」：对不上时上游不报错，只会把参考文本也念进去，
+        # 产出内容不对、时长明显偏长，用户根本看不出是稿子填错了。
+        bad_ref = ref_mismatch(ref_audio, ref_text)
+        if bad_ref:
+            raise ServiceError("GPTSOVITS_REF_MISMATCH", bad_ref)
         body = {
             "text": text,
             "text_lang": "zh",
-            "ref_audio_path": str(self.cfg.tts.get("refAudio") or self.cfg.paths.get("refAudio") or ""),
-            "prompt_text": str(self.cfg.tts.get("refText") or ""),
+            "ref_audio_path": ref_audio,
+            "prompt_text": ref_text,
             "prompt_lang": "zh",
             "media_type": "wav",
             "streaming_mode": 0,
@@ -231,13 +352,39 @@ class QwenProvider(BaseProvider):
         state = self.cfg.load_state()
         loaded = next((row for row in state.get("resident", []) if row.get("engine") == "qwen"), None)
         url = str(self.cfg.tts.get("qwenUrl") or "").strip()
+        # 面板没填地址时，只有「插件自己装过、且 9883 真的在跑」才自动用它：
+        # 以前这里直接回落到 driver，于是「服务明明在线」却报「还没选模型目录」；
+        # 但也不能无条件探测别人的 9883（测试环境 / 别的实例会误伤）。
+        if not url and (self.cfg.installed.get("local-tts-qwen")
+                        or self.cfg.paths.get("qwenModel")
+                        or self.cfg.paths.get("qwenServer")):
+            if _port_alive("127.0.0.1", 9883):
+                url = "http://127.0.0.1:9883"
         if url:
+            body = {"text": text, "voice": voice}
+            # Base 权重只做声音克隆：不给参考音频它没有音色可用，服务端会 400。
+            # 复用语音页那组「参考音频 / 逐字稿」，用户只填一次，两个本地渠道都能用。
+            ref_audio = str(self.cfg.tts.get("refAudio") or self.cfg.paths.get("refAudio") or "").strip()
+            if ref_audio:
+                body["ref_audio"] = ref_audio
+                ref_text = str(self.cfg.tts.get("refText") or "").strip()
+                if ref_text:
+                    body["ref_text"] = ref_text
             req = urllib.request.Request(
-                url.rstrip("/") + "/synth", data=json.dumps({"text": text, "voice": voice}).encode("utf-8"),
+                url.rstrip("/") + "/synth", data=json.dumps(body).encode("utf-8"),
                 method="POST", headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=300) as r:
-                Path(out).write_bytes(r.read())
+            try:
+                with urllib.request.urlopen(req, timeout=300) as r:
+                    Path(out).write_bytes(r.read())
+            except urllib.error.HTTPError as exc:
+                detail = ""
+                try:
+                    detail = json.loads(exc.read().decode("utf-8")).get("error") or ""
+                except Exception:  # noqa: BLE001 - 回包不是 JSON 就退回状态码
+                    detail = ""
+                raise ServiceError("QWEN_SYNTH_FAILED",
+                                   detail or ("千问服务返回 HTTP %s" % exc.code)) from exc
             return Path(out)
         driver = str(self.cfg.paths.get("qwenDriver") or "").strip()
         python = str(self.cfg.paths.get("qwenPython") or "").strip()

@@ -28,6 +28,7 @@ import pytest
 
 from services import config as config_mod
 from services import local_tts
+from services import runtime_fetch
 from services import server
 from services.jobs import JobStore
 from services.registry import ModelRegistry
@@ -223,17 +224,23 @@ def test_find_entry_never_uses_qwen_driver_script(cfg, tmp_path):
 
 # ------------------------------------------------------------------ start / stop 真实链路
 
-def test_start_requires_entry_and_says_where_to_put_it(cfg):
+def test_start_without_entry_says_the_builtin_program_gets_placed(cfg):
     # 用户现场就是被这句绕住的：不能只说「缺启动入口」，要讲清权重 ≠ 程序、去哪补
     with pytest.raises(ValueError, match="还没有服务程序") as err:
         local_tts.start(cfg, "qwen")
     msg = str(err.value)
     assert "权重只是模型参数" in msg
-    assert "一键获取服务程序" in msg
+    assert "qwen_tts_server.py" in msg, "要说清缺的是哪个脚本"
     assert "runtime/qwen" in msg, "要给出程序该放哪的固定目录"
+    # qwen 的服务程序现在随插件内置：文案应该说「点③会自动放好」，而不是让用户自己去别处找
+    assert "③ 服务程序" in msg and "自动放好" in msg
+    assert "一键获取服务程序" not in msg, "别再让用户去找那个已经不存在的旧按钮"
 
 
-def test_start_and_stop_really_bring_the_port_up_and_down(cfg, tmp_path):
+def test_start_and_stop_really_bring_the_port_up_and_down(cfg, tmp_path, monkeypatch):
+    # 这条测的是「进程能不能真的起来」，不是依赖装没装：把依赖探测置空，
+    # 否则临时环境没装 mlx_audio 会被 start() 的预检拦住（那是另一条测试的事）。
+    monkeypatch.setattr(runtime_fetch, "missing_deps", lambda *a, **k: [])
     port = _free_port()
     cfg.tts["qwenUrl"] = "http://127.0.0.1:%d" % port
     pack = tmp_path / "qwen-pack"
@@ -265,7 +272,8 @@ def test_start_and_stop_really_bring_the_port_up_and_down(cfg, tmp_path):
     assert not local_tts.port_open("127.0.0.1", port)
 
 
-def test_start_is_idempotent_when_already_online(cfg, tmp_path):
+def test_start_is_idempotent_when_already_online(cfg, tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_fetch, "missing_deps", lambda *a, **k: [])
     port = _free_port()
     cfg.tts["qwenUrl"] = "http://127.0.0.1:%d" % port
     pack = tmp_path / "qwen-pack"
@@ -556,43 +564,298 @@ def test_http_runtime_status_reports_missing_deps(srv):
     assert body["plan"]["entry"] == "api_v2.py"
 
 
-def test_http_runtime_routes_are_not_swallowed_by_generic_action(srv, monkeypatch):
-    """`/tts/local/runtime/*` 不能被通用 `/tts/local/<action>` 路由吃掉（会被当未知动作 404）。"""
-    base, _c = srv
+# ------------------------------------------------------------------ 启动参数 / 秒退可见
+
+#: 真实 GPT-SoVITS 的 api_v2.py 就长这样：只认 -a / -p，没有 --host。
+API_V2_STYLE = '''# -*- coding: utf-8 -*-
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("-c", "--tts_config", type=str, default="x.yaml")
+parser.add_argument("-a", "--bind_addr", type=str, default="127.0.0.1")
+parser.add_argument("-p", "--port", type=int, default=9880)
+parser.parse_args()
+'''
+
+#: 秒退脚本：模拟 argparse 判非法参数后 exit 2，日志里留一行能看懂的原因。
+DIES_FAST = '''# -*- coding: utf-8 -*-
+import sys
+print("fake-api: error: unrecognized arguments: --host 127.0.0.1", flush=True)
+sys.exit(2)
+'''
+
+
+def _runtime_entry(cfg, engine, name, text):
+    runtime = local_tts.fixed_dirs(cfg, engine)["runtime"]
+    runtime.mkdir(parents=True, exist_ok=True)
+    path = runtime / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_entry_cli_reads_the_scripts_own_flags_not_ours(cfg, tmp_path):
+    """api_v2.py 认 -a/--bind_addr + -p/--port：必须读出来，不能按我们想象的传。"""
+    entry = _runtime_entry(cfg, "gptsovits", "api_v2.py", API_V2_STYLE)
+    cli = local_tts._entry_cli(entry)
+    assert cli["port"] == "--port"   # 有长选项就用长选项
+    assert cli["host"] == "--bind_addr"
+
+
+def test_start_args_for_api_v2_never_pass_host(cfg):
+    """硬塞 --host 会让 argparse exit 2、进程秒退 —— 这正是「启动中」永不结束的根因。"""
+    entry = _runtime_entry(cfg, "gptsovits", "api_v2.py", API_V2_STYLE)
+    args = local_tts._start_args(entry, "127.0.0.1", 9881, local_tts.ENGINE_SPEC["gptsovits"])
+    assert "--host" not in args
+    assert args == ["--bind_addr", "127.0.0.1", "--port", "9881"]
+
+
+def test_start_args_falls_back_when_the_script_has_no_argparse(cfg):
+    """读不出参数时退回渠道默认写法，至少别把 --port 弄丢。"""
+    entry = _runtime_entry(cfg, "qwen", "qwen_tts_server.py", "print('no argparse here')\n")
+    args = local_tts._start_args(entry, "127.0.0.1", 9883, local_tts.ENGINE_SPEC["qwen"])
+    assert "--port" in args and "9883" in args
+
+
+def test_start_reports_failed_instead_of_hanging_on_starting(cfg, monkeypatch):
+    """进程秒退时必须立刻变「启动失败」并把日志尾巴交出来，不能永远「启动中」。"""
     from services import runtime_fetch as rf
 
-    seen = {}
-    monkeypatch.setattr(rf, "runtime_status",
-                        lambda cfg, engine: {"ok": True, "engine": engine, "phase": "idle",
-                                             "plan": {"available": True}})
-    monkeypatch.setattr(rf, "start_fetch",
-                        lambda cfg, engine: seen.update(fetch=engine) or
-                        {"ok": True, "message": "开始下载服务程序", "runtime": {"phase": "downloading"}})
-    monkeypatch.setattr(rf, "start_deps",
-                        lambda cfg, engine: seen.update(deps=engine) or
-                        {"ok": True, "message": "开始装依赖", "runtime": {"phase": "venv"}})
-    monkeypatch.setattr(rf, "cancel_fetch", lambda cfg, engine: {"ok": True, "message": "已暂停"})
-    monkeypatch.setattr(rf, "cancel_deps", lambda cfg, engine: {"ok": True, "message": "已暂停"})
-
-    code, body = _call(base, "GET", "/tts/local/runtime/status?engine=gptsovits")
-    assert code == 200 and body["plan"]["available"] is True
-
-    code, body = _call(base, "POST", "/tts/local/runtime/fetch", {"engine": "gptsovits"})
-    assert code == 200 and seen.get("fetch") == "gptsovits"
-
-    code, body = _call(base, "POST", "/tts/local/runtime/deps", {"engine": "gptsovits"})
-    assert code == 200 and seen.get("deps") == "gptsovits"
-
-    for path in ("/tts/local/runtime/fetch/cancel", "/tts/local/runtime/deps/cancel"):
-        code, body = _call(base, "POST", path, {"engine": "gptsovits"})
-        assert code == 200 and body["ok"] is True
+    # 测试机不一定装了 torch；这里只验「秒退要可见」，依赖检查另有测试
+    monkeypatch.setattr(rf, "missing_deps", lambda c, e, timeout=0: [])
+    _runtime_entry(cfg, "gptsovits", "api_v2.py", DIES_FAST)
+    out = local_tts.start(cfg, "gptsovits", wait=6.0)
+    assert out["phase"] == "failed"
+    assert out["ok"] is False
+    assert "unrecognized arguments" in (out["logTail"] + out["message"])
+    assert out["online"] is False
+    # 失败后不能继续挂着轮询，否则面板会一直转
+    assert out["pollAfterMs"] == 0
+    # 状态文件里的 starting 也要清掉，下次点「重试启动」才能正常走一遍
+    state = json.loads((cfg.data_dir / "local-tts-state.json").read_text(encoding="utf-8"))
+    assert state["gptsovits"]["starting"] is False
+    assert state["gptsovits"]["pid"] == 0
 
 
-def test_http_runtime_status_reports_missing_deps(srv):
-    """没装依赖时，面板要能直接看到缺哪几个（而不是点了启动才发现秒退）。"""
+def test_status_clears_a_dead_starting_pid(cfg):
+    """进程已经没了但状态还写着 starting：status 要自己纠正，别等用户点刷新。"""
+    _runtime_entry(cfg, "gptsovits", "api_v2.py", API_V2_STYLE)
+    (cfg.data_dir / "local-tts-state.json").write_text(json.dumps({
+        "gptsovits": {"pid": 999999, "starting": True, "at": int(time.time()),
+                      "log": str(cfg.data_dir / "logs" / "local-tts-gptsovits.log")},
+    }), encoding="utf-8")
+    out = local_tts.status(cfg, "gptsovits")
+    assert out["phase"] == "failed"
+    assert out["pid"] == 0
+    assert out["pollAfterMs"] == 0
+
+
+def test_count_files_skips_venv_so_status_does_not_crawl(cfg):
+    """.venv 里几万个 .py 不该被走一遍：以前 rglob 会卡住 status，表现成「刷新一直读取中」。"""
+    runtime = local_tts.fixed_dirs(cfg, "gptsovits")["runtime"]
+    venv = runtime / ".venv" / "lib" / "site-packages"
+    venv.mkdir(parents=True)
+    for i in range(300):
+        (venv / ("mod%d.py" % i)).write_text("x = 1\n", encoding="utf-8")
+        (venv / ("mod%d.json" % i)).write_text("{}", encoding="utf-8")
+    weights = local_tts.fixed_dirs(cfg, "gptsovits")["models"]
+    weights.mkdir(parents=True)
+    (weights / "gpt.ckpt").write_bytes(b"0" * 1024)
+
+    # 权重目录照常数
+    assert local_tts._count_files(weights)[0] == 1
+    # runtime 里的 .venv 被整棵跳过，不会把 dist-info 的 json 误算成权重
+    assert local_tts._count_files(runtime) == (0, 0)
+
+
+# ------------------------------------------------------------------ 推理设备（mps）
+
+#: 和上游 tts_infer.yaml 同构：custom 段生效，其余段必须原样留着。
+TTS_YAML = """custom:
+  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
+  device: cpu
+  is_half: false
+  version: v2
+v2:
+  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
+  device: cpu
+  is_half: false
+  version: v2
+"""
+
+
+def test_patch_device_only_touches_custom_section():
+    """只改 custom 段：api_v2 是 configs_.get("custom", configs_["v2"])，其余段少一段就 KeyError。"""
+    out = local_tts._patch_device_yaml(TTS_YAML, "mps")
+    assert "device: mps" in out
+    # v2 段必须还是 cpu（用户想对照原配置）
+    assert out.count("device: cpu") == 1
+    assert out.startswith("custom:")
+    assert "v2:" in out
+
+
+def test_device_config_writes_local_yaml_and_does_not_touch_upstream(cfg, monkeypatch):
+    entry = _runtime_entry(cfg, "gptsovits", "api_v2.py", API_V2_STYLE)
+    (entry.parent / "GPT_SoVITS" / "configs").mkdir(parents=True)
+    upstream = entry.parent / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
+    upstream.write_text(TTS_YAML, encoding="utf-8")
+
+    monkeypatch.setattr(local_tts, "_mps_available", lambda py: True)
+    path, note, device = local_tts._device_config(cfg, "gptsovits", entry, "python")
+    assert device == "mps" and "mps" in note
+    assert path is not None and path.is_file()
+    assert "device: mps" in path.read_text(encoding="utf-8")
+    # 上游文件一个字都不能动：重新获取服务程序会覆盖它，改了也没用
+    assert upstream.read_text(encoding="utf-8") == TTS_YAML
+
+
+def test_device_config_is_skipped_when_already_cpu(cfg, monkeypatch):
+    """本来就是 cpu、机器也没有 mps 时，不必多造一份配置文件。"""
+    entry = _runtime_entry(cfg, "gptsovits", "api_v2.py", API_V2_STYLE)
+    (entry.parent / "GPT_SoVITS" / "configs").mkdir(parents=True)
+    (entry.parent / "GPT_SoVITS" / "configs" / "tts_infer.yaml").write_text(TTS_YAML, encoding="utf-8")
+    monkeypatch.setattr(local_tts, "_mps_available", lambda py: False)
+    path, note, device = local_tts._device_config(cfg, "gptsovits", entry, "python")
+    assert path is None and device == "cpu" and "cpu" in note
+
+
+def test_start_args_pass_config_only_when_entry_accepts_it(cfg):
+    """api_v2.py 有 -c/--tts_config 就传本地配置；脚本不认就不传，别硬塞。"""
+    entry = _runtime_entry(cfg, "gptsovits", "api_v2.py", API_V2_STYLE)
+    cfg_path = entry.parent / "local.yaml"
+    args = local_tts._start_args(entry, "127.0.0.1", 9881,
+                                 local_tts.ENGINE_SPEC["gptsovits"], cfg_path)
+    assert "--tts_config" in args and str(cfg_path) in args
+
+    plain = _runtime_entry(cfg, "qwen", "qwen_tts_server.py", "print('no argparse')\n")
+    args2 = local_tts._start_args(plain, "127.0.0.1", 9883,
+                                  local_tts.ENGINE_SPEC["qwen"], cfg_path)
+    assert str(cfg_path) not in args2
+
+
+def test_mps_never_claimed_on_non_mac(monkeypatch):
+    """Windows / Linux 上不能谎报 mps 可用（否则配置写成 mps 直接起不来）。"""
+    monkeypatch.setattr(local_tts.sys, "platform", "win32")
+    local_tts._MPS_CACHE.clear()
+    assert local_tts._mps_available("whatever") is False
+
+
+# ------------------------------------------------------------------ 推理设备（mps）
+
+#: 和上游 tts_infer.yaml 同构：custom 段生效，其余段必须原样留着。
+TTS_YAML = """custom:
+  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
+  device: cpu
+  is_half: false
+  version: v2
+v2:
+  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
+  device: cpu
+  is_half: false
+  version: v2
+"""
+
+
+def test_patch_device_only_touches_custom_section():
+    """只改 custom 段：api_v2 是 configs_.get("custom", configs_["v2"])，其余段少一段就 KeyError。"""
+    out = local_tts._patch_device_yaml(TTS_YAML, "mps")
+    assert "device: mps" in out
+    # v2 段必须还是 cpu（用户想对照原配置）
+    assert out.count("device: cpu") == 1
+    assert out.startswith("custom:")
+    assert "v2:" in out
+
+
+def test_device_config_writes_local_yaml_and_does_not_touch_upstream(cfg, monkeypatch):
+    entry = _runtime_entry(cfg, "gptsovits", "api_v2.py", API_V2_STYLE)
+    (entry.parent / "GPT_SoVITS" / "configs").mkdir(parents=True)
+    upstream = entry.parent / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
+    upstream.write_text(TTS_YAML, encoding="utf-8")
+
+    monkeypatch.setattr(local_tts, "_mps_available", lambda py: True)
+    path, note, device = local_tts._device_config(cfg, "gptsovits", entry, "python")
+    assert device == "mps" and "mps" in note
+    assert path is not None and path.is_file()
+    assert "device: mps" in path.read_text(encoding="utf-8")
+    # 上游文件一个字都不能动：重新获取服务程序会覆盖它，改了也没用
+    assert upstream.read_text(encoding="utf-8") == TTS_YAML
+
+
+def test_device_config_is_skipped_when_already_cpu(cfg, monkeypatch):
+    """本来就是 cpu、机器也没有 mps 时，不必多造一份配置文件。"""
+    entry = _runtime_entry(cfg, "gptsovits", "api_v2.py", API_V2_STYLE)
+    (entry.parent / "GPT_SoVITS" / "configs").mkdir(parents=True)
+    (entry.parent / "GPT_SoVITS" / "configs" / "tts_infer.yaml").write_text(TTS_YAML, encoding="utf-8")
+    monkeypatch.setattr(local_tts, "_mps_available", lambda py: False)
+    path, note, device = local_tts._device_config(cfg, "gptsovits", entry, "python")
+    assert path is None and device == "cpu" and "cpu" in note
+
+
+def test_start_args_pass_config_only_when_entry_accepts_it(cfg):
+    """api_v2.py 有 -c/--tts_config 就传本地配置；脚本不认就不传，别硬塞。"""
+    entry = _runtime_entry(cfg, "gptsovits", "api_v2.py", API_V2_STYLE)
+    cfg_path = entry.parent / "local.yaml"
+    args = local_tts._start_args(entry, "127.0.0.1", 9881,
+                                 local_tts.ENGINE_SPEC["gptsovits"], cfg_path)
+    assert "--tts_config" in args and str(cfg_path) in args
+
+    plain = _runtime_entry(cfg, "qwen", "qwen_tts_server.py", "print('no argparse')\n")
+    args2 = local_tts._start_args(plain, "127.0.0.1", 9883,
+                                  local_tts.ENGINE_SPEC["qwen"], cfg_path)
+    assert str(cfg_path) not in args2
+
+
+def test_mps_never_claimed_on_non_mac(monkeypatch):
+    """Windows / Linux 上不能谎报 mps 可用（否则配置写成 mps 直接起不来）。"""
+    monkeypatch.setattr(local_tts.sys, "platform", "win32")
+    local_tts._MPS_CACHE.clear()
+    assert local_tts._mps_available("whatever") is False
+
+
+# ------------------------------------------------------------------ 换渠道就停掉另一个本地服务
+
+def test_switching_channel_stops_the_other_local_service(srv, monkeypatch):
+    """一次只用一个本地服务：切到别的渠道后，旧的还占着几 GB 内存和端口，必须停。"""
     base, _c = srv
-    code, body = _call(base, "GET", "/tts/local/runtime/status?engine=gptsovits")
+    stopped = []
+
+    monkeypatch.setattr(server.local_tts_mod, "status", lambda cfg, e: {
+        "ok": True, "engine": e, "label": "GPT-SoVITS" if e == "gptsovits" else "千问 3-TTS",
+        "port": 9881 if e == "gptsovits" else 9883,
+        "online": e == "gptsovits", "pid": 4321 if e == "gptsovits" else 0})
+    monkeypatch.setattr(server.local_tts_mod, "stop", lambda cfg, e: stopped.append(e) or {
+        "ok": True, "engine": e, "pid": 0, "online": False, "message": "已停掉"})
+
+    code, body = _call(base, "POST", "/tts/config", {"engine": "qwen"})
     assert code == 200
-    assert body["plan"]["available"] is True
-    assert isinstance(body.get("missingDeps"), list)
-    assert body["plan"]["entry"] == "api_v2.py"
+    assert stopped == ["gptsovits"], "切到千问后 GPT-SoVITS 必须停掉"
+    assert "9881 端口已释放" in body["message"]
+    assert body["stopped"], "结果里要带上停了什么，面板才能如实显示"
+
+
+def test_saving_the_same_channel_stops_nothing(srv, monkeypatch):
+    """只改音色 / 语速（渠道没变）不该把正在用的服务停掉。"""
+    base, c = srv
+    stopped = []
+    monkeypatch.setattr(server.local_tts_mod, "status", lambda cfg, e: {
+        "ok": True, "engine": e, "label": e, "port": 9881, "online": True, "pid": 111})
+    monkeypatch.setattr(server.local_tts_mod, "stop", lambda cfg, e: stopped.append(e) or {"ok": True})
+
+    code, body = _call(base, "POST", "/tts/config", {"engine": c.tts_engine})
+    assert code == 200
+    assert stopped == []
+    assert body["message"] == "说话参数已保存，下一句生效"
+
+
+def test_external_service_is_not_killed_on_switch(srv, monkeypatch):
+    """外部自己起的服务不主动杀，但要说清楚它还占着端口。"""
+    base, _c = srv
+    monkeypatch.setattr(server.local_tts_mod, "status", lambda cfg, e: {
+        "ok": True, "engine": e, "label": "GPT-SoVITS", "port": 9881,
+        "online": e == "gptsovits", "pid": 0})
+    monkeypatch.setattr(server.local_tts_mod, "stop", lambda cfg, e: {
+        "ok": True, "engine": e, "pid": 0, "online": True,
+        "message": "没有插件启动过的 GPT-SoVITS 进程；外部启动的服务请自己关"})
+
+    code, body = _call(base, "POST", "/tts/config", {"engine": "qwen"})
+    assert code == 200
+    assert "还在跑" in body["message"]
+    assert "外部启动" in body["message"]

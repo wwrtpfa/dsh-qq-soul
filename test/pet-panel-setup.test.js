@@ -36,6 +36,17 @@ test('Electron 残缺时页首直接给修复入口，并接住宿主的体检�
   assert.ok(host.includes("route('/panel/pet/electron-repair'"), '宿主要有修复路由')
 })
 
+test('离线状态写清主语，并说明蓝色鲸鱼圆圈是占位图不是角色形象', () => {
+  // 2026-11-13 截图：用户把「离线」误当成 QQ 掉线、把 🐳 占位图当成装错了形象包。
+  assert.ok(pet.includes('stateLabel'), '状态 pill 要有明确的「桌宠」主语')
+  assert.ok(pet.includes("'桌宠离线'") && pet.includes("'桌宠在线'"))
+  assert.ok(pet.includes('QQ 网关'), '要说明顶部绿点是 QQ 网关、不会跟着变绿')
+  assert.ok(pet.includes('60 秒没收到心跳'), '要说清离线判定是客户端心跳')
+  assert.ok(pet.includes('不是角色形象') && pet.includes('占位图') && pet.includes('106 段动画'), '要解释蓝色圆圈与形象包的关系')
+  assert.ok(pet.includes('online && pet?.pid'), '离线时不显示已退出进程的残留 pid')
+  assert.ok(!pet.includes('github.com'), '去品牌回归：面板不写上游仓库外链')
+})
+
 test('原来的按钮与镜像行没有残留在主卡里（不重复渲染）', () => {
   const wide = pet.match(/className: 'ab-input wide'/g) || []
   assert.equal(wide.length, 2, '两个长 URL 输入框仍然各只有一个')

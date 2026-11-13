@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -41,16 +42,37 @@ from pathlib import Path
 
 from . import local_tts as local_tts_mod
 
-#: 只有 GPT-SoVITS 有公开源码仓库；千问 9883 服务是各家自建的，只能「选目录导入」。
+#: 两种来源：
+#:   * ``builtin``：服务程序随插件分发（``services/runtimes/<engine>/``），安装时直接复制，
+#:     不联网、不用手工导入。千问 3-TTS 走这条——它的 9883 服务是插件自己实现的薄适配层。
+#:   * ``repo``：从上游源码仓库下 zip 再解压（GPT-SoVITS 的 api_v2.py）。
 RUNTIME_SPECS = {
+    "qwen": {
+        "builtin": "runtimes/qwen",
+        "label": "千问 3-TTS 服务程序（插件内置）",
+        "entry": "qwen_tts_server.py",
+        "sizeHint": "随插件分发，无需下载",
+        # mlx-audio 只跑在 Apple Silicon：别的平台继续用「② 导入整包」
+        "platforms": ("darwin",),
+        "machines": ("arm64", "aarch64"),
+        # mlx_audio 是服务程序真跑起来的硬依赖；numpy / wave 是写 wav 用的
+        "probe": ("mlx_audio", "numpy"),
+        "requirements": "requirements.txt",
+    },
     "gptsovits": {
         "repo": "RVC-Boss/GPT-SoVITS",
         "branch": "main",
         "label": "GPT-SoVITS 服务程序（api_v2.py）",
         "entry": "api_v2.py",
         "sizeHint": "源码约 7 MB（实测 6.6 MB；Python 依赖另算，约 2–3 GB）",
-        # 启动前必须能 import 的包：缺一个 api_v2.py 都会秒退
-        "probe": ("torch", "torchaudio", "transformers", "librosa", "soundfile"),
+        # 启动前必须能 import 的包：缺一个 api_v2.py 都会秒退。
+        # torchcodec：torchaudio 2.11 起音频解码改用 torchcodec，缺了合成时报
+        #   「TorchCodec is required for load_with_torchcodec」；
+        # resampy：librosa 重采样路径要它，缺了合成时报 No module named 'resampy'。
+        # 这两个都不在 GPT-SoVITS 的 requirements.txt 里，必须我们自己补。
+        "probe": ("torch", "torchaudio", "transformers", "librosa", "soundfile",
+                  "torchcodec", "resampy"),
+        "extra": ("torchcodec", "resampy"),
         "requirements": "requirements.txt",
     },
 }
@@ -106,15 +128,87 @@ def _target_dir(cfg, engine: str) -> Path:
     return local_tts_mod.fixed_dirs(cfg, engine)["runtime"] / name
 
 
+def _builtin_dir(engine: str) -> Path:
+    """插件自带的运行时目录（随包分发，只读）。"""
+    return Path(__file__).resolve().parent / RUNTIME_SPECS[engine]["builtin"]
+
+
+def _builtin_ok(spec: dict) -> tuple[bool, str]:
+    """内置运行时在当前平台能不能用：mlx-audio 只支持 Apple Silicon。"""
+    plats = spec.get("platforms") or ()
+    machs = spec.get("machines") or ()
+    nicks = {"darwin": "macOS", "win32": "Windows", "linux": "Linux"}
+    if plats and sys.platform not in plats:
+        return False, ("这个服务程序是内置的，但只支持 %s；当前是 %s，"
+                       "用「② 导入整包」把现成的 9883 服务放进来"
+                       % ("、".join(nicks.get(p, p) for p in plats), nicks.get(sys.platform, sys.platform)))
+    if machs and platform.machine() not in machs:
+        return False, ("内置服务程序需要 Apple Silicon（当前 %s）；这台机器请用「② 导入整包」"
+                       % platform.machine())
+    return True, ""
+
+
+def _install_builtin(cfg, engine: str) -> dict:
+    """把内置运行时复制到 ``runtime/<engine>/``，幂等。
+
+    有一条要守住：用户自己放进去的程序不覆盖。判断依据是 ``.dsh-builtin.json`` 标记——
+    只有插件自己放的文件才跟着版本升级，用户手放的原样留着。
+    """
+    spec = RUNTIME_SPECS[engine]
+    src = _builtin_dir(engine)
+    if not src.is_dir():
+        return {"ok": False, "message": "插件里没有内置服务程序目录：%s" % src}
+    dest = local_tts_mod.fixed_dirs(cfg, engine)["runtime"]
+    dest.mkdir(parents=True, exist_ok=True)
+    marker = dest / ".dsh-builtin.json"
+    entry = local_tts_mod._find_entry(cfg, engine)
+    if entry is not None and not marker.is_file():
+        return {"ok": True, "already": True, "entry": str(entry),
+                "message": "已经有你放的服务程序（%s），保留不动" % entry.name}
+    copied: list[str] = []
+    try:
+        for f in sorted(src.iterdir()):
+            if f.is_file() and not f.name.startswith("."):
+                shutil.copy2(f, dest / f.name)
+                copied.append(f.name)
+        marker.write_text(json.dumps({"builtin": True, "engine": engine, "files": copied},
+                                     ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as exc:
+        return {"ok": False, "message": "内置服务程序没放成：%s" % exc}
+    entry = local_tts_mod._find_entry(cfg, engine)
+    if entry is None:
+        return {"ok": False, "message": "内置文件已复制，但没找到 %s" % spec["entry"]}
+    return {"ok": True, "entry": str(entry), "files": copied,
+            "message": "内置服务程序已放到 %s（%s）" % (entry.parent, entry.name)}
+
+
 def plan(cfg, engine: str) -> dict:
     engine = str(engine or "").strip().lower()
     spec = RUNTIME_SPECS.get(engine)
     if not spec:
-        return {"ok": True, "engine": engine, "available": False,
-                "message": "%s 没有公开的服务程序仓库，用「② 导入整包（移动进来）」把程序放进来"
-                           % local_tts_mod.ENGINE_SPEC.get(engine, {}).get("label", engine)}
+        # 没有公开源码也要把「缺的那个程序叫什么」带回去：面板 ③ 卡片、status()
+        # 和 start() 的报错都靠它，否则会误显示成别的渠道的脚本名（api_v2.py）。
+        engine_spec = local_tts_mod.ENGINE_SPEC.get(engine, {})
+        entry_name = (engine_spec.get("entryNames") or ("",))[0]
+        return {"ok": True, "engine": engine, "available": False, "entry": entry_name,
+                "installed": local_tts_mod._find_entry(cfg, engine) is not None,
+                "message": "%s 没有公开的服务程序仓库，用「② 导入整包（移动进来）」把 %s 放进来"
+                           % (engine_spec.get("label", engine), entry_name or "服务脚本")}
     dirs = local_tts_mod.fixed_dirs(cfg, engine)
     entry = local_tts_mod._find_entry(cfg, engine)
+    if spec.get("builtin"):
+        ok_platform, why = _builtin_ok(spec)
+        return {
+            "ok": True, "engine": engine, "available": ok_platform, "source": "builtin",
+            "label": spec["label"], "sizeHint": spec["sizeHint"], "entry": spec["entry"],
+            "target": str(dirs["runtime"]), "runtime": str(dirs["runtime"]),
+            "installed": entry is not None,
+            "entryPath": str(entry) if entry else "",
+            "urls": [],
+            "message": ((spec["label"] + "随插件内置，安装时自动放到 " + str(dirs["runtime"])
+                         + "，不用下载、也不用再导入一遍") if ok_platform
+                        else why),
+        }
     return {
         "ok": True, "engine": engine, "available": True,
         "repo": spec["repo"], "branch": spec["branch"], "label": spec["label"],
@@ -207,6 +301,17 @@ def _extract(zip_path: Path, root: Path) -> list[str]:
 
 def _run_fetch(cfg, engine: str, state: dict, cancel: threading.Event) -> None:
     spec = RUNTIME_SPECS[engine]
+    if spec.get("builtin"):
+        got = _install_builtin(cfg, engine)
+        state.update({
+            "phase": "done" if got.get("ok") else "failed", "running": False,
+            "percent": 100 if got.get("ok") else 0, "entry": got.get("entry") or "",
+            "finishedAt": int(time.time()), "message": got.get("message") or "",
+        })
+        _write_state(cfg, engine, state)
+        with _LOCK:
+            _JOBS.pop(engine + ":fetch", None)
+        return
     urls = [m.format(repo=spec["repo"], branch=spec["branch"]) for m in MIRRORS]
     dirs = local_tts_mod.fixed_dirs(cfg, engine)
     zip_path = dirs["runtime"] / ("%s.zip" % engine)
@@ -276,10 +381,64 @@ def _run_fetch(cfg, engine: str, state: dict, cancel: threading.Event) -> None:
             _JOBS.pop(engine + ":fetch", None)
 
 
+def fetch_sync(cfg, engine: str) -> dict:
+    """同步补齐服务程序，给「① 一键下载」结束后串流程用。
+
+    与 ``start_fetch()`` 的区别：后者起后台线程、面板轮询进度；这里是下载线程里
+    的**最后一步**，必须等到 entry 真的落盘才能继续判断能不能自动启动，所以不启线程。
+    源码包只有几 MB，同步等待不会让下载线程卡太久；失败也只如实回报，不影响权重已下载。
+    """
+    engine = str(engine or "").strip().lower()
+    spec = RUNTIME_SPECS.get(engine)
+    if not spec:
+        return {"ok": False, "message": "这个渠道没有可自动下载的服务程序"}
+    if spec.get("builtin"):
+        ok_platform, why = _builtin_ok(spec)
+        if not ok_platform:
+            return {"ok": False, "message": why}
+        return _install_builtin(cfg, engine)
+    entry = local_tts_mod._find_entry(cfg, engine)
+    if entry is not None:
+        return {"ok": True, "already": True, "entry": str(entry), "message": "服务程序已在位"}
+    dirs = local_tts_mod.fixed_dirs(cfg, engine)
+    urls = [m.format(repo=spec["repo"], branch=spec["branch"]) for m in MIRRORS]
+    zip_path = dirs["runtime"] / ("%s.zip" % engine)
+    cancel = threading.Event()
+    try:
+        got = _download_zip(urls, zip_path, lambda have, total: None, cancel)
+        if not got.get("ok"):
+            return {"ok": False, "message": "服务程序没下成：%s"
+                    % "；".join(got.get("errors") or ["源不可达"])}
+        target = _target_dir(cfg, engine)
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        _extract(zip_path, dirs["runtime"])
+        zip_path.unlink(missing_ok=True)
+    except Exception as exc:  # noqa: BLE001 - 补程序失败不能把已下好的权重判成失败
+        return {"ok": False, "message": "服务程序没装成：%s" % exc}
+    entry = local_tts_mod._find_entry(cfg, engine)
+    if entry is None:
+        return {"ok": False, "message": "源码包解压了，但没找到 %s" % spec["entry"]}
+    return {"ok": True, "entry": str(entry), "message": "服务程序已自动补齐：%s" % entry.name}
+
+
 def start_fetch(cfg, engine: str) -> dict:
     engine = str(engine or "").strip().lower()
     if engine not in RUNTIME_SPECS:
         raise ValueError(plan(cfg, engine).get("message") or "这个渠道没有可下载的服务程序")
+    if RUNTIME_SPECS[engine].get("builtin"):
+        # 内置运行时就是拷几个文件，不值得为它起线程 + 轮询
+        state = {"ok": True, "engine": engine, "phase": "installing", "running": True,
+                 "percent": 10, "startedAt": int(time.time()), "plan": plan(cfg, engine),
+                 "message": "正在放内置服务程序"}
+        got = fetch_sync(cfg, engine)
+        state.update({
+            "running": False, "phase": "done" if got.get("ok") else "failed",
+            "percent": 100 if got.get("ok") else 0, "entry": got.get("entry") or "",
+            "finishedAt": int(time.time()), "message": got.get("message") or "",
+        })
+        _write_state(cfg, engine, state)
+        return {"ok": bool(got.get("ok")), "message": state["message"], "runtime": state}
     with _LOCK:
         if _JOBS.get(engine + ":fetch"):
             return {"ok": True, "message": "已经在下了，面板会显示进度",
@@ -374,7 +533,11 @@ def _run_deps(cfg, engine: str, state: dict, cancel: threading.Event) -> None:
                 flush(True)
                 return
         req = None
-        for cand in (runtime, _target_dir(cfg, engine)):
+        # 内置运行时没有 repo（requirements.txt 就在 runtime/ 根上），别去拼 _target_dir
+        cands = [runtime]
+        if spec.get("repo") and spec.get("branch"):
+            cands.append(_target_dir(cfg, engine))
+        for cand in cands:
             hit = cand / spec["requirements"]
             if hit.is_file():
                 req = hit
@@ -387,8 +550,11 @@ def _run_deps(cfg, engine: str, state: dict, cancel: threading.Event) -> None:
 
         state.update({"phase": "installing", "message": "正在装依赖（第一次要下 2–3 GB，慢慢来）"})
         flush(True)
+        # requirements.txt 里没有 torchcodec / resampy，但它们缺了合成会 400，
+        # 所以一起装上；pip 对已装好的包只会跳过，不会重下。
         cmd = [str(py), "-m", "pip", "install", "--disable-pip-version-check",
                "--progress-bar", "off", "-r", str(req)]
+        cmd += list(spec.get("extra") or ())
         env = dict(os.environ)
         env.update({"PYTHONUNBUFFERED": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"})
         proc = subprocess.Popen(cmd, cwd=str(req.parent), env=env, stdin=subprocess.DEVNULL,
@@ -441,6 +607,21 @@ def _run_deps(cfg, engine: str, state: dict, cancel: threading.Event) -> None:
     finally:
         with _LOCK:
             _JOBS.pop(engine + ":deps", None)
+
+
+def install_deps_sync(cfg, engine: str, *, wait: float = 1800) -> dict:
+    """同步装依赖：给「① 一键下载」收尾用。
+
+    下载线程里必须等依赖真装完才能启动，所以复用 ``start_deps`` 的后台任务，
+    在这里 join 它的线程；进度照旧写状态文件，面板能同时看到「装依赖 · 第 N 个包」。
+    """
+    start_deps(cfg, engine)
+    job = _JOBS.get(str(engine or "").strip().lower() + ":deps")
+    if job:
+        job["thread"].join(timeout=wait)
+    state = _read_state(cfg, engine)
+    return {"ok": state.get("phase") == "done", "message": state.get("message") or "",
+            "runtime": state}
 
 
 def start_deps(cfg, engine: str) -> dict:

@@ -1,0 +1,3 @@
+# 千问 3-TTS 服务程序（插件内置）的依赖，只装在本渠道自己的 venv 里。
+# Apple Silicon 专用；mlx-audio 会带进 mlx / transformers / numpy 等。
+mlx-audio>=0.4.0

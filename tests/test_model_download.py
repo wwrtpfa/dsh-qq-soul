@@ -23,6 +23,7 @@ import pytest
 
 from services import config as config_mod
 from services import model_download as md
+from services import runtime_fetch as rf
 
 
 def sha256(data: bytes) -> str:
@@ -397,8 +398,48 @@ def test_full_download_writes_fixed_dir_and_all_files_green(monkeypatch, cfg):
     payload = json.loads((cfg.data_dir / "config.json").read_text(encoding="utf-8"))
     assert payload["paths"]["qwenModel"] == str(target)
     assert "local-tts-qwen" in cfg.installed
-    assert state["needRuntime"] is True, "没有启动入口时如实标记，不谎称能起服务"
+    # 内置运行时：下载完程序就该在位，不能再让用户去找「启动入口」
+    assert state.get("needRuntime") is not True
+    assert state["runtimeFetched"] is True
+    entry = cfg.data_dir / "runtime" / "qwen" / "qwen_tts_server.py"
+    assert entry.is_file(), "内置服务程序要真的落到 runtime/qwen"
+    assert "内置服务程序已放到" in state["message"]
     assert fake.calls, "真的发过 HTTP 请求（注入的 fake），不是空跑"
+
+
+def test_download_auto_fetches_runtime_then_starts(monkeypatch, cfg):
+    """「装完就能启动」：有公开源的渠道，权重下完自动补服务程序并拉起，不用再点一次③。"""
+    _two_file_flow(monkeypatch, cfg)
+    calls = []
+
+    def fake_fetch(_cfg, engine):
+        calls.append(engine)
+        runtime = cfg.data_dir / "runtime" / engine
+        runtime.mkdir(parents=True, exist_ok=True)
+        (runtime / "api_v2.py").write_text("print('api')", encoding="utf-8")
+        return {"ok": True, "entry": str(runtime / "api_v2.py"), "message": "服务程序已自动补齐：api_v2.py"}
+
+    monkeypatch.setattr(rf, "fetch_sync", fake_fetch)
+    monkeypatch.setattr(md.local_tts_mod, "start",
+                        lambda _cfg, _engine: {"ok": True, "online": True, "message": "已起"})
+
+    assert md.start_download(cfg, "gptsovits", "default", auto_start=True)["ok"] is True
+    state = _wait(cfg, "gptsovits")
+    assert state["phase"] == "done", state["message"]
+    assert calls == ["gptsovits"], "服务程序要在同一个下载流程里自动补齐"
+    assert state["runtimeFetched"] is True
+    assert state.get("needRuntime") is not True, "补完程序不该再要求用户手动去找入口"
+    assert state["autoStarted"] is True
+    assert "服务程序已自动补齐" in state["message"]
+
+
+def test_plan_announces_runtime_need_before_download(cfg):
+    """别等下完 1.6 GB 才说还差程序：进页面就能看到这一步要不要另外准备。"""
+    g = md.plan(cfg, "gptsovits")["runtime"]
+    assert g["available"] is True and g["entry"] == "api_v2.py"
+    q = md.plan(cfg, "qwen")["runtime"]
+    assert q["available"] is True and q["entry"] == "qwen_tts_server.py"
+    assert "内置" in q["message"], "内置运行时要说清「随插件分发」，别写成需要用户自己准备"
 
 
 def test_retry_only_downloads_the_ungreen_file(monkeypatch, cfg):

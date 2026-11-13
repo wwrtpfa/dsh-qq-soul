@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import re
 import shutil
 import signal
 import socket
@@ -41,18 +43,66 @@ import time
 from pathlib import Path
 
 #: 一个渠道一份：端口、config 里的 URL 键、权重路径键、启动入口候选名。
+#: ``fallbackArgs`` 只在读不出入口脚本的 argparse 时兜底；正常一律按脚本自己认的参数传。
 ENGINE_SPEC = {
     "qwen": {
         "label": "千问 3-TTS", "port": 9883, "urlKey": "qwenUrl", "modelKey": "qwenModel",
         "pythonKey": "qwenPython", "entryKey": "qwenServer",
         "entryNames": ("qwen_tts_server.py", "server.py", "app.py", "api.py", "run.py"),
         "synthPath": "/synth",
+        "fallbackArgs": ("--host", "{host}", "--port", "{port}"),
     },
     "gptsovits": {
         "label": "GPT-SoVITS", "port": 9881, "urlKey": "gptsovitsUrl", "modelKey": "gptSovits",
         "pythonKey": "python", "entryKey": "gptsovitsServer",
         "entryNames": ("api_v2.py", "api.py", "server.py", "app.py"),
         "synthPath": "/tts",
+        # api_v2.py 的 argparse 是 -a/--bind_addr + -p/--port，没有 --host
+        "fallbackArgs": ("-a", "{host}", "-p", "{port}"),
+    },
+}
+
+def _runtime_hint(cfg, engine: str) -> tuple[bool, str, str]:
+    """(这个渠道能不能一键放好服务程序, 缺的那个脚本叫什么, 来源 builtin/repo)。
+
+    以前 status() / start() 一律写「点③一键获取服务程序」，可 ③ 按钮是按
+    ``runtime_fetch.plan().available`` 渲染的：qwen 没有公开源码仓库，按钮根本不存在，
+    用户照着提示找一个永远点不到的按钮。文案必须跟实际能力对齐。
+    现在 qwen 有了插件内置的运行时（``services/runtimes/qwen/``），来源要分开说：
+    内置的是「自动放好」，GPT-SoVITS 是「自动下载」。
+    """
+    try:
+        from . import runtime_fetch as runtime_mod
+        p = runtime_mod.plan(cfg, engine)
+    except Exception:  # noqa: BLE001 - 体检模块不可用时退回 ENGINE_SPEC
+        p = {}
+    name = p.get("entry") or ENGINE_SPEC[engine]["entryNames"][0]
+    return bool(p.get("available")), name, str(p.get("source") or "repo")
+
+
+#: 权重扫描时整棵跳过的目录：``.venv`` 里几万个 .py 会把 rglob 拖成几十秒，
+#: 面板每 1.5 秒轮询一次，很快就变成「点刷新一直转」。
+_SKIP_DIRS = {
+    ".venv", "venv", "env", "__pycache__", ".git", "node_modules",
+    ".mypy_cache", ".pytest_cache", ".idea", ".vscode",
+}
+
+#: 扫描条目上限：真有 8 GB 整包也不会超过这个数量级，超了就是走错目录了。
+_SCAN_LIMIT = 20000
+
+#: 拉起之后等多久还看不到端口就算失败（权重加载通常 1–3 分钟，给到 4 分钟）。
+START_GRACE = 240
+
+#: 权重必须出现在程序自己的相对路径下：GPT-SoVITS 的 tts_infer.yaml 里写的是
+#: ``GPT_SoVITS/pretrained_models/...``，按 cwd（= 入口脚本所在目录）解析。
+#: 权重放在 models/gptsovits 下，程序根本看不见，于是启动时报 FileNotFoundError。
+PRETRAINED_LAYOUT = {
+    "gptsovits": {
+        "dest": ("GPT_SoVITS", "pretrained_models"),
+        "markers": ("gsv-v2final-pretrained", "chinese-hubert-base"),
+        # fast_langdetect 第一次推理会把 125 MB 的 lid.176.bin 下到这里；
+        # 目录不存在就直接报「Cache directory not found」，先建好再启动。
+        "subdirs": ("fast_langdetect",),
     },
 }
 
@@ -99,19 +149,28 @@ def fixed_dirs(cfg, engine: str) -> dict:
 
 
 def _count_files(folder: Path) -> tuple[int, int]:
-    """(文件数, 总字节)：只看权重类文件，最多数 2000 个，别把 8 GB 整包扫到卡住。"""
-    n = size = 0
+    """(文件数, 总字节)：只看权重类文件，跳过 .venv / __pycache__ 这类大目录。
+
+    以前用 ``rglob("*")`` 只按「匹配到几个」break：``.venv`` 里的 .py / .pyc 一个都
+    不匹配，于是整棵树被走完（几万条目），``status()`` 每次轮询都要卡好几秒，
+    面板就表现成「点刷新一直读取中」。这里改成手动剪枝 + 总条目上限。
+    """
+    n = size = scanned = 0
     if not folder.is_dir():
         return 0, 0
-    for p in folder.rglob("*"):
-        if n >= 2000:
-            break
-        try:
-            if p.is_file() and p.suffix.lower() in WEIGHT_SUFFIXES:
-                n += 1
-                size += p.stat().st_size
-        except OSError:
-            continue
+    for root, dirs, names in os.walk(folder):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".")]
+        for name in names:
+            scanned += 1
+            if scanned > _SCAN_LIMIT:
+                return n, size
+            if Path(name).suffix.lower() not in WEIGHT_SUFFIXES:
+                continue
+            try:
+                size += os.stat(os.path.join(root, name)).st_size
+            except OSError:
+                continue
+            n += 1
     return n, size
 
 
@@ -171,6 +230,275 @@ def _url(cfg, engine: str) -> str:
     return "http://127.0.0.1:%d" % spec["port"]
 
 
+def _pid_alive(pid: int) -> bool:
+    """这个 PID 还活着吗：启动失败要能立刻看出来，不能让面板永远转「启动中」。
+
+    坑一：父进程没 wait 时，子进程退成**僵尸**，``os.kill(pid, 0)`` 仍然成功 ——
+    于是「进程早就带着退出码结束了」被当成「还在启动」，面板永远转。
+    所以 POSIX 优先用 ``ps -o state=`` 看状态，``Z`` 就是僵尸。
+    坑二：Windows 上 ``os.kill(pid, 0)`` 会真的去 TerminateProcess，改用 tasklist。
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            out = subprocess.run(["tasklist", "/FI", "PID eq %d" % pid, "/NH"],
+                                 capture_output=True, text=True, timeout=6, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return True  # 查不到就当还活着，别误判成失败
+        return str(pid) in (out.stdout or "")
+    ps = "/bin/ps" if Path("/bin/ps").is_file() else shutil.which("ps")
+    if ps:
+        try:
+            out = subprocess.run([ps, "-o", "state=", "-p", str(pid)],
+                                 capture_output=True, text=True, timeout=5, check=False)
+            state = (out.stdout or "").strip()
+            if state:
+                return not state.startswith("Z")
+            if out.returncode != 0:
+                return False
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+#: 日志里这几类行对「为什么没起来」毫无信息量，只占地方。
+_LOG_NOISE = ("warnings.warn", "Matplotlib", "FutureWarning", "SyntaxWarning", "UserWarning")
+
+
+def _tail_log(path: Path, limit: int = 1200) -> str:
+    """日志最后几行：进程秒退时，原因就写在里面（比如 argparse 不认参数）。"""
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - limit * 4))
+            raw = fh.read()
+    except OSError:
+        return ""
+    lines = [ln.strip() for ln in raw.decode("utf-8", "replace").splitlines() if ln.strip()]
+    keep = [ln for ln in lines if not ln.startswith(_LOG_NOISE)]
+    return "\n".join(keep[-8:])[-limit:]
+
+
+_ARG_CALL = re.compile(r"add_argument\((.*?)\)", re.S)
+_QUOTED = re.compile(r"""["']([^"']*)["']""")
+
+
+def _pick_flag(opts: list[str]) -> str:
+    """同一个参数有长短两种写法时，用长选项（``-p/--port`` 取 ``--port``）。"""
+    longs = [o for o in opts if o.startswith("--") and len(o) > 2]
+    return longs[0] if longs else (opts[0] if opts else "")
+
+
+def _entry_cli(entry: Path) -> dict:
+    """读入口脚本自己的 argparse：它认 ``--port`` 还是 ``-p``、认 ``--host`` 还是 ``-a``。
+
+    这是 GPT-SoVITS 起不来的真原因：``api_v2.py`` 只有 ``-a/--bind_addr`` 和
+    ``-p/--port``，硬塞 ``--host 127.0.0.1`` 会被 argparse 判成非法参数、exit 2，
+    进程秒退，端口永远不开。千问那种自建服务同理——所以这里一律按脚本自己声明的
+    参数来，不按我们想象的来。
+    """
+    try:
+        text = entry.read_text(encoding="utf-8", errors="replace")[:200000]
+    except OSError:
+        return {}
+    found = {"port": [], "host": [], "config": []}
+    for body in _ARG_CALL.findall(text):
+        opts = [s for s in _QUOTED.findall(body) if s.startswith("-")]
+        if not opts:
+            continue
+        joined = " ".join(opts).lower()
+        if "port" in joined:
+            found["port"].extend(opts)
+        if "host" in joined or "bind" in joined or "addr" in joined:
+            found["host"].extend(opts)
+        if "config" in joined:
+            found["config"].extend(opts)
+    return {k: _pick_flag(v) for k, v in found.items()}
+
+
+def _start_args(entry: Path, host: str, port: int, spec: dict,
+                config: Path | None = None) -> list[str]:
+    """拼启动参数：优先用入口脚本认的那套，读不出来才退回渠道默认写法。"""
+    cli = _entry_cli(entry)
+    if not cli.get("port") and not cli.get("host"):
+        return [a.format(host=host, port=port) for a in spec["fallbackArgs"]]
+    args: list[str] = []
+    if cli.get("host"):
+        args += [cli["host"], host]
+    if cli.get("port"):
+        args += [cli["port"], str(port)]
+    if config is not None and cli.get("config"):
+        args += [cli["config"], str(config)]
+    return args
+
+
+#: Apple Silicon 上 mps 比 cpu 快数倍；查一次缓存住，别每次启动都 import torch。
+_MPS_CACHE: dict[str, bool] = {}
+
+
+def _mps_available(python: str) -> bool:
+    """这台机器的 torch 能不能用 mps：拿目标解释器真跑一次，别凭平台猜。"""
+    if sys.platform != "darwin" or platform.machine() not in ("arm64", "aarch64"):
+        return False
+    if python in _MPS_CACHE:
+        return _MPS_CACHE[python]
+    ok = False
+    try:
+        out = subprocess.run(
+            [python, "-c", "import torch;print(torch.backends.mps.is_available())"],
+            capture_output=True, text=True, timeout=90, check=False)
+        ok = (out.stdout or "").strip().endswith("True")
+    except (OSError, subprocess.SubprocessError):
+        ok = False
+    _MPS_CACHE[python] = ok
+    return ok
+
+
+#: 只替换 custom 段里的这两个键：api_v2.py 是 ``configs_.get("custom", configs_["v2"])``，
+#: 生效的永远是 custom 段；其余段必须原样保留（get 的默认值会先求值，少一段就 KeyError）。
+def _patch_device_yaml(text: str, device: str) -> str:
+    out: list[str] = []
+    in_custom = False
+    for line in text.splitlines():
+        if line.startswith("custom:"):
+            in_custom = True
+            out.append(line)
+            continue
+        if in_custom and line and not line.startswith((" ", "\t")):
+            in_custom = False
+        if in_custom:
+            indent = line[:len(line) - len(line.lstrip())]
+            key = line.strip()
+            if key.startswith("device:"):
+                out.append(indent + "device: " + device)
+                continue
+            if key.startswith("is_half:"):
+                out.append(indent + "is_half: false")  # mps 不支持半精度那套算子
+                continue
+        out.append(line)
+    return "\n".join(out) + "\n"
+
+
+def _device_config(cfg, engine: str, entry: Path, python: str) -> tuple[Path | None, str, str]:
+    """生成一份只改设备的本地配置，返回 (路径, 说明, 设备名)。
+
+    为什么不直接改上游 ``GPT_SoVITS/configs/tts_infer.yaml``：那是程序包里的文件，
+    「重新获取服务程序」会整包覆盖，改动会丢；用户想对照原文件也没了。这里复制一份
+    到 ``runtime/<engine>/.local/``（隐藏目录，权重扫描会跳过），用 ``-c`` 传进去。
+
+    注意：``api_v2.py`` 启动时会把「当前生效配置」**自己回写**到上游那份 yaml
+    （`TTS_Config.configs_path` 是写死的 ``configs/tts_infer.yaml``，不认 ``-c`` 的路径），
+    所以上游的 custom 段可能变成 ``device: cuda / is_half: true``。这无害 —— 我们只是拿它
+    当模板（其余段和权重路径照抄），device / is_half 每次都强制覆盖。
+    """
+    layout = PRETRAINED_LAYOUT.get(engine)
+    if not layout:
+        return None, "", ""
+    src = entry.parent / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
+    if not src.is_file():
+        return None, "", ""
+    device = "mps" if _mps_available(python) else "cpu"
+    try:
+        text = src.read_text(encoding="utf-8")
+    except OSError:
+        return None, "", ""
+    patched = _patch_device_yaml(text, device)
+    if device == "cpu" and patched == text:
+        return None, "推理设备：cpu", device  # 本来就是 cpu，不用多一份文件
+    dest = fixed_dirs(cfg, engine)["runtime"] / ".local" / "tts_infer.yaml"
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if not dest.is_file() or dest.read_text(encoding="utf-8") != patched:
+            dest.write_text(patched, encoding="utf-8")
+    except OSError:
+        return None, "", ""
+    note = ("推理设备：mps（Apple Silicon 加速，不支持的算子自动回退 CPU）" if device == "mps"
+            else "推理设备：cpu")
+    return dest, note, device
+
+
+def _find_pretrained(models_dir: Path, markers: tuple) -> Path | None:
+    """在 models/<engine> 下找那套带 markers 的权重目录（可能多套一层仓库名）。"""
+    if not models_dir.is_dir():
+        return None
+    if all((models_dir / m).exists() for m in markers):
+        return models_dir
+    for child in sorted(models_dir.iterdir()):
+        if child.is_dir() and all((child / m).exists() for m in markers):
+            return child
+    return None
+
+
+def _link_pretrained(cfg, engine: str, entry: Path) -> str:
+    """把 ``models/<engine>`` 的权重接到程序认的相对路径上，返回一句提示（成功为空）。
+
+    为什么需要这一步：``api_v2.py`` 读的 ``GPT_SoVITS/configs/tts_infer.yaml`` 里写的
+    全是 ``GPT_SoVITS/pretrained_models/...``，按 cwd 解析。我们把权重统一放在
+    ``models/gptsovits``（面板上那个固定目录），程序按自己的相对路径找 → 找不到 →
+    ``FileNotFoundError`` 秒退。用目录链接接一下，不复制、不占第二份空间。
+
+    macOS / Linux 用 ``os.symlink``；Windows 用 ``mklink /J``（junction，不需要
+    管理员权限，symlink 反而要开发者模式）。
+    """
+    layout = PRETRAINED_LAYOUT.get(engine)
+    if not layout:
+        return ""
+
+    def _subdirs(base: Path) -> str:
+        for sub in layout.get("subdirs") or ():
+            try:
+                (base / sub).mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                return "建不了 %s：%s" % (base / sub, exc)
+        return ""
+
+    src = _find_pretrained(fixed_dirs(cfg, engine)["models"], layout["markers"])
+    if src is None:
+        return ""  # 权重还没到位：交给启动日志如实报错，别在这里瞎猜
+    dest = entry.parent.joinpath(*layout["dest"])
+    if dest.is_symlink():
+        try:
+            if dest.resolve() == src.resolve():
+                return _subdirs(dest)
+        except OSError:
+            pass
+        dest.unlink(missing_ok=True)
+    elif dest.exists():
+        if all((dest / m).exists() for m in layout["markers"]):
+            return _subdirs(dest)  # 真目录里已经有权重（用户自己整包导入的）：不动它
+        # 源码包自带一个只有 .gitignore 的空壳 pretrained_models，不能当成「已有权重」跳过
+        try:
+            leftovers = [p.name for p in dest.iterdir() if not p.name.startswith(".")]
+        except OSError as exc:
+            return "读不了 %s：%s" % (dest, exc)
+        if leftovers:
+            return ("%s 里已经有别的东西（%s），不敢覆盖；把权重放进这个目录，"
+                    "或清空后重试" % (dest, "、".join(leftovers[:3])))
+        shutil.rmtree(dest, ignore_errors=True)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if os.name == "nt":
+            subprocess.run(["cmd", "/c", "mklink", "/J", str(dest), str(src)],
+                           capture_output=True, timeout=20, check=False)
+        else:
+            os.symlink(str(src), str(dest), target_is_directory=True)
+    except OSError as exc:
+        return "权重没接进程序目录（%s）：%s" % (dest, exc)
+    if not dest.exists():
+        return "权重没接进程序目录：%s → %s" % (dest, src)
+    # 目录是链接时，下面的子目录会落到真实权重目录里，不会另存一份
+    return _subdirs(dest)
+
+
 def _host_port(url: str, default_port: int) -> tuple[str, int]:
     from urllib.parse import urlparse
 
@@ -219,17 +547,62 @@ def status(cfg, engine: str) -> dict:
          "hint": ("%d 个文件 / %.2f GB" % (model_count, model_bytes / 1024 ** 3)) if model_count else "还没导入"},
         {"id": "entry", "label": "服务程序", "done": entry is not None,
          "hint": str(entry) if entry else
-                 "还差让 %d 端口跑起来的程序（%s）。权重只是模型参数，没这个程序起不来"
+                 "还差让 %d 端口跑起来的程序（%s）。点「③ 服务程序」会自动放好，"
+                 "权重只是模型参数，没这个程序起不来"
                  % (spec["port"], spec["entryNames"][0])},
         {"id": "python", "label": "Python 解释器", "done": bool(_python(cfg, engine)),
          "hint": _python(cfg, engine)},
         {"id": "online", "label": "服务在线", "done": online,
          "hint": "%s:%d %s" % (host, port, "在跑" if online else "没起")},
     ]
+    log_path = dirs["logs"] / ("local-tts-%s.log" % engine)
+    # fast_langdetect 的语言模型不在 HF 权重里，第一句合成时才会下（125 MB）。
+    # 不提前说，用户会以为「在线了却卡住不动」。
+    lang_model = ""
+    if entry is not None and engine in PRETRAINED_LAYOUT:
+        lang_model = str(entry.parent.joinpath(*PRETRAINED_LAYOUT[engine]["dest"])
+                         / "fast_langdetect" / "lid.176.bin")
+    lang_ready = True if not lang_model else Path(lang_model).is_file()
+    last_error = str(state.get("lastError") or "")
+    log_tail = ""
     if online:
         phase, message = "online", "%s 已在线：%s:%d，选这个渠道下一句就能出声" % (spec["label"], host, port)
     elif pid and state.get("starting"):
-        phase, message = "starting", "%s 正在启动（权重加载通常要 1–3 分钟），面板会自动轮询" % spec["label"]
+        # 「启动中」不能是个永久状态：进程秒退（参数不对 / 缺依赖 / 权重路径不对）
+        # 时端口永远不开，面板就会一直转，用户点多少次刷新都是同一句。
+        age = int(time.time()) - int(state.get("at") or 0)
+        if not _pid_alive(pid):
+            log_tail = _tail_log(log_path)
+            last_line = (log_tail.splitlines() or [""])[-1][:200]
+            phase = "failed"
+            message = ("%s 启动后立刻退出了（PID %d），端口没开。%s"
+                       % (spec["label"], pid,
+                          ("最后一行：%s" % last_line) if last_line else "日志是空的，可能根本没跑起来"))
+            state["starting"] = False
+            state["pid"] = 0
+            state["lastError"] = log_tail or message
+            _save_state(cfg, {**_load_state(cfg), engine: state})
+            pid = 0
+        elif age > START_GRACE:
+            log_tail = _tail_log(log_path)
+            last_line = (log_tail.splitlines() or [""])[-1][:200]
+            phase = "failed"
+            message = ("%s 拉起 %d 秒了，%d 端口还没开。进程还在（PID %d），"
+                       "但已经超出正常加载时间，建议看日志或点「停止」再重试。%s"
+                       % (spec["label"], age, port, pid,
+                          ("最后一行：%s" % last_line) if last_line else ""))
+            state["starting"] = False
+            state["lastError"] = log_tail or message
+            _save_state(cfg, {**_load_state(cfg), engine: state})
+        else:
+            phase, message = "starting", "%s 正在启动（权重加载通常要 1–3 分钟），面板会自动轮询" % spec["label"]
+    elif last_error:
+        # 上次启动失败的原因优先于「还差哪些文件」：用户点过启动、进程秒退过，
+        # 最想知道的是为什么退，而不是再被念一遍权重没导入。
+        last_line = (last_error.splitlines() or [""])[-1][:200]
+        phase = "failed"
+        log_tail = last_error
+        message = "%s 上次启动失败：%s" % (spec["label"], last_line)
     elif all(step["done"] for step in steps[:4]):
         phase, message = "installed", "%s 装好了但没启动；点「启动」把它带起来" % spec["label"]
     else:
@@ -238,8 +611,16 @@ def status(cfg, engine: str) -> dict:
         if "服务程序" in missing:
             # 用户最容易在这卡住：权重全绿了，以为装完了。其实权重是「模型参数」，
             # 服务程序是「把参数读进来、监听端口的那个程序」，两样缺一不可。
-            message += ("。权重（模型参数）和程序是两样东西：点「③ 一键获取服务程序」把 %s 下下来，"
-                        "或用「② 导入整包」把含它的目录移动进来" % spec["entryNames"][0])
+            # 有没有「③ 一键获取」这个按钮，得看渠道，不能一律指过去。
+            available, name, source = _runtime_hint(cfg, engine)
+            if available:
+                how = (("点「③ 服务程序」会自动把 %s 放好，不用下载、也不用手工导入" % name)
+                       if source == "builtin"
+                       else ("点「③ 服务程序」会自动把 %s 下下来并放好，不用手工导入" % name))
+                message += "。权重（模型参数）和程序是两样东西：" + how
+            else:
+                message += ("。权重（模型参数）和程序是两样东西：这个渠道没有公开可下载的服务程序，"
+                            "需要自己准备 %s，再用「② 导入整包」放进数据目录" % name)
     return {
         "ok": True, "engine": engine, "label": spec["label"], "phase": phase,
         "platform": "win" if os.name == "nt" else ("mac" if sys.platform == "darwin" else "linux"),
@@ -248,7 +629,12 @@ def status(cfg, engine: str) -> dict:
         "entry": str(entry) if entry else "", "python": _python(cfg, engine),
         "modelFiles": model_count, "modelBytes": model_bytes,
         "steps": steps, "message": message,
-        "pollAfterMs": 0 if phase in ("online", "not-installed") else 1500,
+        # 失败时把日志尾部直接交给面板：用户不用自己去翻文件
+        "logTail": log_tail if phase == "failed" else "",
+        "langModel": lang_model, "langModelReady": lang_ready,
+        # 上次启动用的推理设备：mps 还是 cpu，面板上直接看得到
+        "device": str(state.get("device") or ""),
+        "pollAfterMs": 0 if phase in ("online", "not-installed", "failed") else 1500,
     }
 
 
@@ -380,7 +766,7 @@ def install(cfg, engine: str, source: str = "", target: str = "auto", *,
     return out
 
 
-def start(cfg, engine: str, wait: float = 2.5) -> dict:
+def start(cfg, engine: str, wait: float = 5.0) -> dict:
     """启动常驻服务：只用插件自己找到的解释器 + 入口，不碰 qq-stack.sh。"""
     engine = str(engine or "").strip().lower()
     if engine not in ENGINE_SPEC:
@@ -391,11 +777,13 @@ def start(cfg, engine: str, wait: float = 2.5) -> dict:
         return cur
     entry = _find_entry(cfg, engine)
     if entry is None:
+        available, name, _source = _runtime_hint(cfg, engine)
+        how = ("点「③ 服务程序」会自动放好" if available
+               else "这个渠道没有可自动获取的服务程序，需要自己准备好 %s" % name)
         raise ValueError(
             "%s 还没有服务程序（%s）。权重只是模型参数，%d 端口得靠这个程序跑起来："
-            "点「③ 一键获取服务程序」直接下，或用「② 导入整包」把含 %s 的目录移动进 %s。"
-            % (spec["label"], spec["entryNames"][0], spec["port"],
-               spec["entryNames"][0], cur["dirs"]["runtime"]))
+            "%s，或用「② 导入整包」把含它的目录移动进 %s。"
+            % (spec["label"], name, spec["port"], how, cur["dirs"]["runtime"]))
     # 有程序 ≠ 能跑：api_v2.py 缺 torch 会秒退，先真 import 一遍再说人话
     try:
         from . import runtime_fetch as runtime_mod  # 延迟导入：它反过来依赖本模块
@@ -408,12 +796,30 @@ def start(cfg, engine: str, wait: float = 2.5) -> dict:
             "点「装依赖」补齐再启动，否则进程会秒退。"
             % (spec["label"], entry.name, "、".join(missing_deps)))
     python = _python(cfg, engine)
+    # 权重在 models/ 下，程序按自己的相对路径找：先接上，否则 FileNotFoundError 秒退
+    link_note = _link_pretrained(cfg, engine, entry)
+    if link_note:
+        raise ValueError(
+            "%s 的权重和程序对不上：%s。程序按 %s 里的相对路径找权重，"
+            "把权重放到 %s，或点「② 导入整包」让程序带着权重一起进来。"
+            % (spec["label"], link_note, "tts_infer.yaml", cur["dirs"]["models"]))
     dirs = fixed_dirs(cfg, engine)
     dirs["logs"].mkdir(parents=True, exist_ok=True)
     log = dirs["logs"] / ("local-tts-%s.log" % engine)
+    # 日志只 append，长期会涨到几百 MB；超过 5 MB 就轮转一次，老的留一份够排查了
+    try:
+        if log.is_file() and log.stat().st_size > 5 * 1024 * 1024:
+            log.replace(log.with_name(log.name + ".1"))
+    except OSError:
+        pass
     env = dict(os.environ)
-    env.update({"PYTHONUNBUFFERED": "1", "HF_HUB_OFFLINE": "1", "NO_PROXY": "*", "no_proxy": "*"})
-    cmd = [python, str(entry), "--port", str(cur["port"]), "--host", cur["host"]]
+    env.update({"PYTHONUNBUFFERED": "1", "HF_HUB_OFFLINE": "1", "NO_PROXY": "*", "no_proxy": "*",
+                # mps 上少量算子（部分 index / interpolate）还没实现，让它们回退 CPU 而不是报错
+                "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+                # 内置服务程序自己找权重：程序在 runtime/，权重在 models/，不靠写死路径
+                "DSH_TTS_ENGINE": engine, "DSH_TTS_MODELS": str(dirs["models"])})
+    device_cfg, device_note, device = _device_config(cfg, engine, entry, python)
+    cmd = [python, str(entry)] + _start_args(entry, cur["host"], cur["port"], spec, device_cfg)
     flags = {}
     if os.name == "nt":
         flags["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -424,16 +830,36 @@ def start(cfg, engine: str, wait: float = 2.5) -> dict:
                                 stdout=out, stderr=subprocess.STDOUT, **flags)
     payload = _load_state(cfg)
     payload[engine] = {"pid": proc.pid, "starting": True, "at": int(time.time()),
-                       "cmd": cmd, "log": str(log)}
+                       "cmd": cmd, "log": str(log), "lastError": "",
+                       "device": device, "deviceNote": device_note}
     _save_state(cfg, payload)
 
     deadline = time.time() + max(0.0, wait)
     while time.time() < deadline:
         if port_open(cur["host"], cur["port"]):
             break
+        # 用 poll() 而不是 _pid_alive()：进程退成僵尸时 kill(pid, 0) 仍然成功，
+        # 只有 poll() 能看出「它已经带着退出码结束了」。
+        if proc.poll() is not None:
+            break
         time.sleep(0.4)
+    if proc.poll() is not None and not port_open(cur["host"], cur["port"]):
+        # 秒退：参数不对（argparse exit 2）/ 缺依赖 / 权重路径不对。把日志尾部写进
+        # 状态，status() 会走「上次启动失败」那条，面板直接显示原因而不是「启动中」。
+        tail = _tail_log(log)
+        payload = _load_state(cfg)
+        row = payload.get(engine) or {}
+        row.update({"pid": 0, "starting": False,
+                    "lastError": tail or ("进程退出码 %s，日志是空的" % proc.returncode)})
+        payload[engine] = row
+        _save_state(cfg, payload)
+        result = status(cfg, engine)
+        result["ok"] = False
+        return result
     result = status(cfg, engine)
-    if not result["online"]:
+    if result["phase"] == "failed":
+        result["ok"] = False
+    elif not result["online"]:
         result["message"] = ("%s 已经拉起（PID %d），端口还没就绪。权重加载通常 1–3 分钟，"
                              "面板会自动轮询；日志在 %s" % (spec["label"], proc.pid, log))
     return result

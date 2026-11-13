@@ -12,6 +12,7 @@
 
 import io
 import json
+import socket
 import threading
 import zipfile
 from pathlib import Path
@@ -23,9 +24,21 @@ from services import local_tts as local_tts_mod
 from services import runtime_fetch as rf
 
 
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 @pytest.fixture()
 def cfg(tmp_path):
-    return config_mod.ServiceConfig(data_dir=tmp_path, token="rt")
+    c = config_mod.ServiceConfig(data_dir=tmp_path, token="rt")
+    # 必须指向随机空闲端口：默认 9881 可能正跑着开发机自己的 GPT-SoVITS，
+    # 那样 status 会直接报「已在线」，把要测的文案和启动逻辑全遮住。
+    c.tts = {"engine": "gptsovits",
+             "gptsovitsUrl": "http://127.0.0.1:%d" % _free_port(),
+             "qwenUrl": "http://127.0.0.1:%d" % _free_port()}
+    return c
 
 
 def make_zip(files: dict) -> bytes:
@@ -76,10 +89,17 @@ def test_plan_gptsovits_has_github_source(cfg):
     assert "gh-proxy.com" in p["urls"][0], "镜像优先（实测支持 206 续传）"
 
 
-def test_plan_qwen_says_no_public_repo(cfg):
+def test_plan_qwen_uses_builtin_runtime(cfg):
+    """qwen 的 9883 服务现在随插件分发：安装时自动放好，不再是「没有来源」。"""
     p = rf.plan(cfg, "qwen")
-    assert p["available"] is False
-    assert "导入整包" in p["message"]
+    assert p["available"] is True
+    assert p["source"] == "builtin"
+    assert p["entry"] == "qwen_tts_server.py"
+    assert p["installed"] is False
+    assert "内置" in p["message"]
+    # 不是嘴上说内置：文件必须真在插件目录里跟着一起发版
+    builtin = Path(rf.__file__).resolve().parent / "runtimes" / "qwen" / "qwen_tts_server.py"
+    assert builtin.is_file(), "内置服务程序应该随插件一起分发"
 
 
 # ------------------------------------------------------------------ 解压安全
@@ -221,7 +241,8 @@ def test_status_says_weights_are_not_the_program(cfg):
     assert "权重只是模型参数" in entry["hint"]
     assert "api_v2.py" in entry["hint"]
     assert "服务程序" in st["message"]
-    assert "一键获取服务程序" in st["message"]
+    assert "③ 服务程序" in st["message"]
+    assert "下下来并放好" in st["message"], "GPT-SoVITS 是下载，不是内置，别写成「不用下载」"
 
 
 def test_status_entry_turns_green_after_fetch(cfg, monkeypatch):
