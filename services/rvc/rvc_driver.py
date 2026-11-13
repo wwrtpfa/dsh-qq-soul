@@ -82,28 +82,90 @@ def detect_backend(engine_dir: str | Path) -> str:
     return ""
 
 
+def _free_gpu_cache() -> None:
+    """把 Metal / CUDA 的**缓存池**还给系统（只释放空闲缓存，不改任何结果）。
+
+    新版 Applio 在 Apple Silicon 上跑 MPS FP32，单块推理的临时张量会留在
+    Metal 的缓存池里。一首 190 s 的歌要连跑 7 块，实测常驻内存从 3.4 GB
+    涨到 8.2 GB；16 GB 的机器随即开始换页，块耗时从 4 s 掉到 27–77 s，
+    整首 **505 s**。每块结束清一次缓存，同一首歌 **39 s**（本机实测）。
+    """
+    try:
+        import torch
+    except Exception:  # noqa: BLE001 —— 没有 torch 时什么都不用做
+        return
+    try:
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        elif torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001 —— 清理失败不能影响这一句的成品
+        pass
+
+
+def _patch_mps_cache_release() -> None:
+    """给 Applio 的 ``Pipeline.voice_conversion`` 套一层「每块结束清缓存」。
+
+    这是唯一能落在**分块循环内部**的钩子：``run_infer_script`` 一次调用会把
+    整首歌切成多块，外面只能等整首结束才清一次，那时内存早就被换页拖垮了。
+    补丁幂等，重复调用不会层层包装。
+    """
+    try:
+        import torch
+        if not torch.backends.mps.is_available():
+            return
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        from rvc.infer import pipeline as applio_pipeline
+    except Exception:  # noqa: BLE001 —— 老版本 Applio 没这个模块就当没这回事
+        return
+    cls = getattr(applio_pipeline, "Pipeline", None)
+    original = getattr(cls, "voice_conversion", None)
+    if cls is None or original is None or getattr(original, "_qqsoul_release", False):
+        return
+
+    def voice_conversion(self, *args, **kwargs):
+        try:
+            return original(self, *args, **kwargs)
+        finally:
+            _free_gpu_cache()
+
+    voice_conversion._qqsoul_release = True
+    voice_conversion.__wrapped__ = original
+    cls.voice_conversion = voice_conversion
+
+
 def _applio_converter(engine_dir: str, model: str, index: str):
     """原版 Applio：``core.run_infer_script``。"""
     from core import run_infer_script  # noqa: PLC0415 —— 必须晚于 os.chdir / sys.path
 
+    #: MPS 上必须每块清一次缓存：否则一整首歌会把 Metal 缓存池撑到 8 GB，
+    #: 16 GB 的机器开始换页，越到后面的块越慢（见 ``_free_gpu_cache``）。
+    _patch_mps_cache_release()
+
     def convert(src: str, dst: str, pitch: int, index_rate: float, protect: float) -> None:
-        run_infer_script(
-            pitch=pitch,
-            index_rate=index_rate,
-            volume_envelope=1.0,
-            protect=protect,
-            f0_method="rmvpe",
-            input_path=src,
-            output_path=dst,
-            pth_path=model,
-            index_path=index,
-            f0_autotune=False,
-            f0_autotune_strength=1.0,
-            proposed_pitch=False,
-            proposed_pitch_threshold=155.0,
-            export_format="WAV",
-            embedder_model="contentvec",
-        )
+        try:
+            run_infer_script(
+                pitch=pitch,
+                index_rate=index_rate,
+                volume_envelope=1.0,
+                protect=protect,
+                f0_method="rmvpe",
+                input_path=src,
+                output_path=dst,
+                pth_path=model,
+                index_path=index,
+                f0_autotune=False,
+                f0_autotune_strength=1.0,
+                proposed_pitch=False,
+                proposed_pitch_threshold=155.0,
+                export_format="WAV",
+                embedder_model="contentvec",
+            )
+        finally:
+            #: 兜底：短音频只有一块、或 Pipeline 结构变了没套上补丁时也要清。
+            _free_gpu_cache()
 
     return convert
 
