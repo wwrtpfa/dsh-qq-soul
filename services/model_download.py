@@ -150,6 +150,10 @@ def _platform_ok(engine: str) -> bool:
     return sys.platform in DOWNLOAD_SPECS[engine]["platforms"]
 
 
+#: 给用户看的平台名：别把 ``win32`` / ``darwin`` 这种内部值直接印在面板上。
+_PLATFORM_NICKS = {"win32": "Windows", "win": "Windows", "darwin": "macOS", "linux": "Linux"}
+
+
 def _runtime_plan(cfg, engine: str) -> dict:
     """这一步只下权重，服务程序能不能顺带自动补齐，进页面就先说清楚。
 
@@ -172,17 +176,23 @@ def plan(cfg, engine: str) -> dict:
     dirs = local_tts_mod.fixed_dirs(cfg, engine)
     target = dirs["models"] / spec["folder"]
     available = _platform_ok(engine)
+    plat = "win" if os.name == "nt" else sys.platform
+    # 不能下的时候别再说「自己下好再导入」：MLX 权重到了 Windows 也没有后端能加载，
+    # 让人先花 1.6 GB 流量再发现用不了，是最伤人的那种提示。
+    message = ("可以从 %s 一键下载到固定目录" % spec["repo"]) if available else (
+        "这台是 %s，下不了：%s 是 MLX 格式，只能喂给 %s 的推理后端，拿下来也加载不了。"
+        "本地语音请选 GPT-SoVITS（PyTorch，这个平台能一键装好）"
+        % (_PLATFORM_NICKS.get(plat, plat), spec["label"],
+           "、".join(_PLATFORM_NICKS.get(p, p) for p in spec["platforms"])))
     return {
         "ok": True, "engine": engine, "label": spec["label"], "repo": spec["repo"],
-        "available": available, "platform": "win" if os.name == "nt" else sys.platform,
+        "available": available, "platform": plat,
         "sizeHint": spec["sizeHint"], "note": spec["note"],
         "profiles": list(spec["profiles"]),
         "target": str(target),
         "hosts": list(HF_HOSTS),
         "runtime": _runtime_plan(cfg, engine),
-        "message": ("可以从 %s 一键下载到固定目录" % spec["repo"]) if available
-                   else ("%s 只在 %s 上提供；这台机器请自己下好后用「选目录导入」（导入是移动，不会留两份）"
-                         % (spec["label"], "、".join(spec["platforms"]))),
+        "message": message,
     }
 
 

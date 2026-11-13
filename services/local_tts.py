@@ -39,6 +39,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -61,6 +62,17 @@ ENGINE_SPEC = {
         "fallbackArgs": ("-a", "{host}", "-p", "{port}"),
     },
 }
+
+#: 停服务先礼后兵：SIGTERM 等这么久，端口还占着再 SIGKILL 等这么久（测试会调小）。
+STOP_WAIT_S = 6.0
+STOP_FORCE_WAIT_S = 4.0
+
+#: 启停要串行：两次「一键启动」几乎同时进来时，两个 Popen 会抢同一个端口。
+#: 后起的那个绑定失败退出，却把先起的 PID 从状态文件里覆盖掉 —— 端口上还跑着
+#: 插件自己拉起的进程，可面板已经认不出它，只能一直说「外部启动的服务请自己关」，
+#: 「停掉它」点多少次都没用（用户现场）。start / stop 都在这个锁里改状态。
+_PROC_LOCK = threading.Lock()
+
 
 def _runtime_hint(cfg, engine: str) -> tuple[bool, str, str]:
     """(这个渠道能不能一键放好服务程序, 缺的那个脚本叫什么, 来源 builtin/repo)。
@@ -255,8 +267,10 @@ def _pid_alive(pid: int) -> bool:
             state = (out.stdout or "").strip()
             if state:
                 return not state.startswith("Z")
-            if out.returncode != 0:
-                return False
+            # ps 一行状态都没给（权限被拒 / 沙箱拦截 / 进程刚消失）：**不能**
+            # 据此判「已退出」。以前这句 return False 把所有活进程判成死的，
+            # 端口上还跑着服务，面板却说「没有插件启动过的进程」——「停掉它」
+            # 点多少次都没用。拿不到状态就退回下面的 os.kill(pid, 0)。
         except (OSError, subprocess.SubprocessError):
             pass
     try:
@@ -268,6 +282,192 @@ def _pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _rss_bytes(pid: int) -> int:
+    """这个进程真正占了多少内存（字节）；量不到就 0。
+
+    为什么不用 ``ps -o rss=``：MLX / Metal 的权重（千问 0.6B 实测 2.8 GB）算在
+    GPU 统一内存里，**RSS 只有 7 MB** —— 拿 RSS 报「释放了 7 MB」是假话。
+    macOS 用 ``footprint`` 的 ``phys_footprint``（含 GPU），量不到才退回 RSS。
+    """
+    if pid <= 0:
+        return 0
+    if os.name == "nt":
+        return 0  # Windows 没装 psutil 就老实返回 0，别编一个数字
+    if sys.platform == "darwin" and Path("/usr/bin/footprint").is_file():
+        try:
+            out = subprocess.run(["/usr/bin/footprint", "-p", str(pid)],
+                                 capture_output=True, text=True, timeout=20, check=False)
+            match = re.search(r"phys_footprint:\s*([\d.]+)\s*([KMGT]?)B", out.stdout or "")
+            if match:
+                scale = {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3, "T": 1024 ** 4}
+                return int(float(match.group(1)) * scale.get(match.group(2), 1))
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    ps = "/bin/ps" if Path("/bin/ps").is_file() else shutil.which("ps")
+    if not ps:
+        return 0
+    try:
+        out = subprocess.run([ps, "-o", "rss=", "-p", str(pid)],
+                             capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    try:
+        return max(0, int((out.stdout or "").strip() or 0)) * 1024
+    except ValueError:
+        return 0
+
+
+def _process_table() -> list[tuple[int, str]]:
+    """当前所有进程的 (PID, 命令行)。查不到就返回空表，绝不因此拦住启停。
+
+    macOS 的隐私 / 沙箱设置可能让 ``ps`` 直接报 ``operation not permitted``，
+    这时 ``pgrep -fl .`` 依然能拿到全表。空表会让「按入口脚本把端口后面的进程
+    认领回来」整条链失效，表现就是服务明明在跑却关不掉，所以要有第二条路。
+    """
+    out = None
+    if os.name == "nt":
+        try:
+            out = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                 "Get-CimInstance Win32_Process | ForEach-Object "
+                 "{ \"$($_.ProcessId) $($_.CommandLine)\" }"],
+                capture_output=True, text=True, timeout=15, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return []
+    else:
+        ps = "/bin/ps" if Path("/bin/ps").is_file() else shutil.which("ps")
+        if ps:
+            try:
+                out = subprocess.run([ps, "-axo", "pid=,command="],
+                                     capture_output=True, text=True, timeout=8, check=False)
+            except (OSError, subprocess.SubprocessError):
+                pass
+        if out is None or not (out.stdout or "").strip():
+            pgrep = "/usr/bin/pgrep" if Path("/usr/bin/pgrep").is_file() else shutil.which("pgrep")
+            if pgrep:
+                try:
+                    out = subprocess.run([pgrep, "-fl", "."],
+                                         capture_output=True, text=True, timeout=8, check=False)
+                except (OSError, subprocess.SubprocessError):
+                    return []
+    if out is None:
+        return []
+    rows: list[tuple[int, str]] = []
+    for line in (out.stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        head, _, command = line.partition(" ")
+        try:
+            pid = int(head)
+        except ValueError:
+            continue
+        rows.append((pid, command.strip()))
+    return rows
+
+
+def _lsof() -> str:
+    return "/usr/sbin/lsof" if Path("/usr/sbin/lsof").is_file() else (shutil.which("lsof") or "")
+
+
+def _listener_pids(port: int) -> set[int]:
+    """谁在 LISTEN 这个端口：直接问内核，不依赖 ps / 状态文件。
+
+    ``port_open()`` 只说「通不通」，不说「是谁」。状态文件里的 PID 被覆盖后，
+    只有拿到端口后面真实的 PID，才谈得上把它停掉。
+    """
+    if os.name == "nt" or port <= 0:
+        return set()
+    tool = _lsof()
+    if not tool:
+        return set()
+    try:
+        out = subprocess.run([tool, "-nP", "-iTCP:%d" % port, "-sTCP:LISTEN", "-t"],
+                             capture_output=True, text=True, timeout=6, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    return {int(x) for x in (out.stdout or "").split() if x.isdigit()}
+
+
+def _pid_cwd(pid: int) -> str:
+    """进程的工作目录：命令行读不到时，用它认是不是插件 runtime 里的程序。"""
+    if os.name == "nt" or pid <= 0:
+        return ""
+    tool = _lsof()
+    if not tool:
+        return ""
+    try:
+        out = subprocess.run([tool, "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                             capture_output=True, text=True, timeout=6, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    for line in (out.stdout or "").splitlines():
+        if line.startswith("n"):
+            return line[1:].strip()
+    return ""
+
+
+def _find_running_pid(cfg, engine: str, entry: Path | None = None) -> int:
+    """端口后面那个**其实是插件自己拉起**的进程：按入口脚本的绝对路径认人。
+
+    状态文件里的 PID 会在「重复启动抢端口」时丢失（先起的占着端口，后起的
+    绑定失败退出却覆盖了 PID）。以端口上的真实 PID 为准，再用命令行 / 工作目录
+    校验身份；外部自己起的服务、同名但别处的程序都不会被误认、误杀。
+    """
+    entry = entry if entry is not None else _find_entry(cfg, engine)
+    if entry is None:
+        return 0
+    wanted = {str(entry), str(entry.expanduser().resolve())}
+    me = os.getpid()
+    matched = [pid for pid, command in _process_table()
+               if pid > 0 and pid != me and command
+               and any(path in command for path in wanted)]
+    port = _host_port(_url(cfg, engine), ENGINE_SPEC[engine]["port"])[1]
+    listeners = _listener_pids(port)
+    if listeners:
+        # 端口上那个才是要停的：命令行对得上的优先，别误杀同目录里的残留进程。
+        for pid in matched:
+            if pid in listeners:
+                return pid
+        # ps / pgrep 都被限、命令行读不到：再看工作目录是不是插件的 runtime。
+        try:
+            runtime = str(fixed_dirs(cfg, engine)["runtime"].resolve())
+        except OSError:
+            runtime = ""
+        if runtime:
+            for pid in sorted(listeners - {me}):
+                cwd = _pid_cwd(pid)
+                if cwd and (cwd == runtime or cwd.startswith(runtime + os.sep)):
+                    return pid
+        return 0  # 端口后面不是我们的程序：不认、也不乱杀
+    return matched[0] if matched else 0
+
+
+def _signal_pid(pid: int, *, force: bool = False) -> None:
+    """给插件自己拉起的进程发终止信号；只在 PGID 确实是它自己时才整组收。"""
+    if pid <= 0:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       capture_output=True, timeout=8, check=False)
+        return
+    sig = signal.SIGKILL if force else signal.SIGTERM
+    try:
+        # start() 用了 start_new_session，正常情况 PGID == PID。不是的话
+        # 只杀这个 PID —— 拿错的 PGID 发 killpg 可能连自己一起收掉。
+        if os.getpgid(pid) == pid:
+            os.killpg(pid, sig)
+        else:
+            os.kill(pid, sig)
+    except ProcessLookupError:
+        pass
+    except (OSError, AttributeError):
+        try:
+            os.kill(pid, sig)
+        except (OSError, ProcessLookupError):
+            pass
 
 
 #: 日志里这几类行对「为什么没起来」毫无信息量，只占地方。
@@ -537,6 +737,24 @@ def status(cfg, engine: str) -> dict:
     online = port_open(host, port)
     state = _load_state(cfg).get(engine) or {}
     pid = int(state.get("pid") or 0)
+    dirty = False
+    if online and (pid <= 0 or not _pid_alive(pid)):
+        # 端口在听、状态里的 PID 却是死的 / 空的：多半是「两次一键启动抢端口」，
+        # 先起的进程占着端口，后起的绑定失败退出却覆盖了 PID。按端口后面的真实
+        # PID + 入口脚本路径把它认领回来，否则「停掉它」永远说不是插件启动的。
+        found = _find_running_pid(cfg, engine, entry)
+        if found:
+            pid = found
+            state["pid"] = found
+            state["starting"] = False
+            dirty = True
+    if online and state.get("starting"):
+        # 已经在线就别再挂着「启动中」：端口万一抖一下探测失败，旧标记会让面板
+        # 倒退回「正在启动」，再等 4 分钟才判失败。
+        state["starting"] = False
+        dirty = True
+    if dirty:
+        _save_state(cfg, {**_load_state(cfg), engine: state})
 
     steps = [
         # 「固定目录」只看模型目录：runtime 目录是「服务程序」那条的事，
@@ -767,6 +985,12 @@ def install(cfg, engine: str, source: str = "", target: str = "auto", *,
 
 
 def start(cfg, engine: str, wait: float = 5.0) -> dict:
+    """启动常驻服务（串行化）：两次点击不会各起一个进程抢同一个端口。"""
+    with _PROC_LOCK:
+        return _start_locked(cfg, engine, wait)
+
+
+def _start_locked(cfg, engine: str, wait: float = 5.0) -> dict:
     """启动常驻服务：只用插件自己找到的解释器 + 入口，不碰 qq-stack.sh。"""
     engine = str(engine or "").strip().lower()
     if engine not in ENGINE_SPEC:
@@ -774,6 +998,15 @@ def start(cfg, engine: str, wait: float = 5.0) -> dict:
     spec = ENGINE_SPEC[engine]
     cur = status(cfg, engine)
     if cur["online"]:
+        return cur
+    # 已经在起（端口还没开、进程还活着）就别再拉第二个：两个抢同一个端口，
+    # 后起的绑定失败退出却覆盖状态里的 PID，先起的就成「没人记得的」进程。
+    pid = int(cur.get("pid") or 0)
+    if cur.get("phase") == "starting" and pid and _pid_alive(pid):
+        cur["message"] = (
+            "%s 已经在启动了（PID %d，%d 端口还没就绪）。权重加载通常 1–3 分钟，"
+            "就绪后状态会自己变成「● 在线」，不用再点一次 —— 重复启动会让两个"
+            "进程抢同一个端口。" % (spec["label"], pid, spec["port"]))
         return cur
     entry = _find_entry(cfg, engine)
     if entry is None:
@@ -866,38 +1099,83 @@ def start(cfg, engine: str, wait: float = 5.0) -> dict:
 
 
 def stop(cfg, engine: str) -> dict:
-    """只停插件自己拉起来的那个进程，绝不 taskkill 别的 QQ / 服务。"""
+    """停本地服务（串行化，避免和 start 抢状态文件）。"""
+    with _PROC_LOCK:
+        return _stop_locked(cfg, engine)
+
+
+def _stop_locked(cfg, engine: str) -> dict:
+    """只停插件自己拉起来的那个进程，绝不 taskkill 别的 QQ / 服务。
+
+    状态里没记 PID（重复启动抢端口时会被后起的进程覆盖）也不代表关不掉：
+    端口后面那个进程如果就是 ``runtime`` 里的入口脚本，按路径认领回来再停。
+    """
     engine = str(engine or "").strip().lower()
     if engine not in ENGINE_SPEC:
         raise ValueError("不认识的本地 TTS 渠道：%s" % engine)
+    spec = ENGINE_SPEC[engine]
+    label = spec["label"]
+    row = _load_state(cfg).get(engine) or {}
+    pid = int(row.get("pid") or 0)
+    if not _pid_alive(pid):
+        # 状态里的 PID 已经死了（或压根没记）：端口后面那个如果还是我们的入口，
+        # 认领回来接着停；认不到就保留原值，最后按「端口关没关」如实说结果。
+        pid = _find_running_pid(cfg, engine) or pid
+    if not pid:
+        out = status(cfg, engine)
+        if out["online"]:
+            pids = sorted(_listener_pids(spec["port"]))
+            out["ok"] = False
+            out["listenerPids"] = pids
+            out["message"] = (
+                "%d 端口上还有进程在跑（PID %s），但认不出是不是插件启动的 %s。"
+                "插件不会去杀不认识的进程；要停掉它，在终端执行 kill %s，"
+                "或到活动监视器里结束这个 PID。"
+                % (spec["port"], "、".join(str(p) for p in pids) or "读不到",
+                   label, " ".join(str(p) for p in pids) or "<PID>"))
+            return out
+        return {**out, "message": "没有插件启动过的 %s 进程；外部启动的服务请自己关" % label}
+    if pid == os.getpid():
+        return {**status(cfg, engine), "ok": False, "message": "认错进程了：不会去停插件自己"}
+
+    #: 杀之前先量一下它占了多少（权重常驻，动辄 1–3 GB），停完报给面板
+    freed = _rss_bytes(pid)
+    _signal_pid(pid)
+    host, port = _host_port(_url(cfg, engine), spec["port"])
+    deadline = time.time() + STOP_WAIT_S
+    while time.time() < deadline and (_pid_alive(pid) or port_open(host, port)):
+        time.sleep(0.1)
+    if _pid_alive(pid) or port_open(host, port):
+        # SIGTERM 不认（有的服务只理 SIGINT / 卡在退出钩子）：别让按钮点了没反应
+        _signal_pid(pid, force=True)
+        deadline = time.time() + STOP_FORCE_WAIT_S
+        while time.time() < deadline and (_pid_alive(pid) or port_open(host, port)):
+            time.sleep(0.1)
+
+    # 端口还回来了就算停掉：别让 _pid_alive 一票否决。子进程退成僵尸时
+    # os.kill(pid, 0) 仍然成功（ps 被权限拦住时读不到 Z 状态），以前会把
+    # 明明已经关掉的服务报成「没能停掉」，用户就只能一遍遍再点。
+    gone = not port_open(host, port) and pid not in _listener_pids(port)
     payload = _load_state(cfg)
     row = payload.get(engine) or {}
-    pid = int(row.get("pid") or 0)
-    if not pid:
-        return {**status(cfg, engine), "message": "没有插件启动过的 %s 进程；外部启动的服务请自己关" % ENGINE_SPEC[engine]["label"]}
-    try:
-        if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                           capture_output=True, timeout=8)
-        else:
-            # start() 用了 start_new_session：连它自己拉起的子进程一起收，别留孤儿占着端口
-            try:
-                os.killpg(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass  # 已经自己退了，不用再报「没停掉」
-            except (OSError, AttributeError):
-                os.kill(pid, signal.SIGTERM)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {**status(cfg, engine), "message": "没停掉 PID %d：%s" % (pid, exc)}
     row["starting"] = False
-    row["pid"] = 0  # 别让面板继续显示一个已经不存在的 PID
+    row["pid"] = 0 if gone else pid  # 没停掉就留着 PID，下一次点还能接着停
     payload[engine] = row
     _save_state(cfg, payload)
-    # 端口关闭有几百毫秒延迟，等一下再回状态，否则徽标还挂在「● 在线」
-    host, port = _host_port(_url(cfg, engine), ENGINE_SPEC[engine]["port"])
-    deadline = time.time() + 2.0
-    while time.time() < deadline and port_open(host, port):
-        time.sleep(0.1)
     out = status(cfg, engine)
-    out["message"] = "已停掉插件启动的 %s 进程（PID %d）" % (ENGINE_SPEC[engine]["label"], pid)
+    if not gone:
+        out["ok"] = False
+        out["freedBytes"] = 0
+        others = sorted(p for p in _listener_pids(port) if p != pid)
+        out["listenerPids"] = sorted(_listener_pids(port))
+        out["message"] = ("%s 没能停掉：%d 端口还占着（PID %d%s）。"
+                          "可以稍等再点一次，或在终端执行 kill %s，或在「活动监视器」里结束它。"
+                          % (label, port, pid,
+                             ("，端口上还有 PID %s" % "、".join(str(p) for p in others)) if others else "",
+                             " ".join(str(p) for p in out["listenerPids"]) or str(pid)))
+        return out
+    out["message"] = "已停掉插件启动的 %s 进程（PID %d）" % (label, pid)
+    #: 主人问过「切渠道后台内存到底释放没有」——把真话量出来给他看。
+    #: 内存是杀进程时由系统回收的，这里只是把**停之前**占了多少报出来。
+    out["freedBytes"] = freed
     return out

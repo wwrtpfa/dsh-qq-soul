@@ -480,7 +480,13 @@ def test_manifest_failure_does_not_start_a_job(monkeypatch, cfg):
 def test_plan_marks_qwen_unavailable_on_windows(monkeypatch, cfg):
     monkeypatch.setattr(md.sys, "platform", "win32")
     q = md.plan(cfg, "qwen")
-    assert q["available"] is False and "导入" in q["message"]
+    assert q["available"] is False
+    # 以前写的是「自己下好再选目录导入」——MLX 权重到 Windows 没有后端能加载，
+    # 这句话会让人白花 1.6 GB 流量。现在必须直说下不了、并指向能跑的渠道。
+    assert "下不了" in q["message"] and "MLX" in q["message"]
+    assert "GPT-SoVITS" in q["message"]
+    assert "导入" not in q["message"]
+    assert "win32" not in q["message"] and "Windows" in q["message"], "别把内部平台值印给用户看"
     g = md.plan(cfg, "gptsovits")
     assert g["available"] is True, "GPT-SoVITS 权重是双端可下的"
     assert "GPT-SoVITS-pretrained" in g["target"]

@@ -87,3 +87,11 @@ test('进度与最近成品：没作业时不占位置，没成品时给一句�
   const latest = JSON.stringify(panelTest.LatestSong({ toast() {} }))
   assert.match(latest, /还没有成品/)
 })
+
+test('所有音频列表：可暂停 / 可单条删，不再留原生 <audio controls>', () => {
+  assert.match(source, /function AudioPlayer\(/)
+  assert.match(source, /useResList\('\/res\/audio'\)/)
+  assert.doesNotMatch(source, /controls: true/, '原生控件挤在 180px 里点不到暂停，别再留')
+  const uses = source.match(/h\(AudioPlayer, \{/g) || []
+  assert.ok(uses.length >= 5, '参考音频 / 扫描列表 / 试听 / 最近一首 / 已翻唱 / 所有音频都要用统一播放器')
+})

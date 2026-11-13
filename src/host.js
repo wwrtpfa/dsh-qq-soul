@@ -45,6 +45,8 @@ import { diagnose, applyFix, portOfUrl, DEFAULT_WS_PORT } from './setup/doctor.j
 import { startQQ, planQQLaunch } from './setup/launcher.js'
 import { createOpsStore } from './features/ops-store.js'
 import { registerResourceRoutes } from './resources/routes.js'
+import { createServiceClient } from './service/client.js'
+import { createGatewayReporter } from './service/gateway-reporter.js'
 
 export const name = 'aurabot'
 export const inject = ['agents', 'sessions', 'webServer', 'timer', 'workspaceRegistry', 'attachments', 'systemPrompt', 'llm']
@@ -87,6 +89,7 @@ export function apply(ctx) {
       if (onebotState === 'connected') onebot.restart()
     }
     secrets()
+    syncGatewayReport()
     if (bridge && before.bridge.dshTools !== cfg.bridge.dshTools) bridge.refresh()
     if (mods && (JSON.stringify(before.modules) !== JSON.stringify(cfg.modules) || before.safeMode !== cfg.safeMode)) mods.sync().catch(() => {})
     mods?.emit('config', cfg, before)
@@ -145,6 +148,14 @@ export function apply(ctx) {
   let hub = null
   let dangerGuard = null // 危险命令确认（security.dangerConfirm 开着才生效）
   let approvalRelay = null // DSH 要授权时在 QQ 私聊问主人（approvalViaQQ 开着才生效）
+  let gatewayReporter = null // 把网关状态上报给 service 的五步自检（service.enabled 开着才跑）
+  let loginUin = '' // 核对到的登录号，上报时要用；断开就清掉
+  /** service 开关变了就立刻跟上，不用等下一轮看门狗。 */
+  function syncGatewayReport() {
+    if (!gatewayReporter) return
+    if (cfg.service?.enabled) gatewayReporter.start()
+    else gatewayReporter.stop()
+  }
   async function checkLogin() {
     verifying = true
     pendingEvents = []
@@ -164,12 +175,16 @@ export function apply(ctx) {
       }
       if (await snowluma.confirmLogin(uin)) {
         loginOk = true
+        loginUin = uin
         wrongAccount = ''
+        // 核对通过就立刻上报一次，别让自检等下一轮 15 秒
+        if (gatewayReporter?.running()) gatewayReporter.reportOnce().catch(() => {})
         // 把核对期间攒下的补上（按到达顺序）
         const queued = pendingEvents
         pendingEvents = []
         for (const ev of queued) handleEvent(ev)
       } else {
+        loginUin = uin
         wrongAccount = uin
         pendingEvents = []
         onebot.stop()
@@ -210,7 +225,7 @@ export function apply(ctx) {
     log: logger.child('onebot'),
     onState: (s, d) => {
       onebotState = s
-      if (s !== 'connected') { loginOk = false; pendingEvents = [] }
+      if (s !== 'connected') { loginOk = false; loginUin = ''; pendingEvents = [] }
       else checkLogin().catch((error) => log.warn('核对登录号出错：', error.message))
       logger.child('onebot').info(`QQ 网关：${s}${d ? '（' + d + '）' : ''}`)
       mods?.emit('onebot/state', s)
@@ -227,6 +242,19 @@ export function apply(ctx) {
       handleEvent(ev)
     },
   })
+  // 网关状态只有插件进程知道（连没连上、登录的是不是机器人号）。不主动上报，
+  // service 的五步自检第 3 步就只能一直停在「插件还没上报网关状态」。
+  gatewayReporter = createGatewayReporter({
+    client: createServiceClient({ getConfig, log: logger.child('service') }),
+    // 只挑上报要用的字段，token 压根不进这个对象；地址用真连的那条（没填时走本机默认）
+    getConfig: () => ({ botQQ: cfg.botQQ, snowluma: { wsUrl: endpoint().wsUrl } }),
+    getState: () => onebotState,
+    getLogin: () => (loginUin ? { uin: loginUin } : null),
+  })
+  ctx.effect(() => {
+    syncGatewayReport()
+    return () => gatewayReporter.stop()
+  }, 'aurabot: 网关上报')
   const groupRoles = createGroupRoles({ onebot, getConfig, log: logger.child('chat') })
   const local = createLocal({ getConfig, log: logger })
   const mutes = createMutes()

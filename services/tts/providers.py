@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -17,6 +18,18 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+
+def _looks_like_edge_voice(voice: str) -> bool:
+    """这个 ``voice`` 是 edge-tts 的音色 id 吗（``zh-CN-XiaoyiNeural``）。
+
+    全局说话配置里的 ``tts.voice`` 是给 edge 用的；切到本地千问后同一个字段还在，
+    传过去会让 Base 权重直接 400（它没有预置音色）。判断出来就别传。
+    """
+    text = str(voice or "").strip()
+    if not text:
+        return False
+    return text.endswith("Neural") or bool(re.match(r"^[a-z]{2,3}-[A-Za-z]{2,4}-", text))
 
 
 class ServiceError(Exception):
@@ -188,13 +201,7 @@ class EdgeProvider(BaseProvider):
     suffix = ".mp3"
 
     def _exe(self) -> str:
-        explicit = str(self.cfg.paths.get("edgeTts") or "").strip()
-        if explicit:
-            return explicit
-        bundled = self.cfg.applio_dir() / ".venv" / ("Scripts/edge-tts.exe" if os.name == "nt" else "bin/edge-tts")
-        if bundled.is_file():
-            return str(bundled)
-        return shutil.which("edge-tts") or ""
+        return self.cfg.edge_tts()
 
     def synth(self, text: str, out: Path, *, voice: str = "") -> Path:
         exe = self._exe()
@@ -350,6 +357,23 @@ class GPTSoVITSProvider(BaseProvider):
         return Path(out)
 
 
+def qwen_endpoint(cfg) -> str:
+    """千问常驻服务地址：面板填了就用，没填只在「插件自己装过 + 9883 真在跑」时自动认。
+
+    以前这段判断长在 ``synth`` 里，体检那边只能自己另写一套，于是出现「服务明明
+    在线却报没选模型」。体检和真合成共用它，口径就不会再分叉。
+    """
+    url = str(cfg.tts.get("qwenUrl") or "").strip()
+    if url:
+        return url
+    # 不能无条件探测别人的 9883（测试环境 / 别的实例会误伤）。
+    if (cfg.installed.get("local-tts-qwen") or cfg.paths.get("qwenModel")
+            or cfg.paths.get("qwenServer")):
+        if _port_alive("127.0.0.1", 9883):
+            return "http://127.0.0.1:9883"
+    return ""
+
+
 class QwenProvider(BaseProvider):
     """千问 3-TTS MLX：选模型目录加载，或连已跑着的常驻服务。
 
@@ -362,25 +386,32 @@ class QwenProvider(BaseProvider):
     def synth(self, text: str, out: Path, *, voice: str = "") -> Path:
         state = self.cfg.load_state()
         loaded = next((row for row in state.get("resident", []) if row.get("engine") == "qwen"), None)
-        url = str(self.cfg.tts.get("qwenUrl") or "").strip()
-        # 面板没填地址时，只有「插件自己装过、且 9883 真的在跑」才自动用它：
-        # 以前这里直接回落到 driver，于是「服务明明在线」却报「还没选模型目录」；
-        # 但也不能无条件探测别人的 9883（测试环境 / 别的实例会误伤）。
-        if not url and (self.cfg.installed.get("local-tts-qwen")
-                        or self.cfg.paths.get("qwenModel")
-                        or self.cfg.paths.get("qwenServer")):
-            if _port_alive("127.0.0.1", 9883):
-                url = "http://127.0.0.1:9883"
+        url = qwen_endpoint(self.cfg)
         if url:
-            body = {"text": text, "voice": voice}
-            # Base 权重只做声音克隆：不给参考音频它没有音色可用，服务端会 400。
+            # Base 权重只做声音克隆：不给参考音频它没有音色可用。
             # 复用语音页那组「参考音频 / 逐字稿」，用户只填一次，两个本地渠道都能用。
             ref_audio = str(self.cfg.tts.get("refAudio") or self.cfg.paths.get("refAudio") or "").strip()
+            ref_text = str(self.cfg.tts.get("refText") or "").strip()
+            body: dict = {"text": text}
+            #: ``voice`` 来自全局说话配置，多半是 edge-tts 的音色 id（``zh-CN-XiaoyiNeural``）。
+            #: 把它传给千问 Base 权重会直接 400（「Base models have no built-in preset
+            #: voices」），而且把「克隆模式」也顶掉了。克隆模式下 voice 一律不传；
+            #: 只有真填了千问自己的说话人（CustomVoice 变体）才带过去。
             if ref_audio:
                 body["ref_audio"] = ref_audio
-                ref_text = str(self.cfg.tts.get("refText") or "").strip()
                 if ref_text:
                     body["ref_text"] = ref_text
+                if voice and not _looks_like_edge_voice(voice):
+                    body["voice"] = voice
+            elif voice and not _looks_like_edge_voice(voice):
+                body["voice"] = voice
+            else:
+                raise ServiceError(
+                    "QWEN_NEEDS_REF",
+                    "千问 3-TTS 的 Base 权重没有预置音色，只能「照着你给的参考音频克隆」。"
+                    "请在下面的「参考音频」里选一段 3–10 秒的干净人声（和 GPT-SoVITS 共用同一个），"
+                    "填好后这句就能出声；想听现成的标准音色，用「微软 edge-tts」那条渠道。",
+                )
             req = urllib.request.Request(
                 url.rstrip("/") + "/synth", data=json.dumps(body).encode("utf-8"),
                 method="POST", headers={"Content-Type": "application/json"},

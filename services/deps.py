@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .config import ServiceConfig
+from .tts.providers import _port_alive, qwen_endpoint
 
 
 def _row(id_: str, label: str, ok: bool, detail: str, fix: str) -> dict:
@@ -92,10 +93,7 @@ def check(cfg: ServiceConfig) -> dict:
                      bool(pth) and Path(pth).is_file() and bool(index) and Path(index).is_file(),
                      pth or "未配置", "在「模型」页选模型目录加载"))
 
-    edge = str(cfg.paths.get("edgeTts") or "")
-    if not edge:
-        bundled = cfg.applio_dir() / ".venv" / ("Scripts/edge-tts.exe" if os.name == "nt" else "bin/edge-tts")
-        edge = str(bundled) if bundled.is_file() else (shutil.which("edge-tts") or "")
+    edge = cfg.edge_tts()
     rows.append(_row("edge-tts", "edge-tts（默认零下载渠道）", bool(edge), edge or "未找到",
                      "在引擎 venv 里 pip install edge-tts，或改用 Breeze 远程"))
 
@@ -104,28 +102,34 @@ def check(cfg: ServiceConfig) -> dict:
                      "已填" if os.environ.get("BREEZE_API_KEY") else "未填",
                      "可选：填 key 就能不装任何本地模型"))
 
+    #: 千问两条路都算就绪：常驻服务在跑，或 driver + 解释器 + 模型齐全（合成时现拉）。
+    #: 以前 Mac 只测 paths.qwenPython，服务明明在线却因为一条早删掉的旧路径报红；
+    #: 只有 Windows 分支看端口。现在两个平台同一口径，地址判断直接复用真合成那套。
+    endpoint = qwen_endpoint(cfg)
+    raw = endpoint or "http://127.0.0.1:9883"
+    parsed = urlparse(raw if "://" in raw else "http://" + raw)
+    host, port = parsed.hostname or "127.0.0.1", parsed.port or 9883
+    up = bool(endpoint) and _port_alive(host, port, timeout=0.4)
     qwen_python = str(cfg.paths.get("qwenPython") or "").strip()
-    if os.name == "nt":
-        #: Windows 走本机 9883 常驻服务（QwenProvider 的 qwenUrl 分支）；
-        #: MLX 只是 macOS 的一种实现，这里按端口体检，不再写「不适用」。
-        import socket
-        from urllib.parse import urlparse
-
-        raw = str(cfg.tts.get("qwenUrl") or "http://127.0.0.1:9883")
-        parsed = urlparse(raw if "://" in raw else "http://" + raw)
-        host, port = parsed.hostname or "127.0.0.1", parsed.port or 9883
-        try:
-            with socket.create_connection((host, port), timeout=0.4):
-                up = True
-        except OSError:
-            up = False
-        rows.append(_row("qwen", "千问 3-TTS 常驻服务（Mac / Windows）", up,
-                         "%s:%d %s" % (host, port, "在跑" if up else "没起"),
-                         "接本机 9883 服务即可，不需要 MLX / 模型目录"))
+    qwen_driver = str(cfg.paths.get("qwenDriver") or "").strip()
+    qwen_model = str(cfg.paths.get("qwenModel") or "").strip()
+    local_ready = (bool(qwen_python) and Path(qwen_python).is_file()
+                   and bool(qwen_driver) and Path(qwen_driver).is_file()
+                   and bool(qwen_model) and Path(qwen_model).is_dir())
+    if up:
+        detail = "%s:%d 在跑" % (host, port)
+    elif local_ready:
+        detail = "服务没起，模型已就位：%s" % qwen_model
     else:
-        rows.append(_row("qwen", "千问 3-TTS MLX（仅 Mac，可选）",
-                         bool(qwen_python) and Path(qwen_python).is_file(),
-                         qwen_python or "未配置", "选模型目录加载，或连已跑着的服务"))
+        detail = "%s:%d 没起，也没选模型目录" % (host, port)
+    rows.append(_row("qwen", "千问 3-TTS（常驻服务 / 本地模型，可选）", up or local_ready, detail,
+                     "在「语音」页点「一键启动」把服务带起来，或选模型目录加载"))
 
-    return {"items": rows, "ok": all(row["ok"] for row in rows if row["id"] not in {"breeze-key", "qwen"}),
-            "optional": ["breeze-key", "qwen"]}
+    #: edge-tts 只是 edge 渠道的依赖，不是全局必需：选了千问 / Breeze 等渠道时
+    #: 它没装不该把整页体检拖红。可选清单只有这一个来源，路由不再另写一份。
+    optional = ["breeze-key", "qwen"]
+    if str(cfg.tts_engine or "edge").strip().lower() != "edge":
+        optional.append("edge-tts")
+    return {"items": rows,
+            "ok": all(row["ok"] for row in rows if row["id"] not in set(optional)),
+            "optional": optional}

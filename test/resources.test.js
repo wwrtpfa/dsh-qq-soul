@@ -11,6 +11,9 @@ import { join } from 'node:path'
 
 const tmp = mkdtempSync(join(tmpdir(), 'qqsoul-res-'))
 process.env.AURABOT_DATA_DIR = join(tmp, 'data')
+// 服务数据目录是按 DSH_HOME 推的。不隔离的话单测会读到本机真实装好的
+// qqsoul/service（参考音频、模型都落那儿），既污染用户数据又让断言乱飘。
+process.env.DSH_HOME = tmp
 const { createResources } = await import('../src/resources/library.js')
 
 const fakePth = () => {

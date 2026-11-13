@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from services import config as config_mod
+from services import deps as deps_mod
 from services import selfcheck
 from services import server
 from services.gateway import GatewayMonitor
@@ -173,6 +174,59 @@ def test_deep自检没搜到时把原因说出来_而不是只说看日志(tmp_p
     row = result["steps"][4]
     assert row["ok"] is False and row["code"] == "SONG_FAILED"
     assert "没搜到《步步》" in row["message"], "失败原因要带出来，人才知道下一步改什么"
+
+
+# ------------------------------------------- 依赖体检按渠道判定（2026-11-13 真实误报）
+# 事故：用千问本地渠道、edge-tts 没装，「依赖体检」恒红。edge-tts 只是 edge 渠道的
+# 依赖，不是全局必需；optional 之前在 deps.check 与 /deps/check 两处各硬编码一份。
+
+def test_选千问时edge_tts算可选(tmp_path):
+    cfg = config_mod.ServiceConfig(data_dir=tmp_path)
+    cfg.tts_engine = "qwen"
+    assert "edge-tts" in deps_mod.check(cfg)["optional"]
+
+
+def test_选edge时edge_tts仍是必需(tmp_path):
+    cfg = config_mod.ServiceConfig(data_dir=tmp_path)
+    cfg.tts_engine = "edge"
+    assert "edge-tts" not in deps_mod.check(cfg)["optional"]
+
+
+def test_千问行认在跑的本机服务_而不是只看解释器路径(tmp_path):
+    """插件自管的千问跑在 runtime venv 里，cfg.paths.qwenPython 常常是空的。
+    只查那个路径会把「服务明明在线」报成未配置。"""
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        probe.listen(1)
+        cfg = config_mod.ServiceConfig(data_dir=tmp_path)
+        cfg.tts["qwenUrl"] = "http://127.0.0.1:%d" % probe.getsockname()[1]
+        row = next(r for r in deps_mod.check(cfg)["items"] if r["id"] == "qwen")
+        assert row["ok"] is True, row
+
+
+def test_路由_体检按报告里的可选清单判定(tmp_path):
+    """/deps/check 不能自己另写一份 optional：报告说可选就得算可选。"""
+    cfg = config_mod.ServiceConfig(data_dir=tmp_path, token="sc-token")
+    ctx = server.ServiceContext(
+        cfg, jobs=JobStore(tmp_path), registry=ModelRegistry(cfg, clock=lambda: 0.0),
+        tts=StubTTS(cfg), song=StubSong(cfg),
+        deps=lambda: {"items": [
+            {"id": "ffmpeg", "label": "ffmpeg", "ok": True, "status": "ok", "detail": "ok", "fix": ""},
+            {"id": "edge-tts", "label": "edge-tts", "ok": False, "status": "missing",
+             "detail": "未找到", "fix": "pip install edge-tts"},
+        ], "ok": True, "optional": ["edge-tts"]},
+    )
+    httpd, _ = server.serve(ctx, port=0, quiet=True)
+    base = "http://127.0.0.1:%d" % httpd.server_address[1]
+    try:
+        code, body = _call(base, "GET", "/deps/check")
+        assert code == 200 and body["ok"] is True
+        assert "edge-tts" in body["optional"]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 # ---------------------------------------------------------------- HTTP 路由

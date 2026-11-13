@@ -144,5 +144,4 @@ def test_engine_root_does_not_scan_more_than_one_level(tmp_path):
     """只在安装根下看一层：再深就是别人家的目录，扫下去会慢且易误判。"""
     deep = tmp_path / "root" / "a" / "b"
     _touch(deep / "core.py")
-    (tmp_path / "root").mkdir(exist_ok=True)
     assert engine_root(tmp_path / "root") == tmp_path / "root"

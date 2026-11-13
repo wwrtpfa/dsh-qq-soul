@@ -227,11 +227,18 @@ class ServiceContext:
             os.environ.setdefault("QQSOUL_FAST_RVC_DIR", str(cfg.applio_dir()))
 
 
-def _deps_items(ctx: ServiceContext) -> list[dict]:
+def _deps_report(ctx: ServiceContext) -> dict:
+    """体检报告归一成 dict。可选清单以 deps.check() 为准，路由不再硬编码第二份。"""
     result = ctx.deps()
     if isinstance(result, dict):
-        return list(result.get("items", []))
-    return list(result or [])
+        return {"items": list(result.get("items") or []),
+                "optional": list(result.get("optional") or [])}
+    #: 老式桩只给一行行 items，没有可选清单
+    return {"items": list(result or []), "optional": ["breeze-key", "qwen"]}
+
+
+def _deps_items(ctx: ServiceContext) -> list[dict]:
+    return _deps_report(ctx)["items"]
 
 
 def _catalog_items(ctx: ServiceContext) -> list[dict]:
@@ -243,6 +250,16 @@ def _catalog_items(ctx: ServiceContext) -> list[dict]:
 
 #: 本地常驻服务：一个渠道一套进程，各自几 GB 内存 + 一个端口。
 LOCAL_TTS_ENGINES = ("gptsovits", "qwen")
+
+
+def _size_text(num: int) -> str:
+    """字节数说成人话（面板上「释放了多少内存」用）。"""
+    value = float(max(0, int(num or 0)))
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return ("%d %s" % (value, unit)) if unit == "B" else ("%.1f %s" % (value, unit))
+        value /= 1024.0
+    return "%.1f GB" % value
 
 
 def _release_local_engines(cfg, keep: str) -> list[str]:
@@ -270,7 +287,11 @@ def _release_local_engines(cfg, keep: str) -> list[str]:
             notes.append("%s 没停掉（%s），它可能还占着 %d 端口" % (label, exc, port))
             continue
         if int(out.get("pid") or 0) == 0 and not out.get("online"):
-            notes.append("%s 已停，%d 端口已释放" % (label, port))
+            note = "%s 已停，%d 端口已释放" % (label, port)
+            freed = int(out.get("freedBytes") or 0)
+            if freed > 0:
+                note += "，内存还回约 %s" % _size_text(freed)
+            notes.append(note)
         else:
             notes.append("%s 还在跑：%s" % (label, out.get("message") or "没停掉"))
     return notes
@@ -817,9 +838,9 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
             if method == "GET" and path == "/models/catalog":                return self._json(200, {"ok": True, "items": _catalog_items(ctx)})
 
             if method == "GET" and path == "/deps/check":
-                items = _deps_items(ctx)
-                #: 可选的 Breeze key / 千问不该让整页体检亮红；与 deps.check() 同口径
-                optional = {"breeze-key", "qwen"}
+                report = _deps_report(ctx)
+                items = report["items"]
+                optional = set(report["optional"])
                 required = [row for row in items if row.get("id") not in optional]
                 return self._json(200, {"ok": all(row.get("ok") for row in required),
                                         "items": items, "optional": sorted(optional)})

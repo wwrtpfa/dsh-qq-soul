@@ -7,7 +7,7 @@
 //   ③ 所有 path 参数都要过 inside()，不让人用 ../ 读到受管目录外面去。
 
 import {
-  readdirSync, statSync, existsSync, mkdirSync, writeFileSync,
+  readdirSync, statSync, existsSync, mkdirSync, writeFileSync, readFileSync,
   copyFileSync, rmSync, renameSync, openSync, readSync, closeSync,
 } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -112,16 +112,27 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
     const svc = serviceDataDir()
     // 音频服务开着时，翻唱缓存写在 service 的 music/ 里；关闭后才退回插件自己的 song/
     const music = svc ? join(svc, 'music') : join(songRoot, 'music')
+    const pluginModels = dataDir('models')
+    // 一键安装下载的千问 / GPT-SoVITS 权重落在**音频服务**的 models/ 下（见 services/config.py
+    // 的 data_dir），不是插件自己的 models/tts。目录页以前指错地方，用户看到「不存在」，
+    // 明明已经下了两个 TTS 还是以为没装上。这里把真目录收口，服务没装才退回插件那份。
+    const svcModels = svc ? join(svc, 'models') : ''
+    const modelHome = svcModels || pluginModels
     return {
       data,
       songRoot,
       music,
-      refs: dataDir('refs'),
+      // 参考音频的真源是服务读的那份 refs/；服务没装时才用插件自己的。
+      refs: svc ? join(svc, 'refs') : dataDir('refs'),
+      localRefs: dataDir('refs'),
       // 语音试听：和「语音」页试听、只读大屏的试听目录是同一个地方（见 voice/out.js）
       ttsOut: voiceOutDir(conf()),
-      models: dataDir('models'),
-      rvc: join(dataDir('models'), 'rvc'),
-      tts: join(dataDir('models'), 'tts'),
+      models: pluginModels,
+      svcModels,
+      qwen: join(modelHome, 'qwen'),
+      gptsovits: join(modelHome, 'gptsovits'),
+      rvc: join(pluginModels, 'rvc'),
+      tts: join(pluginModels, 'tts'),
       songs: join(songRoot, 'models'),
       qqOut: String(rcfg().qqOutDir || join(homedir(), 'Downloads')),
       service: svc,
@@ -130,6 +141,7 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
 
   const refDirs = () => uniq([
     roots().refs,
+    roots().localRefs,
     ...(Array.isArray(rcfg().refDirs) ? rcfg().refDirs : []),
     roots().service ? join(roots().service, 'refs') : '',
     ...legacyRefDirs(),
@@ -153,26 +165,35 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
 
   const ttsDirs = () => uniq([
     roots().tts,
-    roots().service ? join(roots().service, 'models', 'qwen') : '',
-    roots().service ? join(roots().service, 'models', 'gptsovits') : '',
+    roots().qwen,
+    roots().gptsovits,
     ...(Array.isArray(rcfg().modelDirs) ? rcfg().modelDirs : []),
   ])
 
   /** 受管目录：删除 / 改名只在这里面做。 */
-  // 音色库目录（服务的 models/rvc 或插件自己的）也算受管：改名 / 删除只在这里面做
-  const managedRoots = () => uniq([roots().data, roots().songRoot, roots().music, rvcLibrary()])
+  // 服务的 refs/ 现在也是受管目录（导入、改名、单文件删除都落这儿）；只加 refs 本身，
+  // 不加整个 service，否则「库外 RVC 音色」会被误判成受管、改名直接动到服务里的原文件。
+  const managedRoots = () => uniq([roots().data, roots().songRoot, roots().music, rvcLibrary(), roots().refs])
 
   const canTouch = (p) => managedRoots().some((r) => inside(r, p))
 
   // ---------------------------------------------------------------- 目录
   function paths() {
     const r = roots()
+    // 「TTS 模型」是大屏那一套的标签，别删；但它现在指向**真的装了权重的**总目录，
+    // 下面再按引擎拆两行，用户一眼能看到「我不是下了两个 TTS 吗」。
+    const ttsHome = r.svcModels || r.models
     const rows = [
       ['数据根目录', r.data, '插件自己写的一切都在这下面'],
-      ['参考音频', r.refs, '3–10 秒干净人声，本地 TTS 的音色就是它'],
+      ['参考音频', r.refs, '3–10 秒干净人声，本地 TTS 的音色就是它；服务读这里，面板导入也落这里'],
+      // 旧目录 / 手动导入目录只有真的存在才列，别再给用户看一排「不存在」
+      ...(r.refs !== r.localRefs && statOf(r.localRefs).exists ? [['参考音频（旧目录）', r.localRefs, '老版本插件自己那份，有就一起扫，不动它']] : []),
       ['语音试听', r.ttsOut, 'TTS 试听与发出去的语音条；「语音」页试听、只读大屏的试听目录就是这里'],
       ['RVC 音色', rvcLibrary(), '.pth 权重 + .index 索引；翻唱和语音变声都用这里'],
-      ['TTS 模型', r.tts, '本地 TTS 权重（千问 / GPT-SoVITS 等）'],
+      ['TTS 模型', ttsHome, '本地 TTS 权重总目录：千问 / GPT-SoVITS 各占一个子目录'],
+      ['千问 TTS 模型', r.qwen, '一键安装的千问 3-TTS 权重（Base 只做声音克隆）'],
+      ['GPT-SoVITS 模型', r.gptsovits, '一键安装的 GPT-SoVITS 权重'],
+      ...(statOf(r.tts).exists ? [['TTS 模型（手动导入）', r.tts, '老版「导入 ZIP / 权重」放这里；一键安装的不在这']] : []),
       ['翻唱曲库', r.music, '音频服务写在这里：原曲、成品、中间产物与索引'],
       ['原曲缓存', join(r.music, 'originals'), '下载过的原曲，同一首下次直接复用'],
       ['翻唱成品', join(r.music, 'covers'), '做好的翻唱，面板「已翻唱」直接试听'],
@@ -191,6 +212,25 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
   }
 
   // ---------------------------------------------------------------- 参考音频
+  /**
+   * 参考音频的**真源**是音频服务的 config.json（``tts.refAudio``）——合成、试听、
+   * 语音条读的都是它。以前这里读的是 ``conf().voice.gptsovits.refAudio``，那是本机
+   * 备用链路的字段，和合成用的根本不是同一个：面板上「当前」永远对不上，用户看到
+   * 的现象就是「切了音色没生效 / 读了缓存」。服务没起或没配才退回插件那份。
+   */
+  function serviceRefAudio() {
+    try {
+      const dir = serviceDataDir()
+      if (!dir) return ''
+      const p = join(dir, 'config.json')
+      if (!existsSync(p)) return ''
+      const raw = JSON.parse(readFileSync(p, 'utf8'))
+      return String((raw && raw.tts && raw.tts.refAudio) || '')
+    } catch (error) {
+      return ''
+    }
+  }
+
   function listRefs() {
     const seen = new Set()
     const items = []
@@ -202,7 +242,8 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
       }
     }
     items.sort((a, b) => (b.managed - a.managed) || (b.mtime - a.mtime))
-    return { ok: true, dir: roots().refs, dirs: refDirs(), items, current: String(conf().voice?.gptsovits?.refAudio || '') }
+    return { ok: true, dir: roots().refs, dirs: refDirs(), items,
+      current: serviceRefAudio() || String(conf().voice?.gptsovits?.refAudio || '') }
   }
 
   /** 导入一段参考音频：统一复制进受管 refs 目录，重名自动加后缀。 */
@@ -223,11 +264,8 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
   }
 
   function deleteRef(path) {
-    const p = String(path || '')
-    if (!p || !inside(roots().refs, p)) return { ok: false, message: '只能删受管目录里的参考音频' }
-    if (!existsSync(p)) return { ok: false, message: '这个文件已经不在了' }
-    rmSync(p, { force: true })
-    return { ok: true, message: `删掉了 ${basename(p)}`, refs: listRefs() }
+    const r = deleteAudio(path)
+    return r.ok ? { ...r, refs: listRefs() } : r
   }
 
   // ---------------------------------------------------------------- RVC 音色
@@ -660,6 +698,105 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
     }
   }
 
+  // ---------------------------------------------------------------- 所有音频
+  /**
+   * 面板「所有音频」一张表：参考音频、试听语音、翻唱成品 / 原曲 / 中间产物都列出来，
+   * 每一条都能播放 / 暂停 / 单独删。以前只有「清空整个目录」和原生 <audio> 控件，
+   * 用户既没法暂停，也没法只删一首。
+   */
+  const audioGroups = () => {
+    const r = roots()
+    const groups = [
+      ['参考音频', r.refs],
+      ['参考音频', r.localRefs],
+      ...refDirs().map((d) => ['参考音频', d]),
+      ['语音试听', r.ttsOut],
+      ['翻唱成品', join(r.music, 'covers')],
+      ['原曲缓存', join(r.music, 'originals')],
+      ['分离中间产物', join(r.music, 'work')],
+    ]
+    const seen = new Set()
+    return groups.filter(([, d]) => {
+      if (!d || seen.has(d)) return false
+      seen.add(d)
+      return true
+    })
+  }
+
+  function listAudio() {
+    const seen = new Set()
+    const items = []
+    for (const [kind, dir] of audioGroups()) {
+      if (items.length >= 300) break
+      for (const f of listFiles(dir, AUDIO_EXT, { depth: 1, cap: 120 })) {
+        const key = resolve(f.path)
+        if (seen.has(key)) continue
+        seen.add(key)
+        items.push({ ...f, kind, dir: resolve(f.path, '..') })
+      }
+    }
+    items.sort((a, b) => b.mtime - a.mtime)
+    return {
+      ok: true,
+      dirs: audioGroups().map(([, d]) => d),
+      items: items.slice(0, 300),
+      total: items.length,
+      message: `${items.length} 个音频文件，最新的在最上面`,
+    }
+  }
+
+  /**
+   * 单文件删除的安全边界：
+   *   ① 只认音频后缀；② 必须是面板自己列得出来的音频目录（不收任意路径）；
+   *   ③ 优先系统回收站，删错了能找回；只有插件自己管的数据目录在回收站不可用时才兜底直删。
+   * 服务返回的 ``/files/<相对 data_dir>`` 也收：「最近一首」「已翻唱」只有这种 URL。
+   */
+  const audioDeleteRoots = () => uniq([
+    roots().data, roots().service, roots().songRoot, roots().music, roots().ttsOut,
+    ...audioGroups().map(([, d]) => d),
+    ...legacyRefDirs(),
+    ...(Array.isArray(rcfg().refDirs) ? rcfg().refDirs : []),
+    // 本机扫描会把这三个目录里的音频列进面板；既然列了就要能删，但只走回收站
+    ...scanAudioRoots(),
+  ].filter(Boolean))
+
+  function deleteAudio(input) {
+    const raw = String(input || '').trim()
+    if (!raw) return { ok: false, message: '没有给文件路径' }
+    let p = raw
+    if (/^\/files\//i.test(p)) {
+      const svc = serviceDataDir()
+      if (!svc) return { ok: false, message: '找不到音频服务的数据目录，删不了' }
+      let rel = p.slice('/files/'.length).split('?')[0]
+      try { rel = decodeURIComponent(rel) } catch (error) { /* 原样用 */ }
+      // 只拼纯相对路径，'..' 一律丢掉，别让人从 /files/ 走到别处
+      p = join(svc, ...rel.split(/[\\/]/).filter((x) => x && x !== '..' && x !== '.'))
+    }
+    const real = resolve(p)
+    if (!AUDIO.has(extname(real).toLowerCase())) return { ok: false, message: '只能删音频文件（wav / mp3 / m4a / flac 等）' }
+    const st = statOf(real)
+    if (!st.exists || !st.isFile) return { ok: false, message: '这个文件已经不在了' }
+    if (!audioDeleteRoots().some((r) => inside(r, real))) {
+      return { ok: false, message: '这个路径不在面板列出的音频目录里，不能从这删' }
+    }
+    const ownData = [roots().data, roots().service, roots().songRoot, roots().music, roots().ttsOut, roots().refs, roots().localRefs]
+      .filter(Boolean).some((r) => inside(r, real))
+    let trashed = false
+    try { moveToTrash(real); trashed = !existsSync(real) } catch (error) { /* 下面兜底 */ }
+    if (!trashed) {
+      // 回收站命令不可用：只对自己数据目录里的文件直删；本机别处的一律不动
+      if (!ownData) return { ok: false, message: '回收站没接上，原件没动：请在文件管理器里手动删' }
+      try { rmSync(real, { force: true }) } catch (error) {
+        return { ok: false, message: `没删成：${error.message}` }
+      }
+    }
+    if (existsSync(real)) return { ok: false, message: '没删成，文件还在原处' }
+    return {
+      ok: true, path: real, mode: trashed ? 'trash' : 'remove',
+      message: trashed ? `「${basename(real)}」已移进系统回收站，随时能找回` : `「${basename(real)}」已删掉`,
+    }
+  }
+
   // ---------------------------------------------------------------- 打开 / 读文件
   const openRoots = () => uniq([...managedRoots(), ...refDirs(), ...rvcDirs(), roots().ttsOut, roots().qqOut])
 
@@ -688,11 +825,16 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
     return { ok: true, removed, message: removed ? `清掉了 ${removed} 个文件` : '没有可清空的音频' }
   }
 
+  // 本机扫描会把「下载 / 音乐 / 桌面」里的音频列进面板，这些也得能播：
+  // 以前 /res/file 只认受管目录，列表里点播放直接 404，看着就像「播放器坏了」。
+  // 只放宽读音频，不放宽「在文件管理器里打开」和写入。
+  const scanAudioRoots = () => [join(homedir(), 'Downloads'), join(homedir(), 'Music'), join(homedir(), 'Desktop')]
+
   function readable(path) {
     const p = String(path || '')
     if (!p) return ''
     const real = resolve(p)
-    return openRoots().some((r) => inside(r, real)) && existsSync(real) ? real : ''
+    return uniq([...openRoots(), ...scanAudioRoots()]).some((r) => inside(r, real)) && existsSync(real) ? real : ''
   }
 
   function mimeOf(file) {
@@ -734,7 +876,8 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
   return {
     roots, paths, listRefs, importRef, deleteRef,
     listRvc, importRvc, renameRvc, deleteRvc, looksLikePth,
-    listTts, importTts, scan, adopt, deleteSource, readable, readAudio, canTouch, canOpen, clear,
+    listTts, importTts, scan, adopt, deleteSource, listAudio, deleteAudio,
+    readable, readAudio, canTouch, canOpen, clear,
   }
 }
 

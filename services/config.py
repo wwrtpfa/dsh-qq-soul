@@ -207,6 +207,41 @@ class ServiceConfig:
                 return candidate
         return candidates[0]
 
+    def edge_tts(self) -> str:
+        """edge-tts 可执行文件：配置 > 引擎 venv 同目录 > 插件私有 venv > PATH。
+
+        venv 的位置一律跟着 ``engine_python()`` 走（一键安装在 ``<root>/env``、
+        老装法在 ``<引擎>/.venv``、快速 RVC 是 ``venv312``）。以前体检和
+        ``EdgeProvider`` 各自拼 ``<引擎>/.venv/bin``，本机装在 ``env/bin`` 就既体检
+        报红、又让 edge 渠道真的合成失败。
+        """
+        import shutil
+
+        explicit = str(self.paths.get("edgeTts") or "").strip()
+        if explicit:
+            return explicit
+        exe = "edge-tts.exe" if os.name == "nt" else "edge-tts"
+        bindir = "Scripts" if os.name == "nt" else "bin"
+        engine = self.applio_dir()
+        candidates = [self.engine_python().with_name(exe)]
+        #: 解释器落在哪个 venv 不一定就是装了 edge-tts 的那个，同级的几个都看一眼
+        for base in (engine.parent, engine):
+            for name in ("env", "venv312", ".venv", "venv"):
+                candidates.append(base / name / bindir / exe)
+        #: 面板「安装 edge-tts」装进插件私有 venv；AURABOT_PYENV 是替换默认位置，不是叠加
+        pyenv = str(os.environ.get("AURABOT_PYENV") or "").strip()
+        if pyenv:
+            candidates.append(Path(pyenv).expanduser() / bindir / exe)
+        else:
+            legacy = Path("C:/Aurabot/pyenv")
+            if os.name == "nt" and legacy.is_dir():
+                candidates.append(legacy / bindir / exe)
+            candidates.append(_home("Aurabot", "pyenv") / bindir / exe)
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+        return shutil.which("edge-tts") or ""
+
     def ffmpeg(self) -> str:
         import shutil
 

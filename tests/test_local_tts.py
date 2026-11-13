@@ -19,7 +19,10 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
+import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -294,6 +297,191 @@ def test_stop_without_a_plugin_started_process_says_it_is_external(cfg):
     r = local_tts.stop(cfg, "qwen")
     assert r["ok"] is True
     assert "没有插件启动过的" in r["message"] and "外部启动" in r["message"]
+
+
+def test_start_does_not_spawn_a_second_process_while_one_is_starting(cfg, monkeypatch):
+    """两次「一键启动」抢同一个端口：后起的绑定失败，却把先起的 PID 覆盖掉，
+    先起的从此没人记得 —— 「关不掉」就是这么来的。启动中再点必须原地等。"""
+    monkeypatch.setattr(local_tts, "status", lambda c, e: {
+        "ok": True, "engine": e, "label": "千问 3-TTS", "phase": "starting",
+        "online": False, "pid": os.getpid(), "port": 9883,
+        "dirs": {"runtime": "/tmp"}, "pollAfterMs": 1500, "message": "正在启动",
+    })
+    monkeypatch.setattr(local_tts, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(local_tts.subprocess, "Popen",
+                        lambda *a, **k: pytest.fail("启动中不该再拉第二个进程"))
+
+    out = local_tts.start(cfg, "qwen", wait=0)
+    assert out["phase"] == "starting"
+    assert "已经在启动" in out["message"]
+
+
+def test_find_running_pid_only_matches_the_engines_own_entry(cfg, monkeypatch):
+    """按入口脚本的绝对路径认人：同名但装在别处的程序不能被误认、误杀。"""
+    entry = _runtime_entry(cfg, "gptsovits", "api_v2.py", API_V2_STYLE)
+    monkeypatch.setattr(local_tts, "_process_table", lambda: [
+        (101, "/usr/bin/python %s --bind_addr 127.0.0.1 --port 9881" % entry),
+        (102, "/usr/bin/python /somewhere/else/api_v2.py"),
+        (103, "/opt/homebrew/bin/python -m http.server"),
+    ])
+    assert local_tts._find_running_pid(cfg, "gptsovits") == 101
+
+
+# --- 「关不掉」回归：ps 被权限拦、状态 PID 被覆盖、端口后面换了人 -------------
+
+def test_pid_alive_does_not_mark_a_live_process_dead_when_ps_is_blocked(monkeypatch):
+    """ps 报 operation not permitted 时不能把活进程判成死：那正是「关不掉」的根。"""
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                            start_new_session=True)
+    try:
+        class Blocked:
+            stdout = ""
+            stderr = "operation not permitted"
+            returncode = 1
+
+        monkeypatch.setattr(local_tts.subprocess, "run", lambda *a, **k: Blocked())
+        assert local_tts._pid_alive(proc.pid) is True
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+def test_process_table_falls_back_to_pgrep_when_ps_is_blocked(monkeypatch):
+    """ps 拿不到全表就换 pgrep，否则按入口脚本认领整条链会静默失效。"""
+    def fake_run(args, **_kw):
+        class Result:
+            returncode = 1
+            stdout = ""
+        r = Result()
+        if args and "pgrep" in str(args[0]):
+            r.returncode = 0
+            r.stdout = "101 /usr/bin/python /x/api_v2.py --port 9881\n102 /bin/zsh\n"
+        return r
+
+    monkeypatch.setattr(local_tts.subprocess, "run", fake_run)
+    assert (101, "/usr/bin/python /x/api_v2.py --port 9881") in local_tts._process_table()
+
+
+def test_find_running_pid_prefers_the_process_actually_listening(cfg, monkeypatch):
+    """重复启动留下的残留进程也在命令行里：只能认端口上那个，别杀错人。"""
+    entry = _runtime_entry(cfg, "gptsovits", "api_v2.py", API_V2_STYLE)
+    monkeypatch.setattr(local_tts, "_process_table", lambda: [
+        (101, "/usr/bin/python %s --port 9881" % entry),
+        (202, "/usr/bin/python %s --port 9881" % entry),
+    ])
+    monkeypatch.setattr(local_tts, "_listener_pids", lambda port: {202, 303})
+    assert local_tts._find_running_pid(cfg, "gptsovits") == 202
+
+    # 端口上是别人的程序：不认领、不误杀，交给 stop 如实说明
+    monkeypatch.setattr(local_tts, "_listener_pids", lambda port: {303})
+    monkeypatch.setattr(local_tts, "_pid_cwd", lambda pid: "/somewhere/else")
+    assert local_tts._find_running_pid(cfg, "gptsovits") == 0
+
+
+def test_stop_succeeds_when_port_is_back_even_if_pid_looks_alive(cfg, monkeypatch):
+    """子进程退成僵尸时 os.kill(pid, 0) 仍成功：端口还回来了就该说停掉了。"""
+    (cfg.data_dir / "local-tts-state.json").write_text(json.dumps({
+        "gptsovits": {"pid": 4242, "starting": False, "at": 0},
+    }), encoding="utf-8")
+    monkeypatch.setattr(local_tts, "_rss_bytes", lambda pid: 0)
+    monkeypatch.setattr(local_tts, "_signal_pid", lambda *a, **k: None)
+    monkeypatch.setattr(local_tts, "port_open", lambda h, p, timeout=0.35: False)
+    monkeypatch.setattr(local_tts, "_listener_pids", lambda port: set())
+    monkeypatch.setattr(local_tts, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(local_tts, "STOP_WAIT_S", 0.05)
+    monkeypatch.setattr(local_tts, "STOP_FORCE_WAIT_S", 0.05)
+
+    out = local_tts.stop(cfg, "gptsovits")
+    assert out["ok"] is True and "已停掉" in out["message"]
+
+
+def test_stop_reports_the_listening_pid_and_kill_command_when_it_cannot_adopt(cfg, monkeypatch):
+    """认不出来也不能只说「请自己关」：把 PID 和能直接执行的命令给用户。"""
+    (cfg.data_dir / "local-tts-state.json").write_text(json.dumps({
+        "gptsovits": {"pid": 0, "starting": False, "at": 0},
+    }), encoding="utf-8")
+    monkeypatch.setattr(local_tts, "port_open", lambda h, p, timeout=0.35: True)
+    monkeypatch.setattr(local_tts, "_find_running_pid", lambda *a, **k: 0)
+    monkeypatch.setattr(local_tts, "_listener_pids", lambda port: {9191})
+
+    out = local_tts.stop(cfg, "gptsovits")
+    assert out["ok"] is False
+    assert out["listenerPids"] == [9191]
+    assert "9191" in out["message"] and "kill 9191" in out["message"]
+
+
+def test_status_adopts_the_listening_engine_when_state_lost_its_pid(cfg, monkeypatch):
+    """端口在听、状态里 PID 却是 0：要认领回来，否则「停掉它」永远说不是插件启动的。"""
+    _runtime_entry(cfg, "gptsovits", "api_v2.py", API_V2_STYLE)
+    (cfg.data_dir / "local-tts-state.json").write_text(json.dumps({
+        "gptsovits": {"pid": 0, "starting": False, "at": 0},
+    }), encoding="utf-8")
+    monkeypatch.setattr(local_tts, "port_open", lambda h, p, timeout=0.35: True)
+    monkeypatch.setattr(local_tts, "_find_running_pid", lambda c, e, entry=None: 4321)
+
+    out = local_tts.status(cfg, "gptsovits")
+    assert out["pid"] == 4321
+    state = json.loads((cfg.data_dir / "local-tts-state.json").read_text(encoding="utf-8"))
+    assert state["gptsovits"]["pid"] == 4321
+
+
+def test_stop_adopts_and_really_kills_after_pid_was_overwritten(cfg, tmp_path, monkeypatch):
+    """真起一个监听端口的服务，再把状态里的 PID 抹成 0：stop 仍要真把它停掉。"""
+    monkeypatch.setattr(runtime_fetch, "missing_deps", lambda *a, **k: [])
+    monkeypatch.setattr(local_tts, "_rss_bytes", lambda pid: 0)
+    port = _free_port()
+    cfg.tts["qwenUrl"] = "http://127.0.0.1:%d" % port
+    pack = tmp_path / "qwen-pack"
+    pack.mkdir()
+    (pack / "qwen_tts_server.py").write_text(FAKE_SERVER, encoding="utf-8")
+    (pack / "config.json").write_text("{}", encoding="utf-8")
+    local_tts.install(cfg, "qwen", str(pack))
+
+    started = local_tts.start(cfg, "qwen", wait=8)
+    pid = started["pid"]
+    assert started["online"] is True and local_tts.port_open("127.0.0.1", port)
+
+    state_file = cfg.data_dir / "local-tts-state.json"
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["qwen"]["pid"] = 0  # 模拟被「后起的绑定失败进程」覆盖成 0
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    try:
+        out = local_tts.stop(cfg, "qwen")
+    finally:
+        if local_tts.port_open("127.0.0.1", port):
+            try:
+                os.kill(pid, 9)
+            except OSError:
+                pass
+    assert out["ok"] is True, out["message"]
+    assert out["online"] is False
+    assert not local_tts.port_open("127.0.0.1", port)
+    assert "已停掉" in out["message"]
+
+
+def test_stop_says_it_failed_instead_of_pretending_success(cfg, monkeypatch):
+    """SIGTERM / SIGKILL 都没能收掉时，必须明说没停掉，并且保留 PID 让下次还能停。"""
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                            start_new_session=True)
+    try:
+        (cfg.data_dir / "local-tts-state.json").write_text(json.dumps({
+            "qwen": {"pid": proc.pid, "starting": False, "at": int(time.time())},
+        }), encoding="utf-8")
+        monkeypatch.setattr(local_tts, "STOP_WAIT_S", 0.1)
+        monkeypatch.setattr(local_tts, "STOP_FORCE_WAIT_S", 0.1)
+        monkeypatch.setattr(local_tts, "_signal_pid", lambda *a, **k: None)
+        monkeypatch.setattr(local_tts, "port_open", lambda h, p, timeout=0.35: True)
+
+        out = local_tts.stop(cfg, "qwen")
+        state = json.loads((cfg.data_dir / "local-tts-state.json").read_text(encoding="utf-8"))
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)
+
+    assert out["ok"] is False
+    assert "没能停掉" in out["message"]
+    assert state["qwen"]["pid"] == proc.pid, "没停掉就留着 PID，下一次点还能接着停"
 
 
 # ------------------------------------------------------------------ HTTP 路由

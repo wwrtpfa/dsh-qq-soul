@@ -653,12 +653,15 @@ export function createSongStudio({ getConfig, log, sendVoiceFile, sendText, onSu
         ? (cn ? ['--find-links', CN_TORCH] : ['--extra-index-url', TORCH_INDEX])
         : []
       const sepPkg = IS_WIN ? 'audio-separator[gpu]' : 'audio-separator'
+      // macOS / Linux 的翻唱流水线用 demucs 做分离（Windows 走 rvc-solo 的 MDX），
+      // 以前漏装它，装完一键环境做歌会卡在「人声分离：No module named demucs」。
+      const demucsPkg = IS_WIN ? [] : ['demucs']
       await step('安装 PyTorch、RVC 和人声分离（最大的一步）',
         IS_WIN ? '要下载约 3~4 GB，看网速一般 10~40 分钟；下面的「已下载」在涨就说明没卡住'
           : '要下载约 1.5~2.5 GB（macOS 不装 CUDA，比 Windows 小），一般 5~20 分钟；下面的「已下载」在涨就说明没卡住', async () => {
         const stop = watchDownload(cacheDir)
         try {
-          await run(uv, ['pip', 'install', '--python', p.python, '-r', join(p.applio, 'requirements-engine.txt'), sepPkg, 'imageio-ffmpeg',
+          await run(uv, ['pip', 'install', '--python', p.python, '-r', join(p.applio, 'requirements-engine.txt'), sepPkg, ...demucsPkg, 'imageio-ffmpeg',
             ...mirror, ...torchArgs, '--index-strategy', 'unsafe-best-match'], { log, onLine: note, env: uvEnv, timeoutMs: 120 * 60_000 })
         } finally {
           stop()

@@ -134,16 +134,23 @@ def _builtin_dir(engine: str) -> Path:
 
 
 def _builtin_ok(spec: dict) -> tuple[bool, str]:
-    """内置运行时在当前平台能不能用：mlx-audio 只支持 Apple Silicon。"""
+    """内置运行时在当前平台能不能用：mlx-audio 只支持 Apple Silicon。
+
+    以前这里对 Windows 说「用『② 导入整包』把现成的 9883 服务放进来」——查无此物：
+    内置的这份靠 MLX 推理，MLX 没有 Windows 版，所以本机既没有程序可装、也没有权重
+    能用。要自备服务得自己找 Windows 版实现，这话必须说明白，不能让人以为「导入一下就行」。
+    """
     plats = spec.get("platforms") or ()
     machs = spec.get("machines") or ()
     nicks = {"darwin": "macOS", "win32": "Windows", "linux": "Linux"}
     if plats and sys.platform not in plats:
-        return False, ("这个服务程序是内置的，但只支持 %s；当前是 %s，"
-                       "用「② 导入整包」把现成的 9883 服务放进来"
-                       % ("、".join(nicks.get(p, p) for p in plats), nicks.get(sys.platform, sys.platform)))
+        cur = nicks.get(sys.platform, sys.platform)
+        return False, ("内置的 9883 服务只装在 macOS：它靠 MLX 推理，MLX 没有 %s 版。"
+                       "%s 上要用千问，得自备一个实现 POST /synth 的 9883 常驻服务再填地址；"
+                       "想开箱即用请选 GPT-SoVITS（PyTorch，两个平台都能装）" % (cur, cur))
     if machs and platform.machine() not in machs:
-        return False, ("内置服务程序需要 Apple Silicon（当前 %s）；这台机器请用「② 导入整包」"
+        return False, ("内置的 9883 服务要 Apple Silicon（当前 %s）：MLX 只在 M 系列芯片上跑。"
+                       "这台机器要用千问得自备 9883 服务，或改选 GPT-SoVITS"
                        % platform.machine())
     return True, ""
 

@@ -38,6 +38,15 @@ export function registerResourceRoutes({ route, getConfig, readBody, readRaw, qu
 
   route('/res/paths', async () => res.paths())
 
+  // 所有音频一张表：参考音频 / 试听语音 / 翻唱成品都能逐条播放、暂停、删除。
+  // 删除只收面板列得出来的音频目录，且优先走系统回收站（见 library.js::deleteAudio）。
+  route('/res/audio', async () => res.listAudio())
+
+  route('/res/audio/delete', async (req) => {
+    const body = await readBody(req)
+    return res.deleteAudio(body.path || body.fileUrl || body.url)
+  })
+
   route('/res/refs', async (req) => {
     if (req.method !== 'POST') return res.listRefs()
     const body = await readBody(req)

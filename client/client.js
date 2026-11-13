@@ -636,6 +636,16 @@ code{overflow-wrap:anywhere;word-break:break-word}
 .ab-file .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ab-file .pth{color:var(--ab-dim);font-size:11.5px;word-break:break-all;white-space:normal}
 .ab-file .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+/* 统一音频条：▶/⏸ 一眼看得见，进度能拖，右边就是「删除」 */
+.ab-audio{display:inline-flex;align-items:center;gap:8px;min-width:0;padding:4px 8px;border:1px solid var(--ab-line);border-radius:999px;background:var(--ab-card-2)}
+.ab-audio > audio{display:none}
+.ab-audio-btn{width:26px;height:26px;flex:none;border:0;border-radius:50%;background:var(--ab-sea);color:#fff;font-size:12px;line-height:1;cursor:pointer}
+.ab-audio-btn:hover{filter:brightness(1.1)}
+.ab-audio-time{font-size:11.5px;color:var(--ab-dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+.ab-audio-bar{width:118px;min-width:60px;flex:0 1 118px;accent-color:var(--ab-sea);cursor:pointer}
+.ab-audio.compact .ab-audio-bar{width:84px;flex-basis:84px}
+.ab-audio .ab-btn{padding:2px 8px;font-size:11.5px;border-radius:999px}
+.ab-audio-err{color:var(--ab-err);font-size:11px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ab-stage{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ab-sub);padding:5px 0}
 .ab-stage i{font-style:normal;width:7px;height:7px;border-radius:50%;background:var(--ab-line-2);flex:none}
 .ab-stage.on i{background:var(--ab-sea);box-shadow:0 0 0 4px var(--ab-foam-2)}
@@ -927,6 +937,95 @@ code{overflow-wrap:anywhere;word-break:break-word}
         type: 'button', title, className: cx('ab-btn', kind, small && 'sm'), disabled: disabled || busy,
         onClick: async () => { if (!onClick) return; setBusy(true); try { await onClick() } finally { setBusy(false) } },
       }, busy ? [h('i', { key: 's', className: 'ab-spin' }), ' 处理中'] : children)
+    }
+
+    // ---------------- 音频播放器（所有音频一处管：能暂停、能单条删） ----------------
+    // 原生 <audio controls> 挤在 180px 里只剩一个 ▶，点一下也看不出能不能停；
+    // 而且每条列表都没有删除按钮。这里统一成「▶/⏸ + 时间 + 进度 + 删除」，
+    // 并让同一时刻只有一条在播（切到下一条自动停上一条）。
+    let activeAudioEl = null
+    const fmtClock = (s) => {
+      const n = Math.max(0, Math.floor(Number(s) || 0))
+      return Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0')
+    }
+
+    /** 删单个音频：先确认，再交给后端（只走系统回收站，随时能找回）。 */
+    const deleteAudioFile = async (path, toast, onDeleted, label) => {
+      if (!path) return
+      const name = label || String(path).split(/[\\/]/).pop()
+      if (!confirm(`把「${name}」移进系统回收站？\n\n只删这一个音频文件，别的不动；清空回收站后才真正腾出空间。`)) return
+      const r = await post('/res/audio/delete', { path }).catch((e) => ({ ok: false, message: e.message }))
+      toast(r.message || (r.ok ? '已删除' : '删除失败'), r.ok ? 'ok' : 'err')
+      if (r.ok && onDeleted) onDeleted()
+    }
+
+    function AudioPlayer({ src, path, name, toast, onDeleted, onDelete, autoPlay, compact }) {
+      const el = useRef(null)
+      const [playing, setPlaying] = useState(false)
+      const [pos, setPos] = useState(0)
+      const [dur, setDur] = useState(0)
+      const [err, setErr] = useState('')
+      const stop = () => {
+        const a = el.current
+        if (a) { try { a.pause() } catch (e) {} }
+        setPlaying(false)
+      }
+      // 换文件 / 卸载：停掉、归零；别让删掉的文件还在后台放
+      useEffect(() => {
+        const a = el.current
+        if (!a) return
+        try { a.pause(); a.currentTime = 0 } catch (e) {}
+        setPlaying(false); setPos(0); setDur(0); setErr('')
+        if (activeAudioEl === a) activeAudioEl = null
+        return () => {
+          if (activeAudioEl === a) activeAudioEl = null
+          try { a.pause() } catch (e) {}
+        }
+      }, [src])
+      useEffect(() => {
+        if (!autoPlay || !src) return
+        const a = el.current
+        if (!a) return
+        if (activeAudioEl && activeAudioEl !== a) activeAudioEl.pause()
+        activeAudioEl = a
+        const p = a.play()
+        if (p && p.catch) p.catch(() => setErr('浏览器没让自动播放，点一下 ▶ 就行'))
+      }, [src, autoPlay])
+      const toggle = () => {
+        const a = el.current
+        if (!a || !src) return
+        if (!a.paused) { stop(); return }
+        if (activeAudioEl && activeAudioEl !== a) { try { activeAudioEl.pause() } catch (e) {} }
+        activeAudioEl = a
+        setErr('')
+        const p = a.play()
+        if (p && p.catch) p.catch((e) => { setErr('播放失败：' + (e.message || '文件读不到')); setPlaying(false) })
+        setPlaying(true)
+      }
+      const seek = (e) => {
+        const a = el.current
+        const v = Number(e.target.value) || 0
+        if (a) { try { a.currentTime = v } catch (er) {} }
+        setPos(v)
+      }
+      const del = onDelete || (path ? () => deleteAudioFile(path, toast, onDeleted, name) : null)
+      return h('div', { className: cx('ab-audio', compact && 'compact'), style: { flex: 'none' } },
+        h('audio', {
+          ref: el, src: src || undefined, preload: 'metadata',
+          onPlay: () => setPlaying(true),
+          onPause: () => setPlaying(false),
+          onEnded: () => { setPlaying(false); setPos(0) },
+          onTimeUpdate: (e) => setPos(e.currentTarget.currentTime || 0),
+          onLoadedMetadata: (e) => setDur(Number(e.currentTarget.duration) || 0),
+          onError: () => { setPlaying(false); setErr('这个文件读不到（可能已被删掉或不在音频目录里）') },
+        }),
+        h('button', { type: 'button', className: 'ab-audio-btn', title: playing ? '暂停' : '播放', onClick: toggle }, playing ? '⏸' : '▶'),
+        h('span', { className: 'ab-audio-time' }, fmtClock(pos) + ' / ' + (dur ? fmtClock(dur) : '—:—')),
+        h('input', { type: 'range', className: 'ab-audio-bar', min: 0, max: dur || 1, step: 0.1,
+          value: Math.min(pos, dur || 1), title: '拖进度', onChange: seek, disabled: !src }),
+        del ? h(Btn, { small: true, kind: 'danger', title: '删掉这一个音频（进回收站）',
+          onClick: async () => { stop(); await del() } }, '删除') : null,
+        err ? h('span', { className: 'ab-audio-err', title: err }, err) : null)
     }
 
     /** 自定义下拉：替代系统自带的蓝白 select。options: [{value, label, desc?, group?}] */
@@ -2544,26 +2643,26 @@ code{overflow-wrap:anywhere;word-break:break-word}
           h('div', { className: 'ab-spacer' }),
           h('span', { className: 'ab-muted ab-small' }, st && st.port ? '端口 ' + st.port + ' · ' + (st.platform === 'win' ? 'Windows' : st.platform === 'mac' ? 'macOS' : 'Linux') + (st.device ? ' · ' + st.device : '') : '')),
         h('div', { className: 'ab-muted ab-small', style: { marginTop: 6, wordBreak: 'break-word', overflowWrap: 'anywhere' } }, (st && st.message) || '正在读本机状态…'),
-        // 千问这条路目前是死路，而且 9876 没重启时旧文案还会把人指向不存在的
-        // 「③ 一键获取服务程序」。把「1.6 GB 是什么 / 为什么起不来 / 现在用哪个」
-        // 直接摆在这里：只用前端已有的状态字段，旧服务进程也能显示，重载面板即见效。
-        engine === 'qwen' && rtPlan && rtPlan.available === false && !(st && st.online)
+        // 平台把千问挡在外面时（典型是 Windows：MLX 只有 Apple Silicon 版），
+        // 要说清「为什么不行 / 现在该走哪条 / 已经占的 1.6 GB 怎么办」。
+        // 这里必须看**下载层**的 plan.available：runtime 那层 false 只表示「程序没装」，
+        // macOS 上程序没装也是 false，套用「这条路是死路」会把能用的机器说成不能用。
+        engine === 'qwen' && plan && plan.available === false && !(st && st.online)
           ? h('div', { className: 'ab-note warn', style: { marginTop: 8 } },
-              h('b', null, (Number(st && st.modelBytes) || 0) > 0
-                ? '这 ' + ((Number(st.modelBytes) || 0) / 1024 / 1024 / 1024).toFixed(2) + ' GiB 是什么？'
-                : '这些权重是什么？'),
+              h('b', null, st && st.platform === 'win' ? 'Windows 上这条路走不通' : '这台机器跑不了这条渠道'),
               h('div', { className: 'ab-small', style: { marginTop: 4, lineHeight: 1.7 } },
-                '已经下好的 ',
-                (Number(st && st.modelBytes) || 0) > 0
-                  ? h('span', null, String(files.length || (st && st.modelFiles) || 0), ' 个文件放在 ',
-                      h('code', { style: { wordBreak: 'break-all' } }, (st && st.dirs && st.dirs.models) || 'models/qwen'), '。')
-                  : '权重放在模型目录。',
-                '它们是「模型的参数」（两个 .safetensors 占了大头），躺在硬盘里不占运行内存，也不会自己变成能监听端口的程序。'),
+                '千问的本地推理靠 MLX，MLX 只有 Apple Silicon（macOS）版，',
+                st && st.platform === 'win' ? 'Windows' : '这个平台',
+                '上没有对应后端。所以内置的 9883 服务只装在 macOS 上：这台机器既没有程序可装，也没有权重能加载。'),
               h('div', { className: 'ab-small', style: { marginTop: 4, lineHeight: 1.7 } },
-                '这个渠道要的是 9883 的 /synth 常驻服务（', h('code', null, 'qwen_tts_server.py'),
-                '，没有公开下载源，需自备）；而下载的是 MLX 版权重（mlx-audio 生态 /v1/audio/speech），两边不是同一套契约，macOS 上目前起不来。'),
-              h('div', { className: 'ab-small', style: { marginTop: 4, lineHeight: 1.7 } },
-                '现在想听本地语音：直接选 ', h('b', null, 'GPT-SoVITS'), ' 渠道，不用动这里。这些权重先留着，等接好 mlx-audio 才会真正「派上用场」；音频服务没重启前，上面那行状态可能还是旧文案，以这里为准。'))
+                '要用千问：得有别人做好的 9883 常驻服务（只要实现 ', h('code', null, 'POST /synth'),
+                ' 就行，不必是 MLX 实现），起来后把地址填进「千问服务地址」。想开箱即用就选 ',
+                h('b', null, 'GPT-SoVITS'), '——它是 PyTorch，macOS / Windows 都能一键装好。'),
+              (Number(st && st.modelBytes) || 0) > 0
+                ? h('div', { className: 'ab-small', style: { marginTop: 4, lineHeight: 1.7 } },
+                    '已经占掉的 ' + ((Number(st.modelBytes) || 0) / 1024 / 1024 / 1024).toFixed(2)
+                    + ' GiB 是 MLX 格式的权重，这台机器用不到，可以直接删。')
+                : null)
             : null,
         // 启动秒退时把日志尾部直接摆出来：用户不用去翻 logs 目录才知道为什么没起来
         st && st.logTail ? h('pre', { className: 'ab-log' }, st.logTail) : null,
@@ -2583,8 +2682,7 @@ code{overflow-wrap:anywhere;word-break:break-word}
             h('b', null, '① 联网一键下载'),
             h('span', { className: 'ab-muted ab-small' }, plan ? (plan.repo + ' · ' + plan.sizeHint) : '')),
           plan && !plan.available
-            ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 6 } },
-                plan.message + '。下面第 ② 步照样能用。')
+            ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 6 } }, plan.message)
             : null,
           plan && plan.available ? h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', marginTop: 8 } },
             h(Select, { value: profile, width: 190,
@@ -2744,11 +2842,11 @@ code{overflow-wrap:anywhere;word-break:break-word}
           .catch(() => { if (alive) setVoices([]) })
         return () => { alive = false }
       }, [eng])
-      // 参考音频只服务 GPT-SoVITS 这种「拿一段人声克隆音色」的本地渠道。
-      // 以前它被当成所有渠道的公共字段，Breeze / edge 底下也摆着两个输入框，
-      // 用户自然要问「Blue 哪有参考音频」——不该有的地方就别出现。
+      // 参考音频服务「靠一段人声克隆音色」的本地渠道：千问 Base 权重和 GPT-SoVITS
+      // 都是这条路。以前这里只认 gptsovits，切到千问就 setRefs([]) —— 列表空着，
+      // 用户以为「参考音色不显示」，其实是被这个判断清掉了。
       useEffect(() => {
-        if (eng !== 'gptsovits') { setRefs([]); return }
+        if (eng !== 'qwen' && eng !== 'gptsovits') { setRefs([]); return }
         let alive = true
         get('/song/refs')
           .then((r) => { if (alive) setRefs((r && r.items) || []) })
@@ -2974,6 +3072,13 @@ code{overflow-wrap:anywhere;word-break:break-word}
       const localChannel = eng === 'qwen' || eng === 'gptsovits'
       const [localOnline, setLocalOnline] = useState(null)
       const [localBusy, setLocalBusy] = useState(false)
+      // 停不掉时把服务端给的原因钉在按钮旁边：只弹一个 toast 的话，用户看到的是
+      // 「按钮点了、提示块还在」，跟「怎么关都关不掉」没区别。
+      const [localStopError, setLocalStopError] = useState(null)
+      // 点完「一键启动」到真正能出声之间有一段空档：start() 只等 5 秒，而权重
+      // 加载要 1–3 分钟。以前这段空档直接按 out.online=false 显示「没启动」，
+      // 用户只能再点一遍（第二遍才校验）。这个标记让它显示「正在启动」并自己轮询。
+      const [localStarting, setLocalStarting] = useState(false)
       // 本地渠道探测在线状态：没起就要明说「现在会回退到本机备用渠道」，
       // 不能再让用户听到兜底声音却以为本地渠道生效了。
       useEffect(() => {
@@ -2986,15 +3091,95 @@ code{overflow-wrap:anywhere;word-break:break-word}
         const timer = setInterval(probe, 5000)
         return () => { alive = false; clearInterval(timer) }
       }, [eng, localChannel, r && r.ok])
-      const startLocal = async () => {
+      // 只显示当前渠道在线与否还不够：另一个本地渠道可能在后台白占几 GB（用户
+      // 原话「我估计是两个都在跑」）。这里把「另一个」也探一遍，跑着就摆出来。
+      const otherEngine = eng === 'qwen' ? 'gptsovits' : eng === 'gptsovits' ? 'qwen' : ''
+      const [otherRunning, setOtherRunning] = useState(null)
+      useEffect(() => {
+        if (!otherEngine || !(r && r.ok)) { setOtherRunning(null); return undefined }
+        let alive = true
+        const probe = () => get('/tts/local/status?engine=' + encodeURIComponent(otherEngine))
+          .then((x) => {
+            if (!alive) return
+            setOtherRunning(x && x.online
+              ? { engine: otherEngine, label: x.label || otherEngine, port: x.port }
+              : null)
+            if (!(x && x.online)) setLocalStopError(null)
+          })
+          .catch(() => { if (alive) setOtherRunning(null) })
+        probe()
+        const timer = setInterval(probe, 5000)
+        return () => { alive = false; clearInterval(timer) }
+      }, [otherEngine, r && r.ok])
+      // 停任意一个本地服务，并把真释放了多少内存说出来（服务端用 footprint 量的）
+      const stopEngine = async (engine) => {
         setLocalBusy(true)
         try {
-          const out = await post('/tts/local/start', { engine: eng })
-          toast(out.message || (out.ok === false ? '没起来' : '已启动'), out.ok === false ? 'err' : 'ok')
-          setLocalOnline(Boolean(out && out.online))
+          const out = await post('/tts/local/stop', { engine })
+          if (out && out.ok === false) {
+            // 没停掉就如实说，别弹「已停掉」再把提示藏起来：按钮点了没反应
+            // 才是用户真正抓狂的地方（端口还占着，5 秒后提示又冒出来）。
+            const why = (out && out.message) || '没停掉，它还占着端口'
+            setLocalStopError({ engine, message: why })
+            toast(why, 'err')
+            return
+          }
+          setLocalStopError(null)
+          const freed = Number(out && out.freedBytes) || 0
+          const size = freed > 0
+            ? (freed >= 1024 ** 3 ? (freed / 1024 ** 3).toFixed(1) + ' GB' : Math.round(freed / 1024 ** 2) + ' MB')
+            : ''
+          toast([(out && out.message) || '已停掉', size ? '内存还回约 ' + size : ''].filter(Boolean).join('，'), 'ok')
+          setOtherRunning(null)
+          if (engine === eng) setLocalOnline(false)
           if (out && out.ok !== false) reload()
-        } catch (e) { toast('没起来：' + e.message, 'err') } finally { setLocalBusy(false) }
+        } catch (e) { toast('没停掉：' + e.message, 'err') } finally { setLocalBusy(false) }
       }
+      // 端口没就绪 ≠ 没启动：start() 只等 5 秒，权重却要加载 1–3 分钟。
+      // 这里自己轮询到「就绪」或「进程失败」为止，面板状态只认这一个结果，
+      // 不再出现「点一次说没启动、点第二次才说在线」。
+      const waitLocal = async (engine, timeoutMs = 180000) => {
+        const deadline = Date.now() + timeoutMs
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2000))
+          try {
+            const st = await get('/tts/local/status?engine=' + encodeURIComponent(engine))
+            if (st && st.ok !== false && st.online) return true
+            if (st && st.phase === 'failed') return false
+          } catch (e) { /* 服务刚起、还没监听：继续等 */ }
+        }
+        return false
+      }
+      const startLocal = async () => {
+        setLocalBusy(true)
+        setLocalStarting(true)
+        try {
+          const out = await post('/tts/local/start', { engine: eng })
+          if (out && out.ok === false) {
+            toast(out.message || '没起来', 'err')
+            setLocalOnline(false)
+            return
+          }
+          if (out && out.online) {
+            setLocalOnline(true)
+            toast(out.message || '已启动，下一句就生效', 'ok')
+            if (out.ok !== false) reload()
+            return
+          }
+          // 进程已经拉起，只是端口还没就绪：明说「正在加载」，别判成没启动
+          toast((out && out.message) || '已拉起，正在加载权重…', 'ok')
+          const ok = await waitLocal(eng)
+          setLocalOnline(ok)
+          toast(ok ? '● 在线，下一句就生效' : '权重还没加载完：就绪后这里会自动变「● 在线」，日志在「日志」页', ok ? 'ok' : 'err')
+          if (out && out.ok !== false) reload()
+        } catch (e) {
+          toast('没起来：' + e.message, 'err')
+          setLocalOnline(false)
+        } finally { setLocalBusy(false); setLocalStarting(false) }
+      }
+      // 在线时的「省内存」入口：权重常驻 1–3 GB，停掉就是真还回去。
+      // 只停插件自己拉起的进程（服务端按 local-tts-state.json 里的 PID 判断）。
+      const stopLocal = () => stopEngine(eng)
       const rvcOn = tts.rvc === undefined ? true : !['false', '0', 'no', 'off'].includes(String(tts.rvc).toLowerCase())
       // 换声音色和唱歌共用服务里那份 RVC 音色库（cfg.song）：这里选完，说话、唱歌、
       // 只读大屏试听用的是同一个音色，不会出现「唱是一个声、说是另一个声」。
@@ -3083,8 +3268,9 @@ code{overflow-wrap:anywhere;word-break:break-word}
           if (r === null) return '正在读…'
           if (!r.ok) return '音频服务没连上：选渠道会自动帮你启动，也可以点「启动音频服务」'
           if (!localChannel) return '当前生效 ' + activeVoice
+          if (localStarting) return '正在启动本机服务…权重加载通常 1–3 分钟，就绪后这里自动变「● 在线」· ' + activeVoice
           if (localOnline === false) return '⚠ 本机服务没起：现在说话会回退到「本机备用渠道」；选的是 ' + activeVoice
-          if (localOnline === true) return '● 本机服务在线 · ' + activeVoice
+          if (localOnline === true) return '● 本机服务在线 · ' + activeVoice + '；切到别的渠道会立刻停掉它，内存和端口一起还回来'
           return '正在检查本机服务状态… · ' + activeVoice
         })() },
           h(Select, {
@@ -3098,9 +3284,25 @@ code{overflow-wrap:anywhere;word-break:break-word}
               { value: 'http', label: '其他 HTTP 接口' },
             ],
           })),
+        // 「另一个本地服务还在跑」：一次只该用一个，两个都开着白占几 GB 内存和端口。
+        otherRunning
+          ? h('div', { className: 'ab-note warn', style: { marginTop: 8 } },
+              h('b', null, '另一个本地服务还在后台跑：' + otherRunning.label + '（' + (otherRunning.port || '') + ' 端口）'),
+              h('div', { className: 'ab-small', style: { marginTop: 4 } },
+                '它现在不用，但模型还常驻在内存里。停掉不影响现在选的渠道；下次要用点「一键启动」就行。'),
+              h(Btn, { small: true, disabled: localBusy, onClick: () => stopEngine(otherRunning.engine) },
+                localBusy ? '正在停…' : '停掉它，释放内存'),
+              localStopError && localStopError.engine === otherRunning.engine
+                ? h('div', { className: 'ab-note err', style: { marginTop: 8 } }, localStopError.message) : null) : null,
         // 「选了本地渠道却听到兜底声音」以前是静默的：服务没起就悄悄回退。
         // 这里把原因摆出来，并给一个不用翻页的启动按钮。
-        localChannel && localOnline === false && r && r.ok
+        localChannel && localStarting && r && r.ok
+          ? h('div', { className: 'ab-note', style: { marginTop: 8 } },
+              h('b', null, '正在启动本机服务…'),
+              h('div', { className: 'ab-small', style: { marginTop: 4 } },
+                '进程已经拉起，正在加载权重（千问 / GPT-SoVITS 通常 1–3 分钟）。' +
+                '就绪后这里会自动变成「● 在线」，不用再点一次；这一句如果现在发出去，走的还是兜底声音。')) : null,
+        localChannel && !localStarting && localOnline === false && r && r.ok
           ? h('div', { className: 'ab-note warn', style: { marginTop: 8 } },
               h('b', null, '这个本地渠道还没在线，所以你听到的是兜底声音'),
               h('div', { className: 'ab-small', style: { marginTop: 4 } },
@@ -3108,6 +3310,16 @@ code{overflow-wrap:anywhere;word-break:break-word}
                 '（通常是 edge-tts），不是上面选的这个渠道。点「一键启动」把服务带起来，看到「● 在线」后下一句就生效。'),
               h(Btn, { small: true, kind: 'primary', disabled: localBusy, onClick: startLocal },
                 localBusy ? '正在拉起…' : '一键启动本渠道服务')) : null,
+        // 在线时也给一个「停掉」的入口：权重常驻动辄 1–3 GB，想省内存不该只能靠切渠道。
+        localChannel && localOnline === true && r && r.ok
+          ? h('div', { className: 'ab-note', style: { marginTop: 8 } },
+              h('div', { className: 'ab-small', style: { marginBottom: 6 } },
+                '这个本地渠道正在跑，模型常驻内存（千问 0.6B 约 1.6 GB，GPT-SoVITS 更多）。' +
+                '不用了可以停掉，端口和内存一起还回来；下次要用点「一键启动」或直接切回这个渠道。'),
+              h(Btn, { small: true, disabled: localBusy, onClick: stopLocal },
+                localBusy ? '正在停…' : '停掉本机服务（释放内存）'),
+              localStopError && localStopError.engine === eng
+                ? h('div', { className: 'ab-note err', style: { marginTop: 8 } }, localStopError.message) : null) : null,
         // 渠道参数紧贴渠道下拉：选完渠道，下面立刻就是它的参数，
         // 不用滚到另一张卡片去对「上面选的是哪个、下面这堆是谁的」。
         r && r.ok ? h(ServiceVoiceDetail, { tts, eng, rvcOn, reload, toast, ctlRef, onDirtyChange })
@@ -3292,7 +3504,14 @@ code{overflow-wrap:anywhere;word-break:break-word}
                 h('path', { d: 'M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zM5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3' })),
               h('input', { value: txt, placeholder: '输入一句话，听听她的声音', onChange: (e) => setTxt(e.target.value), onKeyDown: (e) => e.key === 'Enter' && post('/voice/test', { text: txt }).then(applyTest) }),
               h(Btn, { small: true, kind: 'primary', onClick: async () => applyTest(await post('/voice/test', { text: txt })) }, '生成')),
-            src ? h('audio', { src, controls: true, autoPlay: true, style: { height: 34 } }) : null,
+            src ? h('div', { style: { marginTop: 8 } },
+              h(AudioPlayer, {
+                src, autoPlay: true, toast,
+                // 刚生成的试听也能单条删：只在确实拿到音频文件时给路径（有时回的是目录）
+                path: /\.(wav|mp3|m4a|flac|ogg|aac|opus)$/i.test(savedTo || '') ? savedTo : '',
+                name: savedTo ? String(savedTo).split(/[\\/]/).pop() : '刚生成的试听',
+                onDeleted: () => { setSrc(''); setSavedTo(''); setSavedDir('') },
+              })) : null,
             fallbackReason ? h('div', { className: 'ab-note warn', style: { flex: '1 1 100%', marginTop: 6 } },
               h('b', null, '这句没走你选的渠道'), h('div', { className: 'ab-small' }, fallbackReason)) : null,
             savedTo ? h('div', { style: { marginTop: 8 } },
@@ -5289,7 +5508,35 @@ code{overflow-wrap:anywhere;word-break:break-word}
     /** 参考音频：从库里下拉选、导入新文件、试听、清空。 */
     function RefAudioPicker({ draft, setDraft, toast }) {
       const [d, load] = useResList('/res/refs')
-      const cur = (draft.voice && draft.voice.gptsovits && draft.voice.gptsovits.refAudio) || ''
+      // 参考音频的真源是**音频服务**的 tts.refAudio：合成和试听读的都是它。
+      // 以前这张卡片只写 voice.gptsovits.refAudio —— 本机备用链路读得到，服务读不到，
+      // 于是「选了 d2、看着保存成功、试听还是旧声音」。用户说的「读了缓存」就是这里：
+      // 不是缓存，是写进了一个服务根本不看的字段。现在两边一起写，服务优先。
+      const [svcRef, setSvcRef] = useState('')
+      useEffect(() => {
+        let alive = true
+        get('/tts/config')
+          .then((r) => { if (alive) setSvcRef((r && r.tts && r.tts.refAudio) || '') })
+          .catch(() => { if (alive) setSvcRef('') })
+        return () => { alive = false }
+      }, [])
+      const draftRef = (draft.voice && draft.voice.gptsovits && draft.voice.gptsovits.refAudio) || ''
+      const cur = svcRef || draftRef
+      const applyRef = async (v) => {
+        setDraft(setPath(draft, 'voice.gptsovits.refAudio', v))
+        setSvcRef(v)
+        const r = await post('/tts/config', { refAudio: v })
+          .catch((e) => ({ ok: false, message: e.message }))
+        if (!r || r.ok === false) {
+          toast((r && r.message) || '音频服务没接上：只存了本机备用那份', 'err')
+          return
+        }
+        // 服务会截短超长音频（另存 .gsv.wav），以它返回的路径为准，别显示用户选的那个。
+        const saved = (r.tts && r.tts.refAudio) || v
+        setSvcRef(saved)
+        setDraft(setPath(draft, 'voice.gptsovits.refAudio', saved))
+        toast(v ? '参考音频已换成 ' + String(saved).split(/[\\/]/).pop() + '，下一句生效' : '已清空参考音频', 'ok')
+      }
       const items = (d && d.items) || []
       const options = [{ value: '', label: items.length ? '不指定（用默认）' : '还没有参考音频' },
         ...items.map((x) => ({ value: x.path, label: x.name + (x.managed ? '' : '（库外）') }))]
@@ -5297,7 +5544,8 @@ code{overflow-wrap:anywhere;word-break:break-word}
         for (const f of [...files]) {
           const r = await uploadTo('/res/refs/import', f)
           toast(r.message, r.ok ? 'ok' : 'err')
-          if (r.ok && r.path) setDraft(setPath(draft, 'voice.gptsovits.refAudio', r.path))
+          // 导入完直接设成当前参考音频：服务那份也要跟着换，否则试听还是旧声音
+          if (r.ok && r.path) await applyRef(r.path)
         }
         load()
       }
@@ -5311,12 +5559,13 @@ code{overflow-wrap:anywhere;word-break:break-word}
       }
       return h('div', null,
         h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap' } },
-          h(Select, { value: cur, width: 280, options, onChange: (v) => setDraft(setPath(draft, 'voice.gptsovits.refAudio', v)) }),
+          h(Select, { value: cur, width: 280, options, onChange: applyRef }),
           h(Btn, { small: true, onClick: pick }, '导入音频'),
           h(Btn, { small: true, kind: 'ghost', onClick: () => openDir((d && d.dir) || '', toast) }, '打开目录')),
-        cur ? h('div', { className: 'ab-flex', style: { marginTop: 8, gap: 8, flexWrap: 'wrap' } },
-          h('audio', { src: resUrl(cur), controls: true, preload: 'none', style: { height: 34 } }),
-          h(Btn, { small: true, kind: 'ghost', onClick: () => setDraft(setPath(draft, 'voice.gptsovits.refAudio', '')) }, '清空')) : null,
+        cur ? h('div', { className: 'ab-flex', style: { marginTop: 8, gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
+          h(AudioPlayer, { src: resUrl(cur), path: cur, name: String(cur).split(/[\\/]/).pop(), toast,
+            onDeleted: async () => { await applyRef(''); load() } }),
+          h(Btn, { small: true, kind: 'ghost', onClick: () => applyRef('') }, '清空')) : null,
         !items.length ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 6 } }, '还没有参考音频：点「导入音频」选一段 3–10 秒的干净人声，会自动存进参考音频目录，下次下拉就能选。') : null)
     }
 
@@ -5528,9 +5777,10 @@ code{overflow-wrap:anywhere;word-break:break-word}
             h(Btn, { small: true, kind: 'ghost', onClick: () => adoptOne('model', m, true) }, '留原件导入')))) : null,
         refs.length ? h('div', { style: { marginTop: 10 } },
           h('div', { className: 'ab-muted ab-small' }, '参考音频 ×' + refs.length),
-          refs.slice(0, 40).map((m) => h('div', { key: m.path, className: 'ab-file', style: { marginTop: 6 } },
+          refs.slice(0, 40).map((m) => h('div', { key: m.path, className: 'ab-file', style: { marginTop: 6, flexWrap: 'wrap' } },
             h('div', { className: 'nm' }, h('b', null, m.name), h('div', { className: 'pth' }, m.dir)),
-            h('audio', { src: resUrl(m.path), controls: true, preload: 'none', style: { height: 30, maxWidth: 180, flex: 'none' } }),
+            h(AudioPlayer, { src: resUrl(m.path), path: m.path, name: m.name, toast, compact: true,
+              onDeleted: () => { scan(); onImported && onImported() } }),
             h(Btn, { small: true, kind: 'ghost', onClick: () => adoptOne('ref', m) }, '导入（移动）'),
             h(Btn, { small: true, kind: 'ghost', onClick: () => adoptOne('ref', m, true) }, '留原件导入')))) : null)
     }
@@ -5571,7 +5821,35 @@ code{overflow-wrap:anywhere;word-break:break-word}
             h('div', { className: 'nm' }, h('b', null, x.name), h('div', { className: 'pth' }, x.dir)),
             h('span', { className: 'ab-muted ab-small', style: { flex: 'none' } }, fmtSize(x.bytes)),
             h(Btn, { small: true, kind: 'ghost', onClick: () => openDir(x.dir, toast) }, '打开')))) : null),
-        h(ScanCard, { toast, onImported: loadTts }))
+        h(ScanCard, { toast, onImported: loadTts }),
+        h(AudioLibrary, { toast }))
+    }
+
+    /**
+     * 所有音频一张表：参考音频、试听语音、翻唱成品、原曲缓存、分离中间产物都在这。
+     * 每条都能播放 / 暂停 / 拖进度 / 单独删（进回收站），不用再「清空整个目录」。
+     */
+    function AudioLibrary({ toast }) {
+      const [d, load] = useResList('/res/audio')
+      const [kind, setKind] = useState('')
+      const all = (d && d.items) || []
+      const kinds = [...new Set(all.map((x) => x.kind))]
+      const items = all.filter((x) => !kind || x.kind === kind)
+      const rows = items.map((it) => h('div', { key: it.path, className: 'ab-file', style: { marginTop: 6, flexWrap: 'wrap' } },
+        h('div', { className: 'nm' }, h('b', null, it.name), h('div', { className: 'pth' }, it.dir)),
+        h('span', { className: 'ab-badge dim', style: { flex: 'none' } }, it.kind),
+        h('span', { className: 'ab-muted ab-small', style: { flex: 'none' } }, fmtSize(it.bytes)),
+        h(AudioPlayer, { src: resUrl(it.path), path: it.path, name: it.name, toast, compact: true, onDeleted: load }),
+        h(Btn, { small: true, kind: 'ghost', onClick: () => openDir(it.dir, toast) }, '打开目录')))
+      const body = !d ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } }, '正在读…')
+        : !rows.length ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } }, '这里还没有音频文件。')
+          : h('div', { style: { marginTop: 8 } }, rows)
+      return h(Card, { title: '所有音频', desc: '参考音频、试听语音、翻唱语音、原曲和中间产物，一条一条都能暂停、能删。删除只动这一个文件，先进系统回收站，随时能找回；同一时刻只有一条在播。' },
+        h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
+          h(Select, { value: kind, width: 170, options: [{ value: '', label: '全部类型' }, ...kinds.map((k) => ({ value: k, label: k }))], onChange: setKind }),
+          h(Btn, { small: true, kind: 'ghost', onClick: load }, '刷新'),
+          h('span', { className: 'ab-muted ab-small' }, (d && d.total != null ? d.total : items.length) + ' 个音频文件')),
+        body)
     }
 
     /** 目录与路径：所有目录一处看全，能打开能复制；额外扫描目录也在这配。 */
@@ -5605,7 +5883,8 @@ code{overflow-wrap:anywhere;word-break:break-word}
           h(Row, { label: '模型目录' }, f.list('resources.modelDirs', { placeholder: '一行一个目录' })),
           h(Row, { label: '语音试听输出', hint: '留空 = 数据目录/audio' }, f.text('resources.voiceOutDir', { size: 'wide', placeholder: '留空用默认' })),
           h(Row, { label: 'QQ 成品目录', hint: 'QQ 只允许读 Downloads；留空 = ~/Downloads' }, f.text('resources.qqOutDir', { size: 'wide', placeholder: '留空 = ~/Downloads' }))),
-        h(ScanCard, { toast, onImported: load }))
+        h(ScanCard, { toast, onImported: load }),
+        h(AudioLibrary, { toast }))
     }
 
     /** 制作进度：轮询最近一个作业，画进度条 + 阶段 + 日志。 */
@@ -5663,7 +5942,8 @@ code{overflow-wrap:anywhere;word-break:break-word}
           meta ? h('span', { className: 'ab-muted ab-small' }, meta) : null,
           h('div', { className: 'ab-spacer' }),
           h('span', { className: 'ab-muted ab-small' }, latest.at ? new Date(latest.at * 1000).toLocaleString('zh-CN') : '')),
-        url ? h('audio', { src: url, controls: true, preload: 'none', style: { width: '100%', marginTop: 8, height: 36 } }) : null,
+        url ? h('div', { style: { marginTop: 8 } },
+          h(AudioPlayer, { src: url, path: latest.fileUrl || '', name: latest.title || '最近一首', toast, onDeleted: load })) : null,
         h('div', { className: 'ab-flex', style: { gap: 8, marginTop: 8, flexWrap: 'wrap' } },
           h(Btn, { small: true, kind: 'ghost', onClick: () => copyText(url || latest.fileUrl || '', toast) }, '复制链接'),
           h(Btn, { small: true, kind: 'ghost', onClick: () => openDir((d && d.dir) || '', toast) }, '打开目录'),
@@ -5690,20 +5970,23 @@ code{overflow-wrap:anywhere;word-break:break-word}
         const mode = it.accompanimentLabel || (it.accompaniment ? '带伴奏' : '清唱')
         const len = '唱 ' + fmtDur(Number(it.clipDuration || it.duration || 0) * 1000)
         const when = it.created_at ? new Date(it.created_at * 1000).toLocaleString('zh-CN') : ''
-        return h('div', { key: it.slug, className: 'ab-li' },
+        const removeCover = async () => {
+          if (busy) return
+          if (!confirm('从曲库删掉「' + (it.title || '这首') + '」？只删成品，原曲缓存保留。')) return
+          setBusy(it.slug)
+          try {
+            const r = await post('/song/covers/delete', { slug: it.slug })
+            toast(r.message || (r.ok ? '已删除' : '删除失败'), r.ok ? 'ok' : 'err')
+            await load()
+          } catch (e) { toast('删除失败：' + e.message, 'err') } finally { setBusy('') }
+        }
+        return h('div', { key: it.slug, className: 'ab-li', style: { flexWrap: 'wrap' } },
           h('div', { className: 'body' },
             h('b', null, it.title || '未命名'), it.artist ? h('span', { className: 'ab-muted ab-small', style: { marginLeft: 6 } }, it.artist) : null,
             h('div', { className: 'ab-muted ab-small' }, [it.voice || '默认音色', mode, len, when].filter(Boolean).join(' · '))),
-          it.playUrl ? h('audio', { src: it.playUrl, controls: true, preload: 'none', style: { height: 30, maxWidth: 220, flex: 'none' } }) : null,
-          h(Btn, { small: true, kind: 'ghost', disabled: busy === it.slug, onClick: async () => {
-            if (!confirm('从曲库删掉「' + (it.title || '这首') + '」？只删成品，原曲缓存保留。')) return
-            setBusy(it.slug)
-            try {
-              const r = await post('/song/covers/delete', { slug: it.slug })
-              toast(r.message || (r.ok ? '已删除' : '删除失败'), r.ok ? 'ok' : 'err')
-              await load()
-            } catch (e) { toast('删除失败：' + e.message, 'err') } finally { setBusy('') }
-          } }, '删除'))
+          it.playUrl
+            ? h(AudioPlayer, { src: it.playUrl, name: it.title || '这首翻唱', toast, compact: true, onDelete: removeCover })
+            : h(Btn, { small: true, kind: 'danger', disabled: Boolean(busy), onClick: removeCover }, '删除'))
       }))
     }
 

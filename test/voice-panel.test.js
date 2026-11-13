@@ -423,23 +423,34 @@ function renderQwen(patches) {
   return loadControlled('LocalTtsCard', patches).LocalTtsCard({ engine: 'qwen', toast: noop })
 }
 
-test('千问渠道把 1.6GB 是什么、为什么起不来、现在用哪个讲清楚', () => {
+test('Windows 上把「为什么不通、该走哪条、那 1.6 GB 怎么办」讲清楚', () => {
   const card = renderQwen({
-    1: qwenStatus,
-    2: { ok: true, phase: 'done', files: Array.from({ length: 13 }, (_, i) => ({ name: 'f' + i, done: true })), plan: null },
+    1: { ...qwenStatus, platform: 'win', modelBytes: 1709654240, modelFiles: 13 },
+    2: { ok: true, phase: 'done', files: Array.from({ length: 13 }, (_, i) => ({ name: 'f' + i, done: true })),
+      plan: { available: false, platform: 'win', message: '这台是 Windows，下不了：MLX 格式只能喂给 macOS 的推理后端' } },
     3: { ok: true, phase: 'idle', running: false, plan: { available: false, entry: 'qwen_tts_server.py', installed: false } },
   })
   assert.ok(rendered(card), '不该渲染报错')
   const t = texts(card)
-  assert.match(t, /1\.59/, '要回显真实权重体积，不写死 1.6')
-  assert.match(t, /13 个文件/, '和文件校验清单一致')
-  assert.match(t, /models\/qwen/, '给出权重在本机的绝对路径')
-  assert.match(t, /模型的参数/, '讲清权重不是程序')
-  assert.match(t, /qwen_tts_server\.py/, '点明缺的那个程序')
-  assert.match(t, /MLX 版权重/, '说明和 /synth 契约不配套')
+  assert.match(t, /Windows 上这条路走不通/, '标题要直说是平台问题，不是「你没装好」')
+  assert.match(t, /MLX/, '讲清底层原因：MLX 没有 Windows 版')
+  assert.match(t, /POST \/synth/, '给出唯一的活路：自备 9883 服务')
   assert.match(t, /GPT-SoVITS/, '给出当下可用的替代渠道')
-  assert.match(t, /派上用场/, '回答「什么时候才用得上」')
+  assert.match(t, /1\.59/, '已经占掉的权重体积要按真实值回显，不写死')
+  assert.match(t, /直接删/, '告诉用户这份权重在本机没用，别一直占着')
+  assert.doesNotMatch(t, /macOS 上目前起不来/, '过期文案：内置程序在 macOS 上早就能起来')
   assert.doesNotMatch(t, /github\.com/, '去品牌回归：不写上游外链')
+})
+
+test('千问在 macOS 上程序没装好时，不能说成「这台机器跑不了」', () => {
+  const card = renderQwen({
+    1: qwenStatus,
+    2: { ok: true, phase: 'idle', files: [], plan: { available: true, repo: 'mlx-community/Qwen3-TTS', sizeHint: '约 1.59 GiB' } },
+    3: { ok: true, phase: 'idle', running: false, plan: { available: true, entry: 'qwen_tts_server.py', installed: false } },
+  })
+  const t = texts(card)
+  assert.doesNotMatch(t, /这条路走不通/, '能用的机器不能被判死刑')
+  assert.doesNotMatch(t, /跑不了这条渠道/)
 })
 
 test('千问服务程序是内置的：说清「随插件分发」，不再让用户去别处找', () => {
@@ -454,7 +465,7 @@ test('千问服务程序是内置的：说清「随插件分发」，不再让�
   assert.match(t, /随插件一起分发/, '内置程序要说清来源，不能写成「在源码仓库里」')
   assert.match(t, /放好内置服务程序/, '按钮要如实说是「放好」，不是「获取」')
   assert.doesNotMatch(t, /一键获取服务程序/)
-  assert.doesNotMatch(t, /GiB 是什么/, '能自动装好了就不该再显示「用不上」的警告')
+  assert.doesNotMatch(t, /这条路走不通/, '能自动装好了就不该再显示平台不支持的警告')
 })
 
 test('内置服务程序装好、依赖齐全时，只差一句「点启动」', () => {
@@ -492,4 +503,56 @@ test('千问已在线或服务程序有公开源时，不再重复这块警告',
     3: { ok: true, phase: 'idle', running: false, plan: { available: true, entry: 'api_v2.py' } },
   }).LocalTtsCard({ engine: 'gptsovits', toast: noop })
   assert.doesNotMatch(texts(gs), /GiB 是什么/)
+})
+
+test('另一个本地服务还在跑时，面板明说并给一键停掉', () => {
+  // 用户原话：「我估计是两个都在跑」「后台内存会释放吗？你要释放啊」
+  assert.match(src, /另一个本地服务还在后台跑/)
+  assert.match(src, /停掉它，释放内存/)
+  assert.match(src, /\/tts\/local\/status\?engine=/)
+  assert.match(src, /const otherEngine = eng === 'qwen' \? 'gptsovits' : eng === 'gptsovits' \? 'qwen' : ''/)
+})
+
+test('停不掉时把原因钉在按钮旁边，不能只弹一个 toast', () => {
+  // 用户原话：「关不掉。怎么关都关不掉」。按钮点了、提示块还在、toast 一闪而过，
+  // 跟没点没区别。失败原因（含 PID 和 kill 命令）必须留在提示块里。
+  assert.match(src, /setLocalStopError\(\{ engine, message: why \}\)/)
+  assert.match(src, /localStopError && localStopError\.engine === otherRunning\.engine/)
+  assert.match(src, /localStopError && localStopError\.engine === eng/)
+  assert.match(src, /className: 'ab-note err'/)
+})
+
+test('停服务要把真释放的内存说出来，不是一句「已停掉」', () => {
+  assert.match(src, /freedBytes/)
+  assert.match(src, /内存还回约/)
+  assert.match(src, /停掉本机服务（释放内存）/)
+})
+
+test('在线提示里说明切渠道会连带释放内存和端口', () => {
+  assert.match(src, /切到别的渠道会立刻停掉它，内存和端口一起还回来/)
+})
+
+test('参考音色列表对两个本地渠道都要加载，不能切到千问就清空', () => {
+  // 用户原话：「参考音色这里不显示」。以前这个 effect 只认 gptsovits，
+  // 切到千问就 setRefs([])，下拉里只剩「还没有参考音频」。
+  assert.match(src, /if \(eng !== 'qwen' && eng !== 'gptsovits'\) \{ setRefs\(\[\]\); return \}/)
+  assert.doesNotMatch(src, /if \(eng !== 'gptsovits'\) \{ setRefs\(\[\]\); return \}/)
+})
+
+test('参考音频写的是服务那份 tts.refAudio，不是只写本机备用字段', () => {
+  // 用户原话：「参考音色切换，你根本就读都没读最新的，你读了什么缓存」。
+  // 真相不是缓存：资源库卡片只写 voice.gptsovits.refAudio，合成读的却是
+  // 服务的 tts.refAudio —— 两个字段，选了 d2 也不会生效。
+  assert.match(src, /const applyRef = async \(v\) => \{/)
+  assert.match(src, /post\('\/tts\/config', \{ refAudio: v \}\)/)
+  assert.match(src, /const cur = svcRef \|\| draftRef/)
+})
+
+test('一键启动后自己轮询到就绪，不拿一次返回的 online 判「没启动」', () => {
+  // 用户原话：「我一键启动之后，下面启动那里它还说没启动，我点了两遍它才去校验」。
+  // start() 只等 5 秒，权重加载要 1–3 分钟，所以必须轮询，并显式说「正在启动」。
+  assert.match(src, /const waitLocal = async \(engine, timeoutMs = 180000\)/)
+  assert.match(src, /const ok = await waitLocal\(eng\)/)
+  assert.match(src, /const \[localStarting, setLocalStarting\] = useState\(false\)/)
+  assert.match(src, /正在启动本机服务…/)
 })

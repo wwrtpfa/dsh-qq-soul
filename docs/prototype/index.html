@@ -904,11 +904,11 @@ html[data-theme="light"] .logbox{background:#f3f8f9}
             <table><thead><tr><th>渠道</th><th>要下模型？</th><th>配置键</th></tr></thead><tbody>
               <tr><td><b>edge-tts</b> 微软在线</td><td>否</td><td><code>tts.engine=edge</code></td></tr>
               <tr><td><b>GPT-SoVITS</b> 本地</td><td>是，约 7.7 GB</td><td><code>gptsovits</code> · 9881</td></tr>
-              <tr><td><b>千问 3-TTS</b> 本地</td><td>是，MLX 约 1.6 GB</td><td><code>qwen</code> · 9883</td></tr>
+              <tr><td><b>千问 3-TTS</b> 本地</td><td>仅 Apple Silicon（MLX）</td><td><code>qwen</code> · 9883</td></tr>
               <tr><td><b>Breeze / 云 HTTP</b></td><td>否，填 Key</td><td><code>breeze</code> / <code>http</code></td></tr>
               <tr><td><b>RVC 变声</b> 后处理</td><td>是，.pth + .index</td><td><code>tts.rvc</code></td></tr>
             </tbody></table>
-            <p class="hint" style="margin-top:10px">macOS 没有 Windows 自带语音兜底，备用链路一失败就直接发文字；千问 MLX 权重仅 Apple Silicon。</p>
+            <p class="hint" style="margin-top:10px">macOS 没有 Windows 自带语音兜底，备用链路一失败就直接发文字。千问的 MLX 权重与内置 9883 服务只在 Apple Silicon 上成立；Windows 上这个渠道要自备一个实现 <code>POST /synth</code> 的 9883 服务，想开箱即用就选 GPT-SoVITS。</p>
           </div>
         </div>
 
