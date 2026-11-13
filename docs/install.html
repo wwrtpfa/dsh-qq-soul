@@ -6,8 +6,9 @@
 <title>装「懂你的QQ大肥鱼」 · 离线安装引导</title>
 <!--
   独立安装引导：不依赖 127.0.0.1:9876，双击本文件（file://）就能看全部步骤。
-  运维大屏 /panel 和安装提示词接口 /install/prompt 都要服务起来才有，而「安装」
-  恰恰发生在服务起来之前——所以这一页必须是纯静态的。
+  运行看盘 /panel 和安装提示词接口 /install/prompt 都要服务起来才有，而「安装」
+  恰恰发生在服务起来之前——所以这一页必须是纯静态的。服务起来后，同一套引导
+  归到运行看盘的「安装与体检」一页（/panel#guide），那里还带实时依赖体检与自检。
 
   权威提示词在 docs/INSTALL-WITH-AI.md 的代码块里（服务端 /install/prompt 读它）。
   本页为离线可用内嵌了一份，改提示词时记得同步两处。
@@ -120,7 +121,7 @@
     </div>
     <div class="spacer"></div>
     <button id="svcRetry">重新检测</button>
-    <a id="panelLink" href="http://127.0.0.1:9876/panel" target="_blank" rel="noopener" hidden>打开运维大屏 ↗</a>
+    <a id="panelLink" href="http://127.0.0.1:9876/panel#guide" target="_blank" rel="noopener" hidden>打开运行看盘 · 安装与体检 ↗</a>
   </div>
 
   <h2><span class="n">!</span> 动手之前，先确认 3 件事</h2>
@@ -197,8 +198,8 @@
 
   <h2><span class="n">6</span> 跑一遍自检</h2>
   <div class="step">
-    <h3>该绿的绿了就能用 <span class="where">桌面端 / 运维大屏</span></h3>
-    <p>面板「连接」页的「连接体检」，或运维大屏「引导与原理 → 依赖体检」。必装项看 <code>service / gateway / tts</code>，翻唱是 <code>song</code>（可选）。</p>
+    <h3>该绿的绿了就能用 <span class="where">桌面端 / 运行看盘</span></h3>
+    <p>面板「连接」页的「连接体检」，或运行看盘「<a href="http://127.0.0.1:9876/panel#guide" target="_blank" rel="noopener">安装与体检</a>」一页（依赖体检 + 五步自检都收在那里）。必装项看 <code>service / deps / gateway / tts</code>，翻唱是 <code>song</code>（可选）。</p>
     <div class="note">有红的，把那一步的报错原文复制给 AI 就行。</div>
   </div>
 
@@ -217,7 +218,7 @@
   <details><summary>面板显示「已就绪」，但 QQ 连不上</summary><p>看网关端口有没有在听、插件有没有连上。面板「连接」页的「连接状态」会写清楚是没启动、没连上，还是登录的不是机器人号。</p></details>
   <details><summary>她一次回两条</summary><p>NapCat 里还留着反向连 6700 的旧桥配置。删掉它，只保留正向 WebSocket。</p></details>
   <details><summary>翻唱安装失败，提示找不到 <code>uv</code> / <code>ditto</code></summary><p>这是安装器缺了系统工具。macOS 自带的 <code>ditto</code>、<code>curl</code>、<code>tar</code> 一般都在；<code>uv</code> 会自动下载到安装目录，失败时把「详细日志」整段复制给 AI。</p></details>
-  <details><summary>网页大屏和桌面端看到的数不一样</summary><p>两边读同一份配置，但分工不同：桌面端是<b>唯一的写入口</b>，网页只做日志、用量、作业进度、成品目录、模型库浏览。看到「去桌面端」就回面板找对应卡片。</p></details>
+  <details><summary>网页看盘和桌面端看到的数不一样</summary><p>两边读同一份配置，但分工不同：桌面端是<b>唯一的写入口</b>，网页只做日志、用量、作业进度、成品目录、模型库浏览。看到「去桌面端」就回面板找对应卡片。</p></details>
 
   <div class="foot">
     <span>离线页：<span class="tag">docs/install.html</span></span>
@@ -278,7 +279,7 @@
         ? '5. 翻唱（RVC）：面板「翻唱」→「一键安装」。macOS 约 5 GB；'
         : '5. 翻唱（RVC）：面板「翻唱」→「一键安装」。Windows 约 8 GB；',
       '   装到哪直接点面板里的位置按钮，别让我手打路径。装完在「音色模型」导入我有权使用的 .pth。',
-      '6. 跑一遍自检（面板「连接体检」或运维大屏「依赖体检」）：service / deps / gateway / tts 这几项必装，',
+      '6. 跑一遍自检（面板「连接体检」或运行看盘「安装与体检」）：service / deps / gateway / tts 这几项必装，',
       '   song 是翻唱可选。有红的，把那一步的报错原文贴给你。',
       '',
       '每一步做完，请用一句话告诉我「刚才做了什么、现在是什么状态、下一步要干嘛」。',

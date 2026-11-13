@@ -2,13 +2,15 @@
 //
 // 面板只调这里，不各自去拼路径。三条硬规则：
 //   ① 扫描只读——本机别处的资源先「发现」，不搬不改；
-//   ② 导入 / 改名 / 删除只动受管目录（dataDir 下面），外来文件先复制进来；
+//   ② 导入默认「移动」进受管目录，绝不留两份占几 GB；只有 ~/tools/models
+//      （用户说这份下载不到）以及显式 keepSource 才复制，删除只动受管目录；
 //   ③ 所有 path 参数都要过 inside()，不让人用 ../ 读到受管目录外面去。
 
 import {
   readdirSync, statSync, existsSync, mkdirSync, writeFileSync,
   copyFileSync, rmSync, renameSync, openSync, readSync, closeSync,
 } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { basename, extname, join, resolve, sep, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { dataDir } from '../core/store.js'
@@ -522,28 +524,140 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
     return { ok: true, refs: refItems, models: modelItems, refDirs: refCands, modelDirs: modelCands }
   }
 
-  /** 把扫描到的东西搬进受管目录（复制，不删原件）。 */
-  function adopt(kind, path) {
+  /**
+   * 导入 = **移动**进受管目录，默认不留两份占空间（用户明确要求「不能 copy」）。
+   *
+   * 两个例外都如实告诉用户：
+   *   ① 这份文件在 ~/tools/models（用户说过「下载不到」，必须留着）→ 默认复制，
+   *      message 里说明原因；想连原件一起搬走就传 forceMove: true。
+   *   ② 跨设备 / 权限导致 renameSync 不能改名 → 复制 + 核对字节 + 原件进系统
+   *      回收站（绝不 rm），mode = copy-then-trash。
+   * 配对的 .index 跟着一起走，不会留在原目录变成孤儿。
+   */
+  function adopt(kind, path, opts = {}) {
     const src = String(path || '')
     if (!existsSync(src)) return { ok: false, message: '这个文件已经不在了' }
     const dir = kind === 'model' ? rvcLibrary() : roots().refs
+    if (inside(dir, src)) return { ok: true, path: src, source: src, moved: false, mode: 'already', message: '本来就在资源库里' }
     mkdirSync(dir, { recursive: true })
     const name = clean(basename(src))
     let dest = join(dir, name)
     if (existsSync(dest)) {
       const st = statOf(dest)
-      if (st.bytes === statOf(src).bytes) return { ok: true, path: dest, message: `「${name}」已经在库里了` }
+      if (st.bytes === statOf(src).bytes) {
+        return { ok: true, path: dest, source: src, pairedIndex: '', moved: false, mode: 'already',
+                 message: `「${name}」已经在库里了（原件没动）` }
+      }
       dest = join(dir, `${name.replace(/\.[^.]+$/, '')}-${Date.now()}${extname(name)}`)
     }
-    copyFileSync(src, dest)
+    // 下载不到的原件目录：默认保留，别把用户唯一的一份搬走
+    const precious = inside(join(homedir(), 'tools', 'models'), src)
+    const keepSource = Boolean(opts.keepSource) || (precious && !opts.forceMove)
+
+    // 先找配对的 .index，移动 / 复制时一起处理
+    let pairedIndex = ''
     if (kind === 'model') {
       const id = basename(src).slice(0, -4)
       try {
         const hit = readdirSync(resolve(src, '..')).find((n) => n.toLowerCase().endsWith('.index') && n.toLowerCase().startsWith(id.toLowerCase()))
-        if (hit) copyFileSync(join(resolve(src, '..'), hit), join(dir, basename(dest).slice(0, -4) + '.index'))
+        if (hit) pairedIndex = join(resolve(src, '..'), hit)
       } catch (error) {}
     }
-    return { ok: true, path: dest, message: `已导入 ${name}` }
+
+    const moveOne = (from, to) => {
+      if (keepSource) { copyFileSync(from, to); return 'copy' }
+      try {
+        renameSync(from, to)
+        return 'move'
+      } catch (error) {
+        if (!['EXDEV', 'EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) throw error
+        // 跨设备只能复制：核对成功才把原件移进回收站，磁盘上不会长期留两份
+        copyFileSync(from, to)
+        const a = statOf(from), b = statOf(to)
+        if (a.bytes !== b.bytes) {
+          rmSync(to, { force: true })
+          throw new Error('复制后字节数对不上，原件保留着没动')
+        }
+        moveToTrash(from)
+        return 'copy-then-trash'
+      }
+    }
+
+    let mode
+    try { mode = moveOne(src, dest) } catch (error) {
+      return { ok: false, message: `没搬成：${error.message}。原件还在原处。` }
+    }
+    let indexMoved = false
+    if (pairedIndex && existsSync(pairedIndex)) {
+      try { moveOne(pairedIndex, join(dir, basename(dest).slice(0, -4) + '.index')); indexMoved = true }
+      catch (error) { log.warn?.('配对的 .index 没搬成：', error.message) }
+    }
+    const note = mode === 'move' ? '已移动进库，原件不再保留，不会占两份'
+      : mode === 'copy-then-trash' ? '跨设备复制后原件已进回收站，不会长期占两份'
+        : precious ? '这份在 ~/tools/models（下载不到），已默认保留原件；会占两份，可手动删'
+          : '按你的选择保留了原件（会占两份）'
+    return {
+      ok: true, path: dest, source: src, pairedIndex: indexMoved ? pairedIndex : '',
+      moved: mode === 'move' || mode === 'copy-then-trash', mode, keepSource, precious,
+      message: `已导入 ${name}：${note}`,
+    }
+  }
+
+  /** 系统回收站语义：任何平台都绝不 rm 原件。没有可用的回收站就明确报错。 */
+  function moveToTrash(target) {
+    const abs = resolve(target)
+    if (process.platform === 'darwin') {
+      // macOS 自带 /usr/bin/trash：走系统废纸篓，不需要 Finder 的完全磁盘访问权限
+      if (existsSync('/usr/bin/trash')) {
+        execFileSync('/usr/bin/trash', [abs], { timeout: 20000 })
+        return
+      }
+      const quoted = abs.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      execFileSync('osascript', ['-e', `tell application "Finder" to delete POSIX file "${quoted}"`], { timeout: 20000 })
+      return
+    }
+    if (process.platform === 'win32') {
+      const escaped = abs.replace(/'/g, "''")
+      const ps = `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${escaped}',[Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,[Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)`
+      execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeout: 20000 })
+      return
+    }
+    execFileSync('gio', ['trash', abs], { timeout: 20000 })
+  }
+
+  /**
+   * 导入成功后「一键删原件」：只把刚复制进库的那份来源移进回收站，省掉两份占空间。
+   * 三重校验，避免误删：① 导入产物存在且字节数与原件一致；② 原件不在任何受管目录里；
+   * ③ 只走回收站（macOS /usr/bin/trash、Windows Shell 回收站 API、Linux gio trash）。
+   */
+  function deleteSource({ path: srcPath, importedPath, index = '' } = {}) {
+    const src = String(srcPath || '')
+    const dest = String(importedPath || '')
+    if (!src || !existsSync(src)) return { ok: false, message: '原件已经不在了' }
+    if (!dest || !existsSync(dest)) return { ok: false, message: '还没导入成功，不能删原件' }
+    const a = statOf(src), b = statOf(dest)
+    if (!a.isFile || !b.isFile || a.bytes !== b.bytes) {
+      return { ok: false, message: '导入的那份和原件对不上，先重新导入再删' }
+    }
+    if (canTouch(src) || inside(roots().refs, src)) {
+      return { ok: false, message: '这个路径是资源库自己的文件，不是原件' }
+    }
+    const targets = [src]
+    if (index && existsSync(index) && !canTouch(index)) targets.push(String(index))
+    const moved = []
+    try {
+      for (const t of targets) { moveToTrash(t); moved.push(t) }
+    } catch (error) {
+      return {
+        ok: false,
+        message: `没删成：${error.message}${moved.length ? `（已移走 ${moved.length} 个）` : ''}。请在文件管理器里手动删，或授权后再试。`,
+      }
+    }
+    const bin = process.platform === 'win32' ? '回收站' : '废纸篓'
+    return {
+      ok: true, moved,
+      message: `原件已移进${bin}：${moved.map((p) => basename(p)).join('、')}。清空${bin}后才真正腾出空间。`,
+    }
   }
 
   // ---------------------------------------------------------------- 打开 / 读文件
@@ -620,7 +734,7 @@ export function createResources({ getConfig = () => ({}), log = console } = {}) 
   return {
     roots, paths, listRefs, importRef, deleteRef,
     listRvc, importRvc, renameRvc, deleteRvc, looksLikePth,
-    listTts, importTts, scan, adopt, readable, readAudio, canTouch, canOpen, clear,
+    listTts, importTts, scan, adopt, deleteSource, readable, readAudio, canTouch, canOpen, clear,
   }
 }
 

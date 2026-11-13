@@ -339,6 +339,27 @@ class ServiceConfig:
         self._write_config(lambda p: p.setdefault("paths", {}).update(incoming))
         return dict(self.paths)
 
+    def clear_paths(self, keys) -> dict:
+        """显式清掉失效的旧路径。
+
+        之前 ``save_paths`` 会丢掉空字符串，所以「选过的目录被删 / 移走」以后
+        config.json 里那条路径永远清不掉，面板一直显示一个不存在的旧目录。
+        这里给一个明确的删除入口：只有点「清除」才会删，不悄悄改用户配置。
+        """
+        wanted = {str(k).strip() for k in (keys or []) if str(k).strip()}
+        if not wanted:
+            return dict(self.paths)
+        self.paths = {k: v for k, v in self.paths.items() if k not in wanted}
+
+        def mutate(payload: dict) -> None:
+            section = dict(payload.get("paths") or {})
+            for key in wanted:
+                section.pop(key, None)
+            payload["paths"] = section
+
+        self._write_config(mutate)
+        return dict(self.paths)
+
     # ---------------------------------------------------------------- 说话 / 唱歌参数
     @staticmethod
     def _guard_engine(engine: str, tts: dict) -> None:

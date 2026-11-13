@@ -107,6 +107,20 @@ export function createServiceClient({ getConfig = () => ({}), fetchImpl = global
     setRef: (payload) => call('/refs', { method: 'POST', body: payload }),
     modelsLocal: () => call('/models/local'),
     setModel: (payload) => call('/models/local', { method: 'POST', body: payload }),
+    clearModel: (engine) => call('/models/clear', { method: 'POST', body: { engine } }),
+    // 本地 TTS（千问 9883 / GPT-SoVITS 9881）：插件自管安装、启动、在线状态
+    localTtsStatus: (engine) => call('/tts/local/status?engine=' + encodeURIComponent(engine || '')),
+    localTtsAction: (action, payload) => call('/tts/local/' + action, { method: 'POST', body: payload }),
+    // 联网一键下载：起后台 job，面板轮询 download/status 看逐文件绿 / 没绿
+    localTtsDownloadStatus: (engine) => call('/tts/local/download/status?engine=' + encodeURIComponent(engine || '')),
+    localTtsDownload: (payload) => call('/tts/local/download', { method: 'POST', body: payload }),
+    localTtsDownloadCancel: (engine) => call('/tts/local/download/cancel', { method: 'POST', body: { engine } }),
+    // 服务程序（启动入口）：权重 ≠ 程序，这条补 api_v2.py 和它的 Python 依赖
+    localTtsRuntimeStatus: (engine) => call('/tts/local/runtime/status?engine=' + encodeURIComponent(engine || '')),
+    localTtsRuntimeFetch: (payload) => call('/tts/local/runtime/fetch', { method: 'POST', body: payload }),
+    localTtsRuntimeDeps: (payload) => call('/tts/local/runtime/deps', { method: 'POST', body: payload }),
+    localTtsRuntimeCancel: (kind, engine) => call('/tts/local/runtime/' + (kind === 'deps' ? 'deps' : 'fetch') + '/cancel',
+      { method: 'POST', body: { engine } }),
     logs: (source, level) => call('/logs?source=' + encodeURIComponent(source || 'service') + (level ? '&level=' + level : '')),
     latestSong: () => call('/song/latest'),
     covers: () => call('/song/covers'),

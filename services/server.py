@@ -44,6 +44,9 @@ from .song.cover_cache import (
 from .song.pipeline import JobCancelled, SongPipeline
 from . import stack as stack_mod
 from . import tools as tools_mod
+from . import local_tts as local_tts_mod
+from . import model_download as model_download_mod
+from . import runtime_fetch as runtime_fetch_mod
 from .tts.pipeline import TTSEngine
 from .tts.providers import ServiceError
 
@@ -52,6 +55,11 @@ INSTALL_DOC = Path(__file__).resolve().parents[1] / "docs" / "INSTALL-WITH-AI.md
 #: 独立安装引导：纯静态、双击可用，不依赖 service。/panel 里的向导页只链到它，
 #: 免得「装服务」这一步的说明反而要等服务起来才看得到。
 INSTALL_GUIDE_HTML = Path(__file__).resolve().parents[1] / "docs" / "install.html"
+#: 运行看盘「功能课堂」的完整流程文档。面板是单文件 HTML，正文不塞进去，
+#: 只在 9876 托管时按白名单提供这几份 md；双击 file:// 打开时改链仓库相对路径。
+#: 前五份对应五堂课，module-market 是桌宠那堂课里链过去的模块市场说明。
+FLOWS_DIR = Path(__file__).resolve().parents[1] / "docs" / "flows"
+CLASSROOM_DOCS = ("memory", "song", "tts", "speakup", "pet", "module-market")
 
 #: 打包后 docs 可能被裁剪，兜底给一段最短可用的提示词，面板永远有东西可复制。
 PROMPT_FALLBACK = """我要在我的电脑上装一个叫「懂你的QQ大肥鱼」的 DSH 插件。
@@ -276,9 +284,13 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
             return self.rfile.read(length) if length else b""
 
         def _authorized(self, path: str, query: dict) -> bool:
-            # /panel 只给静态 HTML；数据接口仍然需要 token
+            # /panel 与功能课堂文档只给静态内容；数据接口仍然需要 token
             if path in ("/healthz", "/panel"):
                 return True
+            if path.startswith("/classroom/doc/"):
+                stem = path[len("/classroom/doc/"):]
+                if stem.endswith(".md") and stem[:-3] in CLASSROOM_DOCS:
+                    return True
             token = str(ctx.cfg.token or "")
             if not token:
                 return True  # 只绑 127.0.0.1，本地开发期不强制 token
@@ -360,6 +372,19 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
                     return self._json(404, {"ok": False, "code": "PANEL_MISSING",
                                             "message": "找不到面板文件：" + str(PANEL_HTML)})
                 return self._bytes(200, PANEL_HTML.read_bytes(), "text/html; charset=utf-8")
+
+            # 「功能课堂」的完整文档。文件名走白名单，杜绝路径穿越；
+            # 服务没起来时用户仍可直接双击 docs/flows/<name>.md 看同一份内容。
+            if method == "GET" and path.startswith("/classroom/doc/"):
+                name = path[len("/classroom/doc/"):]
+                if not name.endswith(".md") or name[:-3] not in CLASSROOM_DOCS:
+                    return self._json(404, {"ok": False, "code": "CLASSROOM_DOC_MISSING",
+                                            "message": "没有这堂课：" + name})
+                doc = FLOWS_DIR / name
+                if not doc.is_file():
+                    return self._json(404, {"ok": False, "code": "CLASSROOM_DOC_MISSING",
+                                            "message": "找不到文档：" + str(doc)})
+                return self._bytes(200, doc.read_bytes(), "text/markdown; charset=utf-8")
 
             # 安装引导的在线入口。文件本身就是离线页，这里只是让 /panel 能链过去；
             # 服务没起来时用户仍可直接双击 docs/install.html 看同一份内容。
@@ -498,6 +523,10 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
             # 把本机旧配置整包搬过来（只读旧文件，不改它）
             if method == "POST" and path == "/adopt":
                 return self._json(200, tools_mod.adopt_local(ctx.cfg))
+
+            if method == "POST" and path == "/models/clear":
+                body = self._body()
+                return self._json(200, tools_mod.clear_model(ctx.cfg, str(body.get("engine") or "")))
 
             if path == "/models/local" and method in ("GET", "POST"):
                 if method == "GET":
@@ -949,6 +978,80 @@ def _make_handler(ctx: ServiceContext, quiet: bool):
             if method == "POST" and path.startswith("/song/jobs/") and path.endswith("/cancel"):
                 job_id = path[len("/song/jobs/"):-len("/cancel")]
                 return self._json(200, {"ok": ctx.jobs.cancel(job_id)})
+
+            # --------------------------------- 本地 TTS 一键安装 / 启动 / 在线状态
+            # 插件自己管 9883 / 9881，不转发给 qq-stack.sh（那是本地开发环境遗留逻辑）
+            if method == "GET" and path == "/tts/local/status":
+                engine = str((query.get("engine") or [""])[0] or ctx.cfg.tts_engine)
+                return self._json(200, local_tts_mod.status(ctx.cfg, engine))
+
+            # 真·联网一键下载：后台线程跑，HTTP 立刻返回；面板轮询这份进度
+            if method == "GET" and path == "/tts/local/download/status":
+                engine = str((query.get("engine") or [""])[0] or ctx.cfg.tts_engine)
+                return self._json(200, model_download_mod.download_status(ctx.cfg, engine))
+            if method == "POST" and path == "/tts/local/download/cancel":
+                body = self._body()
+                engine = str(body.get("engine") or ctx.cfg.tts_engine)
+                return self._json(200, model_download_mod.cancel_download(ctx.cfg, engine))
+            if method == "POST" and path == "/tts/local/download":
+                body = self._body()
+                engine = str(body.get("engine") or ctx.cfg.tts_engine)
+                try:
+                    result = model_download_mod.start_download(
+                        ctx.cfg, engine, str(body.get("profile") or "default"),
+                        auto_start=body.get("autoStart", True) is not False)
+                except ValueError as exc:
+                    return self._json(400, {"ok": False, "code": "DOWNLOAD",
+                                            "message": str(exc), "engine": engine})
+                return self._json(200, result)
+
+            # 服务程序（启动入口）一键获取 + 依赖安装：权重 ≠ 程序，这条是补程序
+            if method == "GET" and path == "/tts/local/runtime/status":
+                engine = str((query.get("engine") or [""])[0] or ctx.cfg.tts_engine)
+                return self._json(200, runtime_fetch_mod.runtime_status(ctx.cfg, engine))
+            if method == "POST" and path in (
+                    "/tts/local/runtime/fetch", "/tts/local/runtime/fetch/cancel",
+                    "/tts/local/runtime/deps", "/tts/local/runtime/deps/cancel"):
+                body = self._body()
+                engine = str(body.get("engine") or ctx.cfg.tts_engine)
+                try:
+                    if path == "/tts/local/runtime/fetch/cancel":
+                        result = runtime_fetch_mod.cancel_fetch(ctx.cfg, engine)
+                    elif path == "/tts/local/runtime/deps/cancel":
+                        result = runtime_fetch_mod.cancel_deps(ctx.cfg, engine)
+                    elif path == "/tts/local/runtime/deps":
+                        result = runtime_fetch_mod.start_deps(ctx.cfg, engine)
+                    else:
+                        result = runtime_fetch_mod.start_fetch(ctx.cfg, engine)
+                except ValueError as exc:
+                    return self._json(400, {"ok": False, "code": "RUNTIME",
+                                            "message": str(exc), "engine": engine})
+                return self._json(200, result)
+
+            if method == "POST" and path.startswith("/tts/local/") and not path.startswith(("/tts/local/download", "/tts/local/runtime")):
+                action = path[len("/tts/local/"):]
+                if action not in ("install", "start", "stop", "check"):
+                    return self._json(404, {"ok": False, "message": "没这个操作：" + action})
+                body = self._body()
+                engine = str(body.get("engine") or ctx.cfg.tts_engine)
+                try:
+                    if action == "install":
+                        result = local_tts_mod.install(
+                            ctx.cfg, engine, str(body.get("source") or ""),
+                            str(body.get("target") or "auto"),
+                            keep_source=bool(body.get("keepSource")),
+                            folder=str(body.get("folder") or ""))
+                    elif action == "start":
+                        result = local_tts_mod.start(ctx.cfg, engine)
+                    elif action == "stop":
+                        result = local_tts_mod.stop(ctx.cfg, engine)
+                    else:
+                        result = local_tts_mod.status(cfg=ctx.cfg, engine=engine)
+                except (ValueError, OSError) as exc:
+                    return self._json(400, {"ok": False, "code": "LOCAL_TTS",
+                                            "message": str(exc), "engine": engine,
+                                            "status": local_tts_mod.status(ctx.cfg, engine)})
+                return self._json(200, result)
 
             # ------------------------------------------------ P5 双平台安装器
             if method == "GET" and path == "/install/plan":

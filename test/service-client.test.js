@@ -153,3 +153,82 @@ test('rvcVoices / selectRvc：换声音色读 /models/rvc，选中用 action=sel
     assert.deepEqual(JSON.parse(seen[1].body), { action: 'select', name: 'FeiyuVoice-RVC-v1' })
   })
 })
+
+// 本地 TTS 自管链路（千问 9883 / GPT-SoVITS 9881）：面板经这里转发，
+// 路径写错的话按钮点了没反应，而 Python 侧测试全绿也发现不了。
+test('clearModel / localTtsStatus / localTtsAction 打到本地 TTS 专用路由', async () => {
+  await withServer((_req, res) => reply(res, 200, { ok: true, phase: 'not-installed' }), async (url, seen) => {
+    const client = createServiceClient({ getConfig: () => ({ service: { enabled: true, url } }) })
+    const st = await client.localTtsStatus('qwen')
+    assert.equal(st.phase, 'not-installed')
+    await client.clearModel('qwen')
+    await client.localTtsStatus('GPT 中文')
+    await client.localTtsAction('install', { engine: 'qwen', source: '/tmp/qwen-pack' })
+    await client.localTtsAction('start', { engine: 'gptsovits' })
+    await client.localTtsAction('check', { engine: 'qwen' })
+    assert.deepEqual(seen.map((r) => [r.method, r.url]), [
+      ['GET', '/tts/local/status?engine=qwen'],
+      ['POST', '/models/clear'],
+      ['GET', '/tts/local/status?engine=GPT%20%E4%B8%AD%E6%96%87'],
+      ['POST', '/tts/local/install'],
+      ['POST', '/tts/local/start'],
+      ['POST', '/tts/local/check'],
+    ])
+    assert.deepEqual(JSON.parse(seen[1].body), { engine: 'qwen' })
+    assert.deepEqual(JSON.parse(seen[3].body), { engine: 'qwen', source: '/tmp/qwen-pack' })
+    assert.deepEqual(JSON.parse(seen[4].body), { engine: 'gptsovits' })
+  })
+})
+
+test('本地 TTS 的 engine 为空也要能取状态，交给后端兜底', async () => {
+  await withServer((_req, res) => reply(res, 200, { ok: true }), async (url, seen) => {
+    const client = createServiceClient({ getConfig: () => ({ service: { enabled: true, url } }) })
+    await client.localTtsStatus('')
+    assert.equal(seen[0].url, '/tts/local/status?engine=')
+  })
+})
+
+// 真·联网一键下载：status 轮询 / 起 job / 暂停，三条路径都不能被
+// server.py 的通用 `/tts/local/<action>` 路由吞掉。
+test('localTtsDownload* 三条下载路由与请求体正确', async () => {
+  await withServer((_req, res) => reply(res, 200, { ok: true, phase: 'downloading' }), async (url, seen) => {
+    const client = createServiceClient({ getConfig: () => ({ service: { enabled: true, url } }) })
+    const st = await client.localTtsDownloadStatus('qwen')
+    assert.equal(st.phase, 'downloading')
+    await client.localTtsDownload({ engine: 'gptsovits', profile: 'default', autoStart: false })
+    await client.localTtsDownloadCancel('qwen')
+    await client.localTtsDownloadStatus('')
+    assert.deepEqual(seen.map((r) => [r.method, r.url]), [
+      ['GET', '/tts/local/download/status?engine=qwen'],
+      ['POST', '/tts/local/download'],
+      ['POST', '/tts/local/download/cancel'],
+      ['GET', '/tts/local/download/status?engine='],
+    ])
+    assert.deepEqual(JSON.parse(seen[1].body), { engine: 'gptsovits', profile: 'default', autoStart: false })
+    assert.deepEqual(JSON.parse(seen[2].body), { engine: 'qwen' })
+  })
+})
+
+// 服务程序（启动入口）：权重 ≠ 程序。状态 / 下源码包 / 装依赖 / 暂停四条都要通。
+test('localTtsRuntime* 四条服务程序路由与请求体正确', async () => {
+  await withServer((_req, res) => reply(res, 200, { ok: true, phase: 'downloading' }), async (url, seen) => {
+    const client = createServiceClient({ getConfig: () => ({ service: { enabled: true, url } }) })
+    const st = await client.localTtsRuntimeStatus('gptsovits')
+    assert.equal(st.phase, 'downloading')
+    await client.localTtsRuntimeFetch({ engine: 'gptsovits' })
+    await client.localTtsRuntimeDeps({ engine: 'gptsovits' })
+    await client.localTtsRuntimeCancel('fetch', 'gptsovits')
+    await client.localTtsRuntimeCancel('deps', 'gptsovits')
+    await client.localTtsRuntimeStatus('')
+    assert.deepEqual(seen.map((r) => [r.method, r.url]), [
+      ['GET', '/tts/local/runtime/status?engine=gptsovits'],
+      ['POST', '/tts/local/runtime/fetch'],
+      ['POST', '/tts/local/runtime/deps'],
+      ['POST', '/tts/local/runtime/fetch/cancel'],
+      ['POST', '/tts/local/runtime/deps/cancel'],
+      ['GET', '/tts/local/runtime/status?engine='],
+    ])
+    assert.deepEqual(JSON.parse(seen[1].body), { engine: 'gptsovits' })
+    assert.deepEqual(JSON.parse(seen[3].body), { engine: 'gptsovits' })
+  })
+})

@@ -31,6 +31,7 @@ import { parseCommand, runCommand, createMutes, commandList } from './chat/comma
 import { listPersonas, readPersona, savePersona, deletePersona, currentPersonaText, rulesText, seedPersonas } from './persona/personas.js'
 import { createModules, API_VERSION } from './core/modules.js'
 import { createCommunity } from './core/community.js'
+import { electronHealth, repairElectron } from './core/electron-runtime.js'
 import { createApprovalRelay } from './security/approval.js'
 import { captureSystemPrompt } from './security/leak-guard.js'
 import { applyPendingRestore, cancelRestore, createBackup, listBackups, pendingModules, pendingRestore, saveUpload, setPendingModules, stageRestore } from './core/backup.js'
@@ -865,7 +866,29 @@ export function apply(ctx) {
     log.info(`面板已保存目的引擎设置｜${Object.keys(extPatch).map((k) => k + '=' + extPatch[k]).concat(Object.keys(spPatch).map((k) => k + '=' + spPatch[k])).join(' ')}`)
     return { ok: true, purpose: purposeOverview() }
   })
-  route('/panel/pet/status', async () => ({ ok: true, pet: petStatus() }))
+  // 面板要把完整绝对路径摊开给用户看（原来只写 modules-data/pet/app，路径显示不全、也没法复制）。
+  // 模块没装时这几个目录仍然有意义：用户照着路径能自己把客户端/素材放进去。
+  route('/panel/pet/status', async () => {
+    // 桌宠不是内置模块：把「到底装的是哪个模块、哪个版本、从哪来」一并给面板，别让用户对着开关猜。
+    const m = mods.status().find((x) => x.id === 'pet') || null
+    return {
+      ok: true,
+      pet: petStatus(),
+      module: m ? {
+        id: m.id, name: m.name, version: m.version, running: m.running,
+        builtin: m.builtin, community: m.community, userDir: m.userDir,
+      } : null,
+      paths: {
+        dataDir: dataDir(),
+        moduleDir: dataDir('modules', 'pet'),
+        clientDir: dataDir('modules-data', 'pet', 'app'),
+        packsDir: dataDir('modules-data', 'pet', 'packs'),
+      },
+      // Electron 运行时体检：macOS 官方 zip 里的 framework 符号链接被纯 JS 解压器跳过后，
+      // 「已装」但一点启动就弹「Electron 因为出现问题而无法打开」。面板据此提示一键修复。
+      electron: electronHealth(dataDir('modules-data', 'pet', 'app')),
+    }
+  })
   // 桌宠页下方的设置项：碎碎念（桌宠自己的气泡流）+ 干活状态动画/结束提醒
   route('/panel/pet/config', async (req) => {
     const b = await readBody(req)
@@ -919,8 +942,8 @@ export function apply(ctx) {
     // 这里是唯一写入通道。
     if (typeof b.allowInsecureRemote === 'boolean') patch.allowInsecureRemote = b.allowInsecureRemote
     if (Number.isFinite(b.tokenTtlDays)) patch.tokenTtlDays = Math.min(3650, Math.max(0, Math.floor(b.tokenTtlDays)))
-    // 行为大脑的模块级设置（AI 自己改不了，只有主人能改）。pet 是**内置模块**，
-    // 它的 settings schema 不会渲染成表单（面板只给「用户自己复制出来的模块」生成），
+    // 行为大脑的模块级设置（AI 自己改不了，只有主人能改）。pet 是**单独安装的社区模块**
+    // （BUILTINS 里没有它，1.2.0 起搬到社区库），它的 settings schema 不会渲染成表单，
     // 所以这里是这些开关唯一的写入通道——不补，关窗物理闸就永远打不开。
     for (const k of ['behaviorEnabled', 'behaviorIconMischiefEnabled', 'behaviorCloseWindowEnabled']) {
       if (typeof b[k] === 'boolean') patch[k] = b[k]
@@ -995,13 +1018,30 @@ export function apply(ctx) {
     if (publicBaseUrlOf()) return remotePetHint()
     const pet = use('pet')
     if (typeof pet?.electronInstall !== 'function') return { ok: false, available: false, message: '桌宠模块还没就绪，装不了 Electron' }
-    return { ok: true, result: redactTokens(await pet.electronInstall()) }
+    const r = redactTokens(await pet.electronInstall())
+    // 模块自带的纯 JS 解压会丢掉 macOS framework 符号链接：装完立刻补，别让用户点「启动」才炸。
+    const fix = repairElectron(dataDir('modules-data', 'pet', 'app'))
+    const health = electronHealth(dataDir('modules-data', 'pet', 'app'))
+    const extra = fix.fixed.length ? `；已补回 ${fix.fixed.length} 个 macOS framework 链接` : ''
+    return { ok: true, result: { ...r, repaired: fix.fixed.length, healthy: health.healthy, message: `${r?.message || 'Electron 安装完成'}${extra}` }, electron: health }
+  })
+  // 一键修：本机已经解坏了也不用重下 115MB，只把 14 个符号链接补回来（Windows 直接返回无需修复）
+  route('/panel/pet/electron-repair', async () => {
+    const fix = repairElectron(dataDir('modules-data', 'pet', 'app'))
+    return { ok: Boolean(fix.ok), message: fix.message, fixed: fix.fixed, electron: fix.health }
   })
   route('/panel/pet/launch', async () => {
     if (publicBaseUrlOf()) return remotePetHint()
     const pet = use('pet')
     if (typeof pet?.launch !== 'function') return { ok: false, available: false, message: '桌宠模块还没就绪，启动不了桌宠' }
-    return { ok: true, result: redactTokens(await Promise.resolve(pet.launch())) }
+    // 启动前先自愈：老版本装出来的残缺 Electron.app 在这里补链接，避免系统弹「无法打开」。
+    const app = dataDir('modules-data', 'pet', 'app')
+    const fix = repairElectron(app)
+    const health = electronHealth(app)
+    if (!health.installed) return { ok: false, message: 'Electron 还没安装：先在最上面点「安装 Electron」' }
+    if (!health.healthy) return { ok: false, message: `Electron 安装不完整（${health.problems.join('；')}）：点「修复 Electron」或重新安装`, electron: health }
+    if (fix.fixed.length) log.info(`启动前自动补全 Electron framework 链接 ${fix.fixed.length} 个`)
+    return { ok: true, result: redactTokens(await Promise.resolve(pet.launch())), electron: health }
   })
   route('/panel/pet/stop', async () => {
     const pet = use('pet')
@@ -1600,7 +1640,8 @@ export function apply(ctx) {
   route('/local/status', async () => ({ ok: true, dir: local.dir(), list: local.status() }))
   route('/local/template', async (req) => {
     const slot = String((await readBody(req)).slot || '')
-    if (!local.pathOf || !['tts', 'image', 'song', 'asr'].includes(slot)) return { ok: false, message: '没有这一项' }
+    // 白名单要和 local.js 的 SLOTS 对齐：video 槽早前加进来了，这里漏了会让它点「生成模板」报「没有这一项」
+    if (!local.pathOf || !['tts', 'image', 'song', 'asr', 'video'].includes(slot)) return { ok: false, message: '没有这一项' }
     return local.template(slot)
   })
   route('/local/open', async () => openFolder(local.dir()))
@@ -1626,6 +1667,28 @@ export function apply(ctx) {
   route('/modules', async () => ({ ok: true, dir: mods.dir(), safeMode: cfg.safeMode, apiVersion: API_VERSION, list: mods.status(), prompt: mods.promptFor('') }))
   route('/modules/community', async (req) => {
     try { return { ok: true, ...(await community.list({ force: query(req).force === '1' })) } } catch (error) { return { ok: false, message: error.message, list: [] } }
+  })
+  // 索引地址：默认留空 = 市场离线、不回连任何远端；填了 index.json 就能逛/搜/装/更新。
+  // 校验放在宿主：只收 https（本机自建镜像放行 http 回环），别让面板变成 SSRF 入口。
+  route('/modules/community/registry', async (req) => {
+    if (String(req.method || 'GET').toUpperCase() === 'POST') {
+      const raw = String((await readBody(req)).url || '').trim().slice(0, 500)
+      if (raw) {
+        let safe = false
+        try {
+          const u = new URL(raw)
+          safe = u.protocol === 'https:' || (u.protocol === 'http:' && ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(u.hostname))
+        } catch { safe = false }
+        if (!safe) return { ok: false, message: '索引地址要 https:// 开头（本机自测可用 http://127.0.0.1），或留空关闭市场' }
+      }
+      setConfig(mergeFromPanel(cfg, { communityRegistryUrl: raw }))
+      log.info(raw ? '模块市场索引地址已更新' : '模块市场已切回离线')
+      return { ok: true, url: community.registry(), enabled: Boolean(community.registry()), message: raw ? '索引地址已保存，正在重新读取模块列表' : '已切回离线：不会回连任何远端' }
+    }
+    return {
+      ok: true, url: community.registry(), enabled: Boolean(community.registry()),
+      envConfigured: Boolean(process.env.QQSOUL_REGISTRY_URL || process.env.AURABOT_REGISTRY_URL),
+    }
   })
   route('/modules/tutorial', async () => {
     try { return { ok: true, text: readFileSync(join(ROOT, 'docs', 'MODULE-TUTORIAL.md'), 'utf8') } } catch (error) { return { ok: false, message: '教程文件不见了' } }

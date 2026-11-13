@@ -11,6 +11,7 @@ export const DEFAULTS = {
   dryRun: true, // 试运行：只记日志不真发
   setupDone: false, // 首次使用向导走完了没有
   communityMigrated: {}, // 搬到社区库的模块处理过没有（id → installed / skipped / kept），只处理一次
+  communityRegistryUrl: '', // 社区模块市场索引 index.json 地址；留空 = 市场离线、不回连任何远端（去品牌默认）
   botQQ: '', // 机器人 QQ 号（向导里填）
   ownerQQ: '', // 主人 QQ 号（向导里填）
   ownerName: '主人',
@@ -723,6 +724,17 @@ export function normalize(raw) {
   if (!isObj(c.ext)) c.ext = {}
   for (const k of Object.keys(c.ext)) if (!isObj(c.ext[k])) delete c.ext[k] // 传 null = 删掉这个模块的设置
   c.safeMode = bool(c.safeMode, false)
+  // 模块市场索引：只收 https（自建本机镜像放行 http 回环），留空 = 离线。
+  // 面板能改这个地址，但别让它变成任意协议的 SSRF 入口。
+  const registry = String(c.communityRegistryUrl || '').trim().slice(0, 500)
+  let registryOk = false
+  if (registry) {
+    try {
+      const u = new URL(registry)
+      registryOk = u.protocol === 'https:' || (u.protocol === 'http:' && ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(u.hostname))
+    } catch { registryOk = false }
+  }
+  c.communityRegistryUrl = registryOk ? registry : ''
   c.bridge.dshTools = bool(c.bridge.dshTools, false)
   c.bridge.http = bool(c.bridge.http, false)
   c.bridge.token = String(c.bridge.token || '')

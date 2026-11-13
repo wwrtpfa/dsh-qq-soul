@@ -1,8 +1,9 @@
 // 社区模块：从可选 registry 索引下载、校验、安装、更新、卸载模块。
 //
 // 本项目（懂你的QQ大肥鱼）默认**关闭**社区市场：REGISTRY_URL 为空，不回连上游 mods 仓库。
-// 想启用时，通过 QQSOUL_REGISTRY_URL 指定自己的索引（格式见上游 docs/MODULE_SPEC.md），
-// 或在 createCommunity 里显式传 registryUrl；两者都为空时所有网络操作直接短路。
+// 想启用时，在面板「模块市场 → 索引地址」填一个 index.json（或设 QQSOUL_REGISTRY_URL 环境变量，
+// 或在 createCommunity 里显式传 registryUrl）；三者都为空时所有网络操作直接短路。
+// 索引地址是「按次解析」的：面板改完立刻生效，不用重启 DSH。
 //
 // 规则见 mods 仓库的 docs/MODULE_SPEC.md「插件端要遵守的约定」：
 // - 下载后先核对 sha256，zip 里的路径不合法就整包拒绝
@@ -117,7 +118,12 @@ function safeName(name) {
 
 export function createCommunity({ mods, getConfig, setConfig, log, version, alive = () => true, registryUrl = process.env.QQSOUL_REGISTRY_URL || process.env.AURABOT_REGISTRY_URL || REGISTRY_URL, fetcher = fetch, retryMs = RETRY_MS }) {
   const dirOf = (id) => join(userDir(), id)
-  const enabled = Boolean(registryUrl) // 未配置 registry：整个社区市场离线，不回连任何远端
+  // 面板配置 > 构造参数/环境变量 > 内置空值。每次取索引都重算，改地址不用重启。
+  // 构造参数允许传函数（宿主可注入自己的解析逻辑），也兼容测试里传的固定字符串。
+  const resolveRegistry = () => String(
+    (typeof registryUrl === 'function' ? registryUrl() : (getConfig?.()?.communityRegistryUrl || registryUrl)) || ''
+  ).trim()
+  const enabled = () => Boolean(resolveRegistry())
   let cache = null // { at, index }
   let busy = null // 同一时间只跑一个安装 / 卸载
   let progress = null // 安装中：{ id, name, stage: 'index' | 'download' | 'install' | 'start', received, total }
@@ -128,16 +134,18 @@ export function createCommunity({ mods, getConfig, setConfig, log, version, aliv
   const hasFolder = (id) => existsSync(dirOf(id))
 
   async function loadIndex({ force = false } = {}) {
+    const url = resolveRegistry()
     // 未配置 registry：返回空索引，杜绝任何 fetch / 自动装回上游模块（含 douyin、pet）。
-    if (!enabled) return { schema: 1, modules: [], revoked: [], generatedAt: '' }
-    if (!force && cache && Date.now() - cache.at < INDEX_TTL) return cache.index
+    if (!url) { cache = null; return { schema: 1, modules: [], revoked: [], generatedAt: '' } }
+    // 换了索引地址要让缓存立刻失效，不然 5 分钟内还显示上一个市场的模块
+    if (!force && cache && cache.url === url && Date.now() - cache.at < INDEX_TTL) return cache.index
     const index = await withRetry(async () => {
-      const r = await fetcher(registryUrl, { signal: AbortSignal.timeout(20_000), cache: 'no-store' })
+      const r = await fetcher(url, { signal: AbortSignal.timeout(20_000), cache: 'no-store' })
       if (!r.ok) throw new Error(`读不到社区模块索引（HTTP ${r.status}）`)
       return r.json()
     }, retryMs)
     if (index?.schema !== 1) throw new Error('社区模块索引的格式是新版的，先更新插件')
-    cache = { at: Date.now(), index }
+    cache = { at: Date.now(), url, index }
     return index
   }
 
@@ -273,7 +281,7 @@ export function createCommunity({ mods, getConfig, setConfig, log, version, aliv
 
   /** 升级后把搬走的模块自动装回来：每个 id 只成功处理一次，失败下次启动重试。 */
   async function migrate() {
-    if (!enabled) return [] // 离线模式不自动装回任何上游社区模块
+    if (!enabled()) return [] // 离线模式不自动装回任何上游社区模块
     const done = { ...(getConfig().communityMigrated || {}) }
     const result = []
     for (const [id, inUse] of Object.entries(MOVED)) {
@@ -294,5 +302,5 @@ export function createCommunity({ mods, getConfig, setConfig, log, version, aliv
     return result
   }
 
-  return { progress: () => progress, list, install, remove, migrate, source: readSource }
+  return { progress: () => progress, list, install, remove, migrate, source: readSource, registry: resolveRegistry }
 }

@@ -66,6 +66,9 @@ export default {
 
     async function speak(text) {
       const cfg = api.config()
+      // 「选了本地渠道却听到兜底声音」以前是完全静默的：服务连不上就悄悄回退，
+      // 面板一点提示都没有。这里把回退原因带在返回值里，试听 / 上层能如实显示。
+      let fallbackReason = ''
       // 音频服务开着就以它为准：音色、语速、渠道都读它那一份，桌面和网页不会再打架。
       if (cfg.service?.enabled) {
         try {
@@ -74,26 +77,31 @@ export default {
           if (file && existsSync(file)) {
             // 服务端已经把音色统一换过一次（rvcApplied）：这里再换一遍会变成
             // 「面板一个声音、QQ 另一个声音」，也会白跑一次 RVC。直接复用同一份文件。
-            if (r.rvcApplied) return { file, engine: 'service/' + (r.engine || '?') }
+            if (r.rvcApplied) return { file, engine: 'service/' + (r.engine || '?'), fallbackReason: '' }
             const voice = (await serviceVoiceModel()) || cfg.voice.songVoice
             const out = await convertSpeech(file, voice, cfg.voice.songPitch)
-            return { file: out, engine: 'service/' + (r.engine || '?') }
+            return { file: out, engine: 'service/' + (r.engine || '?'), fallbackReason: '' }
           }
+          fallbackReason = '音频服务没返回音频文件，已回退到「本机备用渠道」'
         } catch (error) {
           api.log.warn('音频服务合成失败，改用本机语音：', error.message)
           // 面板里把「本机备用渠道」关了：服务不行就直接认输，让上层改发文字。
           // 不然用户明明关了备用，还是会听到一个不一样的声音。
           if (cfg.voice.fallback === false) throw new Error('音频服务没合成出来，本机备用渠道已关：' + error.message)
+          fallbackReason = '本机 TTS 服务没合成出来（' + String(error.message || '').slice(0, 120)
+            + '）：这一句实际走的是「本机备用渠道」，不是上面选的渠道。'
+            + '在「声音」页的一键安装启动里点「启动」，看到「● 在线」即可。'
         }
       }
       // 本地接口接管语音合成；出错退回内置
       if (local.active('tts')) {
         try {
           const file = fileOf(await local.call('tts', { text }))
-          if (file && existsSync(file)) return { file, engine: 'local' }
+          if (file && existsSync(file)) return { file, engine: 'local', fallbackReason }
         } catch (error) {}
       }
-      return textToSpeech(text, cfg.voice, api.log)
+      const out = await textToSpeech(text, cfg.voice, api.log)
+      return { ...out, fallbackReason }
     }
 
     // 语音条变声：如果面板里选了「翻唱里导入的音色」，TTS 后再用 RVC 换成她的声音。
@@ -126,14 +134,15 @@ export default {
 
     api.route('/voice/test', async (req) => {
       const b = await http.body(req)
-      const { file, engine } = await speak(String(b.text || '你好呀，我是大肥鱼'))
+      const { file, engine, fallbackReason } = await speak(String(b.text || '你好呀，我是大肥鱼'))
       const buf = readFileSync(file)
       // 试听文件也留一份在「语音试听」目录：面板上那条路径就是目录里的文件，
       // 点「打开文件夹」能直接看到它。以前这里回的是 TTS 缓存 / 服务目录里的临时
       // 文件，和面板显示的「语音试听」目录对不上，看着像「两个目录不同步」。
       const { file: out, dir } = keepInOutDir(file, voiceOutDir(api.config()))
       return {
-        ok: true, engine, mime: out.endsWith('.wav') ? 'audio/wav' : 'audio/mpeg',
+        ok: true, engine, fallbackReason: fallbackReason || '',
+        mime: out.endsWith('.wav') ? 'audio/wav' : 'audio/mpeg',
         data: buf.toString('base64'), file: out, dir,
       }
     })

@@ -177,7 +177,7 @@ python3 -m services --check-deps     # Windows 把 python3 换成 python
 | 声音 | 会用某种音色说话 | 是（在线音色也算） |
 | 翻唱 | RVC 环境完整 | 可选 |
 
-更细一点：面板「连接」页 →「连接体检」，或运维大屏「依赖体检」，看 `service / deps / gateway / tts / song` 五步。必装项全绿就能用；有红的，把那一步的报错原文复制给 AI。
+更细一点：面板「连接」页 →「连接体检」，或运行看盘「安装与体检」（`http://127.0.0.1:9876/panel#guide`），看 `service / deps / gateway / tts / song` 五步。必装项全绿就能用；有红的，把那一步的报错原文复制给 AI。
 
 ---
 

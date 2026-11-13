@@ -305,7 +305,12 @@ export default {
     api.route('/song/models', async (req) => {
       if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开' }
       try {
-        if (req.method === 'POST') return { ok: true, ...(await service.setModel(await http.body(req))) }
+        if (req.method === 'POST') {
+          const body = await http.body(req)
+          // 配置里那条路径指向的目录已经被删：清掉死路径，别让面板一直显示旧目录
+          if (body && body.clear) return { ok: true, ...(await service.clearModel(String(body.engine || ''))) }
+          return { ok: true, ...(await service.setModel(body)) }
+        }
         return { ok: true, ...(await service.modelsLocal()) }
       } catch (error) { return { ok: false, message: error.message } }
     })
@@ -390,6 +395,64 @@ export default {
       }
     })
     api.route('/song/install', async () => song.install())
+    // 本地 TTS：面板不直接连音频服务，统一从这儿转发；服务没开也给得出「没装 / 没起」
+    api.route('/tts/local/status', async (req) => {
+      if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开' }
+      try { return { ok: true, ...(await service.localTtsStatus(http.query(req).engine || '')) } }
+      catch (error) { return { ok: false, message: error.message } }
+    })
+    for (const action of ['install', 'start', 'stop', 'check']) {
+      api.route('/tts/local/' + action, async (req) => {
+        if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开' }
+        try {
+          const body = req.method === 'POST' ? await http.body(req) : {}
+          return { ok: true, ...(await service.localTtsAction(action, body || {})) }
+        } catch (error) {
+          return { ok: false, message: error.message || '本地 TTS 操作失败', action }
+        }
+      })
+    }
+    // 联网一键下载：status 轮询 + 起 job + 暂停（已下载的 .part 留着续传）
+    api.route('/tts/local/download/status', async (req) => {
+      if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开' }
+      try { return { ok: true, ...(await service.localTtsDownloadStatus(http.query(req).engine || '')) } }
+      catch (error) { return { ok: false, message: error.message } }
+    })
+    api.route('/tts/local/download', async (req) => {
+      if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开' }
+      try { return { ok: true, ...(await service.localTtsDownload((await http.body(req)) || {})) } }
+      catch (error) { return { ok: false, message: error.message || '下载没启动' } }
+    })
+    api.route('/tts/local/download/cancel', async (req) => {
+      if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开' }
+      try {
+        const body = (await http.body(req)) || {}
+        return { ok: true, ...(await service.localTtsDownloadCancel(String(body.engine || ''))) }
+      } catch (error) { return { ok: false, message: error.message } }
+    })
+    // 服务程序（启动入口）：权重 ≠ 程序。这条补 api_v2.py 和它的 Python 依赖
+    api.route('/tts/local/runtime/status', async (req) => {
+      if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开' }
+      try { return { ok: true, ...(await service.localTtsRuntimeStatus(http.query(req).engine || '')) } }
+      catch (error) { return { ok: false, message: error.message } }
+    })
+    for (const kind of ['fetch', 'deps']) {
+      api.route('/tts/local/runtime/' + kind, async (req) => {
+        if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开' }
+        try {
+          const body = (await http.body(req)) || {}
+          const fn = kind === 'deps' ? service.localTtsRuntimeDeps : service.localTtsRuntimeFetch
+          return { ok: true, ...(await fn(body)) }
+        } catch (error) { return { ok: false, message: error.message || '服务程序没装成' } }
+      })
+      api.route('/tts/local/runtime/' + kind + '/cancel', async (req) => {
+        if (!service.enabled()) return { ok: false, code: 'SERVICE_OFF', message: '音频服务没开' }
+        try {
+          const body = (await http.body(req)) || {}
+          return { ok: true, ...(await service.localTtsRuntimeCancel(kind, String(body.engine || ''))) }
+        } catch (error) { return { ok: false, message: error.message } }
+      })
+    }
     api.route('/song/root/check', async (req) => ({ ok: true, ...checkRoot(http.query(req).path || '') }))
     api.route('/song/drives', async () => ({ ok: true, list: listDrives() }))
     // 搜歌：开了 service 就按「音乐源」搜（可以指定一个站），关着才走旧直连

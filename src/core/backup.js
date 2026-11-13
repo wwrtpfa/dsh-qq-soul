@@ -20,7 +20,7 @@ const STORE_EXT = /\.(png|jpe?g|gif|webp|mp3|mp4|m4a|ogg|opus|webm|zip|7z|rar|pt
 
 /**
  * 不进备份的东西。logs、缓存没有价值；edge-profile 是浏览器资料，登录态绑定这台电脑，
- * 带过去也用不了。市场模块不打包，恢复后按名单重新下载。
+ * 带过去也用不了。市场模块不打包，恢复后按名单重新下载（手工补录来源标记的没有下载通道，照常打包）。
  */
 const SKIP = ['backups', '.restore', '.restore-sessions', '.restore-pending.json', '.restore-modules.json', 'logs', 'tmp', 'voice-cache', 'archive-cache', 'douyin/edge-profile']
 const skipped = (rel) => SKIP.some((s) => rel === s || rel.startsWith(s + '/')) || rel.split('/').includes('node_modules') || rel.endsWith('.tmp') || rel === 'memory.sqlite-shm' || rel.startsWith('memory.sqlite.migrating')
@@ -31,6 +31,20 @@ const sessionStage = () => dataDir('.restore-sessions')
 const pendingFile = () => dataDir('.restore-pending.json')
 const modulesFile = () => dataDir('.restore-modules.json')
 const SOURCE_FILE = '.aurabot-source.json'
+
+/**
+ * 带来源标记的模块默认「备份只记名字、恢复时从市场重新下载」。
+ * 但手工补录的标记（source: manual，例如本机手工放置的 modules/pet）并没有可用的下载通道：
+ * 社区市场默认离线，一旦连本体也跳过，换电脑后就再也装不回来。这种必须连文件一起备份。
+ */
+export function isRedownloadableMarketModule(dir) {
+  const file = join(dir, SOURCE_FILE)
+  if (!existsSync(file)) return false
+  try {
+    const s = JSON.parse(readFileSync(file, 'utf8'))
+    return s?.source !== 'manual'
+  } catch { return false }
+}
 
 /** DSH 存会话的目录名：工作区路径里的分隔符换成 -，其余特殊字符写成 ~十六进制。 */
 export function sessionDirName(cwd) {
@@ -50,8 +64,8 @@ async function walk(root, rel = '', out = [], market = []) {
   for (const item of await readdir(join(root, rel), { withFileTypes: true })) {
     const path = rel ? `${rel}/${item.name}` : item.name
     if (skipped(path) || item.isSymbolicLink()) continue
-    // 从市场装的模块：只记名字，恢复时下载最新版
-    if (item.isDirectory() && /^modules\/[^/]+$/.test(path) && existsSync(join(root, path, SOURCE_FILE))) {
+    // 从市场装的模块：只记名字，恢复时下载最新版；手工补录来源标记的没有下载通道，连本体一起备份
+    if (item.isDirectory() && /^modules\/[^/]+$/.test(path) && isRedownloadableMarketModule(join(root, path))) {
       market.push(item.name)
       continue
     }

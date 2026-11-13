@@ -91,6 +91,17 @@ test('取消恢复清掉暂存', async () => {
   assert.ok(readdirSync(root).every((n) => n !== '.restore'))
 })
 
+test('手工补录的来源标记不算「市场可重下」，模块本体会进备份', () => {
+  const d = mkdtempSync(join(tmpdir(), 'aurabot-source-'))
+  assert.equal(api.isRedownloadableMarketModule(d), false, '没标记 -> 本地模块')
+  writeFileSync(join(d, '.aurabot-source.json'), '{}')
+  assert.equal(api.isRedownloadableMarketModule(d), true, '正常来源标记 -> 备份只记名字')
+  writeFileSync(join(d, '.aurabot-source.json'), JSON.stringify({ id: 'pet', version: '1.0.18', source: 'manual' }))
+  assert.equal(api.isRedownloadableMarketModule(d), false, '手工补录、市场离线 -> 必须连本体一起备份')
+  writeFileSync(join(d, '.aurabot-source.json'), '{ 坏掉的')
+  assert.equal(api.isRedownloadableMarketModule(d), false, '标记坏了 -> 保守当本地模块，别丢文件')
+})
+
 test('会话目录名和 DSH 的规则一致', () => {
   assert.equal(api.sessionDirName('C:\\Aurabot\\qq-chats'), '--C-Aurabot-qq-chats--')
   assert.equal(api.sessionDirName('C:\\Users\\17018\\.dsh\\profiles\\desktop'), '--C-Users-17018-.dsh-profiles-desktop--')

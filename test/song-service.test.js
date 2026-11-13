@@ -1,7 +1,9 @@
 // P3 契约：song 模块走 service 的桥接层。不连真服务、不碰原 studio。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
 import { createSongBridge } from '../src/service/song-bridge.js'
+import songModule from '../src/modules/song/index.js'
 
 function rig({ jobs = [], exists = () => true, timeoutMs = 5000, requestSong, job, stallMs, retries, startService, coverById } = {}) {
   const calls = { sent: [], texts: [], sung: [], posted: [], downloaded: [], cancelled: [], looked: [] }
@@ -326,4 +328,223 @@ test('指名取件：远程部署时按 /files/ 下载成品', async () => {
   assert.deepEqual(calls.downloaded,
     ['http://127.0.0.1:9876/files/music/covers/雨爱.mp3'])
   assert.equal(calls.sent[0][1], '/tmp/downloaded.mp3')
+})
+
+// ---- 本地 TTS 一键下载：Node 面板路由 → 音频服务 --------------------------
+// 起一个 127.0.0.1 随机端口的假服务，钉住三条路由真的转发、参数不丢。
+// 不连真 9876：真服务在跑旧代码时也不该被测试碰到。
+async function downloadRoutesRig({ enabled = true, query = {}, body = {}, reply = null } = {}) {
+  const seen = []
+  const server = createServer((req, res) => {
+    let raw = ''
+    req.on('data', (chunk) => { raw += chunk })
+    req.on('end', () => {
+      seen.push({
+        method: req.method,
+        url: req.url,
+        body: raw ? JSON.parse(raw) : undefined,
+      })
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(reply || { ok: true, phase: 'idle', engine: 'qwen', fake: true }))
+    })
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const url = 'http://127.0.0.1:' + server.address().port
+
+  const routes = new Map()
+  const noop = () => {}
+  const core = {
+    root: '/tmp',
+    hub: { sendVoiceFile: noop, sendText: noop, on: noop },
+    local: { readJson: () => ({}), writeJson: noop, join: (p) => p, exists: () => false },
+    http: { query: () => query, body: async () => body, json: noop },
+  }
+  const api = {
+    core,
+    config: () => ({ service: { enabled, url }, song: {} }),
+    log: { info: noop, warn: noop, error: noop, debug: noop },
+    lazy: () => ({}), emit: noop, tool: noop,
+    route: (path, fn) => routes.set(path, fn),
+  }
+  songModule.setup(api)
+  return {
+    routes,
+    seen,
+    close: () => new Promise((resolve) => server.close(resolve)),
+  }
+}
+
+test('一键下载三条路由都转发到音频服务：engine / profile / autoStart 不丢', async (t) => {
+  const rig2 = await downloadRoutesRig({
+    query: { engine: 'qwen' },
+    body: { engine: 'gptsovits', profile: 'full', autoStart: true },
+  })
+  t.after(() => rig2.close())
+
+  for (const path of ['/tts/local/download/status', '/tts/local/download',
+                      '/tts/local/download/cancel']) {
+    assert.equal(typeof rig2.routes.get(path), 'function', '路由必须已注册：' + path)
+  }
+
+  const status = await rig2.routes.get('/tts/local/download/status')({})
+  assert.equal(status.ok, true)
+  assert.equal(status.fake, true)
+  assert.equal(rig2.seen[0].method, 'GET')
+  assert.equal(rig2.seen[0].url, '/tts/local/download/status?engine=qwen')
+
+  const start = await rig2.routes.get('/tts/local/download')({})
+  assert.equal(start.ok, true)
+  assert.equal(rig2.seen[1].method, 'POST')
+  assert.equal(rig2.seen[1].url, '/tts/local/download')
+  assert.deepEqual(rig2.seen[1].body,
+    { engine: 'gptsovits', profile: 'full', autoStart: true })
+
+  const cancel = await rig2.routes.get('/tts/local/download/cancel')({})
+  assert.equal(cancel.ok, true)
+  assert.equal(rig2.seen[2].method, 'POST')
+  assert.equal(rig2.seen[2].url, '/tts/local/download/cancel')
+  assert.deepEqual(rig2.seen[2].body, { engine: 'gptsovits' },
+    '暂停只带 engine，别把整包参数又甩回去')
+})
+
+test('一键下载：音频服务没开时三条路由都给 SERVICE_OFF，一个请求都不发', async (t) => {
+  const rig2 = await downloadRoutesRig({ enabled: false })
+  t.after(() => rig2.close())
+
+  for (const path of ['/tts/local/download/status', '/tts/local/download',
+                      '/tts/local/download/cancel']) {
+    const out = await rig2.routes.get(path)({})
+    assert.equal(out.ok, false, path)
+    assert.equal(out.code, 'SERVICE_OFF', path)
+  }
+  assert.equal(rig2.seen.length, 0)
+})
+
+test('一键下载：下载状态里「已绿 / 没绿 / 失败原因」原样透给面板，不被吞掉', async (t) => {
+  const rig2 = await downloadRoutesRig({
+    reply: {
+      ok: true, phase: 'running', engine: 'gptsovits', percent: 42,
+      files: [
+        { name: 'a.safetensors', done: true, skipped: true, verification: 'sha256' },
+        { name: 'b.safetensors', done: false, partial: 123456, error: '连接断了' },
+      ],
+      needRuntime: true, autoStarted: false,
+    },
+  })
+  t.after(() => rig2.close())
+
+  const out = await rig2.routes.get('/tts/local/download/status')({})
+  assert.equal(out.percent, 42)
+  assert.equal(out.files[0].done, true)
+  assert.equal(out.files[0].skipped, true, '已绿的文件下次要跳过')
+  assert.equal(out.files[1].error, '连接断了', '失败原因要让用户看见')
+  assert.equal(out.files[1].partial, 123456, '.part 字节数要透出去')
+  assert.equal(out.needRuntime, true)
+})
+
+// ------------------------------------------------------------------ 服务程序（启动入口）转发
+// 用户现场：权重 10 个文件全绿，面板仍提示「缺启动入口」。补的这条链路是
+// 「一键获取服务程序 + 装依赖」，必须能从面板经 song 模块转发到音频服务。
+function routesRig(getConfig) {
+  const routes = new Map()
+  const noop = () => {}
+  const core = {
+    hub: { sendVoiceFile: noop, sendText: noop, on: noop },
+    local: { readJson: () => ({}), writeJson: noop, join: (p) => p, exists: () => false },
+    http: {
+      query: (req) => {
+        const u = new URL(req.url || '/', 'http://x')
+        const out = {}
+        for (const [k, v] of u.searchParams) out[k] = v
+        return out
+      },
+      body: async (req) => req.__body || {},
+      json: noop,
+    },
+  }
+  const api = {
+    core, config: getConfig,
+    log: { info: noop, warn: noop, error: noop, debug: noop },
+    lazy: () => ({}), emit: noop, tool: noop,
+    route: (path, fn) => routes.set(path, fn),
+  }
+  songModule.setup(api)
+  return routes
+}
+
+async function withService(handler, fn) {
+  const seen = []
+  const srv = createServer((req, res) => {
+    let body = ''
+    req.on('data', (c) => { body += c })
+    req.on('end', () => {
+      seen.push({ method: req.method, url: req.url, body })
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify(handler(req, body) || { ok: true }))
+    })
+  })
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+  const url = 'http://127.0.0.1:' + srv.address().port
+  try {
+    await fn(url, seen)
+  } finally {
+    await new Promise((r) => srv.close(r))
+  }
+}
+
+test('服务程序：状态 / 获取 / 装依赖 / 暂停都转发到音频服务，engine 不丢', async () => {
+  await withService((req) => {
+    if (req.url.startsWith('/tts/local/runtime/status')) {
+      return { ok: true, phase: 'idle', plan: { available: true, entry: 'api_v2.py' }, missingDeps: ['torch'] }
+    }
+    return { ok: true, message: '开始', runtime: { phase: 'downloading' } }
+  }, async (url, seen) => {
+    const routes = routesRig(() => ({ service: { enabled: true, url }, song: {} }))
+
+    const st = await routes.get('/tts/local/runtime/status')({ method: 'GET', url: '/tts/local/runtime/status?engine=gptsovits' })
+    assert.equal(st.ok, true)
+    assert.equal(st.plan.entry, 'api_v2.py')
+    assert.deepEqual(st.missingDeps, ['torch'], '缺哪个依赖要原样透给面板')
+
+    const got = await routes.get('/tts/local/runtime/fetch')({
+      method: 'POST', url: '/tts/local/runtime/fetch', __body: { engine: 'gptsovits' },
+    })
+    assert.equal(got.ok, true)
+
+    const deps = await routes.get('/tts/local/runtime/deps')({
+      method: 'POST', url: '/tts/local/runtime/deps', __body: { engine: 'gptsovits' },
+    })
+    assert.equal(deps.ok, true)
+
+    for (const kind of ['fetch', 'deps']) {
+      const r = await routes.get('/tts/local/runtime/' + kind + '/cancel')({
+        method: 'POST', url: '/tts/local/runtime/' + kind + '/cancel', __body: { engine: 'gptsovits' },
+      })
+      assert.equal(r.ok, true)
+    }
+
+    assert.deepEqual(seen.map((r) => [r.method, r.url]), [
+      ['GET', '/tts/local/runtime/status?engine=gptsovits'],
+      ['POST', '/tts/local/runtime/fetch'],
+      ['POST', '/tts/local/runtime/deps'],
+      ['POST', '/tts/local/runtime/fetch/cancel'],
+      ['POST', '/tts/local/runtime/deps/cancel'],
+    ])
+    assert.deepEqual(JSON.parse(seen[1].body), { engine: 'gptsovits' })
+  })
+})
+
+test('服务程序：音频服务没开时四条都给 SERVICE_OFF，一个请求都不发', async () => {
+  const routes = routesRig(() => ({ service: { enabled: false }, song: {} }))
+  const calls = [
+    ['/tts/local/runtime/status', { method: 'GET', url: '/tts/local/runtime/status?engine=gptsovits' }],
+    ['/tts/local/runtime/fetch', { method: 'POST', url: '/tts/local/runtime/fetch', __body: { engine: 'gptsovits' } }],
+    ['/tts/local/runtime/deps', { method: 'POST', url: '/tts/local/runtime/deps', __body: { engine: 'gptsovits' } }],
+    ['/tts/local/runtime/fetch/cancel', { method: 'POST', url: '/tts/local/runtime/fetch/cancel', __body: {} }],
+  ]
+  for (const [path, req] of calls) {
+    const out = await routes.get(path)(req)
+    assert.equal(out.ok, false, path)
+    assert.equal(out.code, 'SERVICE_OFF', path)
+  }
 })

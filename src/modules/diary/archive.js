@@ -11,14 +11,21 @@ export function archiveDate(at) {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(at)).replaceAll('-', '')
 }
 
-/** 路径的已有各层均不能是链接；输出目录只允许显式的绝对路径。 */
-function outputFolder(value) {
+/**
+ * 输出目录只允许显式的绝对路径；从「选定根目录」往下（含自身）的每一层都不能是链接。
+ * 只检查选定目录这一侧，不往上追：macOS 的 /var 本身就是指向 /private/var 的系统链接，
+ * 若把上层目录也算进去，任何放在临时目录（默认 tmpdir）下的归档都会被误拒。
+ * 真正的越界防护在落盘后的 insideFolder(realpathSync(root), realpathSync(dir))。
+ */
+function outputFolder(value, base) {
   const folder = String(value || '').trim()
   if (!folder || !isAbsolute(folder) || resolve(folder) === parse(resolve(folder)).root) throw new Error('请先指定归档文件夹的完整路径，不能使用磁盘根目录')
   const root = resolve(folder)
+  const stop = base ? resolve(base) : root
   let current = root
   for (;;) {
     if (existsSync(current) && lstatSync(current).isSymbolicLink()) throw new Error('归档路径不能包含目录链接')
+    if (current === stop) break
     const parent = dirname(current)
     if (parent === current) break
     current = parent
@@ -72,8 +79,8 @@ export function createDiaryArchive(api, { assets = createDiaryAssets(api.dataDir
           }
           const day = archiveDate(picture.at)
           const dir = join(root, day)
-          // 下载期间路径可能被替换；落盘前再次检查每一层。
-          outputFolder(dir)
+          // 下载期间路径可能被替换；落盘前从根目录往下再查一次（别把 /var 这类系统链接算进来）。
+          outputFolder(dir, root)
           mkdirSync(dir, { recursive: true })
           if (!insideFolder(realpathSync(root), realpathSync(dir))) throw new Error('归档目录越界')
           const name = '浏览图-' + hash.slice(0, 20) + '.' + image.id.split('.').pop()

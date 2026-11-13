@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "安装包不带任何权重。三档分发：零下载默认 / 按需轻量 / 纯手动导入。sha256 为占位值，下载时以实际文件校验为准。",
+  "note": "安装包不带任何权重。三档分发：零下载默认 / 按需轻量 / 手动导入。千问（macOS MLX）与 GPT-SoVITS 预训练权重已支持面板「真·联网一键下载」：services/model_download.py 运行时向 HF 官方 API 取文件级清单，LFS 大文件用 lfs.sha256、普通小文件用 blobId(git blob sha1) 做真校验，.part 断点续传逐文件绿/未绿，落到固定目录后写回 paths 并给「启动」。本机整包导入一律是移动（不留两份）；插件自管 9883 / 9881 启动与在线状态，不依赖 qq-stack.sh。本表 sha256 的占位值仅用于其余未接一键下载的条目，绝不假装校验通过。",
   "items": [
     {
       "id": "edge-tts",
@@ -72,13 +72,13 @@
       "kind": "tts",
       "name": "千问 3-TTS MLX（0.6B 4bit）",
       "tier": "manual",
-      "size": "约 488 MB",
+      "size": "约 1.59 GiB / 13 个文件（权重）+ 约 488 MB（MLX 运行环境）",
       "officialUrl": "https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit",
       "mirrors": ["https://hf-mirror.com/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"],
       "sha256": "verify-on-download",
       "platforms": ["macOS"],
       "required": false,
-      "importHint": "自己下载后，在「模型」页选目录加载；也可以连已经跑着的服务"
+      "importHint": "macOS / Apple Silicon 专用 MLX 权重（不是那个 4B 大脑模型）。语音页「一键下载」直接从 HF 拉取 14 个文件到固定目录 models/qwen/Qwen3-TTS-12Hz-0.6B-Base-4bit，逐文件真校验 + 断点续传；Windows 用本机 9883 常驻服务整包（自己下好后「选目录导入」，导入是移动不留两份）"
     },
     {
       "id": "gpt-sovits",
@@ -91,7 +91,7 @@
       "sha256": "verify-on-download",
       "platforms": ["macOS", "Windows"],
       "required": false,
-      "importHint": "自己装好后把服务地址填进设置；本插件只连接、不负责启动"
+      "importHint": "分两样：① 预训练权重可在语音页「一键下载」（精简档 v2 约 1.11 GiB / 10 个文件、完整档约 6.41 GiB / 29 个文件，Mac / Windows 通用），落到固定目录 models/gptsovits/GPT-SoVITS-pretrained；② 服务程序（api_v2.py）点「③ 一键获取服务程序」从 GitHub 下源码包（约 7 MB）解压到 runtime/gptsovits，再点「装依赖」补 torch 等（约 2–3 GB）。权重只是模型参数，没有程序 9881 起不来。插件自管 9881 并显示在线状态，不用再手动起服务"
     },
     {
       "id": "rvc-voice",

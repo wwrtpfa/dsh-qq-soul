@@ -571,7 +571,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
 .ab-table tr:hover td{background:var(--ab-hover)}
 .ab-checks{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
 .ab-check{display:flex;align-items:flex-start;gap:8px;padding:8px 12px;border-radius:12px;border:1px solid var(--ab-line);background:var(--ab-card-2);color:var(--ab-sub);font-size:12.5px;line-height:1.45}
-.ab-check>span{min-width:0}
+.ab-check>span{min-width:0;overflow-wrap:anywhere;word-break:break-word}
+/* 路径 / 解释器 / 端口这类长串没有空格，靠上面的 anywhere 断行；code 再保一层，别顶破卡片 */
+.ab-check code,.ab-note code{word-break:break-all;overflow-wrap:anywhere;font-size:11.5px}
+/* 兜底：所有说明块里的长路径 / 长 URL 都不许顶破卡片右边界（只在正常断点放不下时才断字符） */
+.ab-note,.ab-check,.ab-check>span,.ab-li{overflow-wrap:anywhere}
+/* code 里全是路径 / 命令，没有空格；统一允许在放不下时断行，别撑破容器 */
+code{overflow-wrap:anywhere;word-break:break-word}
 .ab-check i{font-style:normal;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;background:var(--ab-line-2);color:#fff;flex:none}
 .ab-check.done{color:var(--ab-text);border-color:color-mix(in srgb,var(--ab-ok) 30%,transparent);background:color-mix(in srgb,var(--ab-ok) 7%,var(--ab-card))}
 .ab-check.done i{background:var(--ab-ok)}
@@ -1324,7 +1330,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       return h('div', { className: 'ab-grid' },
         h(Card, { className: 'ab-about-lead', title: '懂你的QQ大肥鱼 🐟', desc: 'v' + st.version + ' · 面板 API v' + (st.apiVersion || '?') },
           h('p', null, '一个 DeepSeek Harness 插件：把大肥鱼养成 QQ 里一个有性格、有心情、有长期记忆的角色。聊天、语音条、表情包、日记、唱歌这些本事都是插件自带的；说话与唱歌的算力跑在本机 service 包里，模型由你自己下载后加载。'),
-          h('p', { className: 'ab-muted ab-small', style: { marginTop: 10, marginBottom: 0 } }, '支持 macOS 与 Windows；网关用你自己装好的 NapCat / SnowLuma，插件只负责连接。本地开发阶段不启用社区模块市场与自动更新。'),
+          h('p', { className: 'ab-muted ab-small', style: { marginTop: 10, marginBottom: 0 } }, '支持 macOS 与 Windows；网关用你自己装好的 NapCat / SnowLuma，插件只负责连接。社区模块市场默认离线，需要时在「模块市场」填一个 index.json 索引地址即可开启，插件不预置、也不自动回连任何上游。'),
         ),
         h(Card, { className: 'ab-about-lead', title: '这一版能做什么', desc: '能力随版本逐步补齐，不预装大模型。' },
           kv([
@@ -2389,6 +2395,251 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       rvcIndexRate: Number(tts.rvcIndexRate ?? 0.15),
     })
 
+    /** 本地 TTS 渠道：联网一键下载 / 本机整包一键安装（移动）→ 启动 → 在线状态。 */
+    function LocalTtsCard({ engine, toast }) {
+      const [st, setSt] = useState(null)
+      const [dl, setDl] = useState(null)
+      const [rt, setRt] = useState(null)
+      const [profile, setProfile] = useState('default')
+      // 「下载好之后就一键启动」：默认勾着，下载线程一完成且找到启动入口就自动拉起服务。
+      // 只想先下权重、稍后再启动的人可以取消勾选。
+      const [autoStart, setAutoStart] = useState(true)
+      const [busy, setBusy] = useState('')
+      const refreshStatus = useCallback(async () => {
+        const r = await get('/tts/local/status?engine=' + encodeURIComponent(engine))
+          .catch((e) => ({ ok: false, message: e.message }))
+        setSt(r)
+        return r
+      }, [engine])
+      const refreshDownload = useCallback(async () => {
+        const r = await get('/tts/local/download/status?engine=' + encodeURIComponent(engine))
+          .catch((e) => ({ ok: false, message: e.message }))
+        setDl(r)
+        return r
+      }, [engine])
+      // 服务程序（启动入口）：权重 ≠ 程序，这条单独轮询，装完要立刻刷服务状态
+      const refreshRuntime = useCallback(async () => {
+        const r = await get('/tts/local/runtime/status?engine=' + encodeURIComponent(engine))
+          .catch((e) => ({ ok: false, message: e.message }))
+        setRt(r)
+        return r
+      }, [engine])
+      useEffect(() => { refreshStatus(); refreshDownload(); refreshRuntime() },
+        [refreshStatus, refreshDownload, refreshRuntime])
+      // 下载中每秒轮询进度；服务启动中按后端给的间隔轮询。下完立刻刷一次服务状态。
+      useEffect(() => {
+        const starting = Boolean(st && st.ok !== false && st.phase === 'starting' && st.pollAfterMs)
+        const startingMs = starting ? Number(st.pollAfterMs) || 1500 : 0
+        const downloading = Boolean(dl && dl.ok !== false && (dl.running || dl.phase === 'downloading'))
+        // 服务程序 / 依赖也在后台跑：同样每秒刷，装完立刻把「服务程序」那条刷绿
+        const installing = Boolean(rt && rt.ok !== false && rt.running)
+        if (!starting && !downloading && !installing) return undefined
+        const timer = setTimeout(async () => {
+          if (starting) refreshStatus()
+          if (downloading) {
+            const r = await refreshDownload()
+            if (r && r.ok && !r.running && r.phase !== 'downloading') refreshStatus()
+          }
+          if (installing) {
+            const r = await refreshRuntime()
+            if (r && r.ok && !r.running) refreshStatus()
+          }
+        }, downloading || installing ? 1000 : startingMs)
+        return () => clearTimeout(timer)
+      }, [st, dl, rt, refreshStatus, refreshDownload, refreshRuntime])
+      const act = async (action, extra) => {
+        setBusy(action)
+        const r = await post('/tts/local/' + action, { engine, ...(extra || {}) })
+          .catch((e) => ({ ok: false, message: e.message }))
+        setBusy('')
+        toast(r.message || (r.ok ? '好了' : '没成'), r.ok ? 'ok' : 'err')
+        setSt(r.ok ? r : (r.status || r))
+      }
+      const startDownload = async () => {
+        setBusy('download')
+        const r = await post('/tts/local/download', { engine, profile, autoStart })
+          .catch((e) => ({ ok: false, message: e.message }))
+        setBusy('')
+        toast(r.message || (r.ok ? '开始下载' : '没下成'), r.ok ? 'ok' : 'err')
+        setDl(r.download || dl)
+        refreshDownload()
+      }
+      const cancelDownload = async () => {
+        const r = await post('/tts/local/download/cancel', { engine })
+          .catch((e) => ({ ok: false, message: e.message }))
+        toast(r.message || '已暂停', r.ok === false ? 'err' : 'ok')
+        setDl(r.download || dl)
+      }
+      // 服务程序 / 依赖：都是后台 job，起完立刻拉一次状态让进度条动起来
+      const runtimeAction = async (kind) => {
+        setBusy(kind)
+        const r = await post('/tts/local/runtime/' + kind, { engine })
+          .catch((e) => ({ ok: false, message: e.message }))
+        setBusy('')
+        toast(r.message || (r.ok ? '开始了' : '没成'), r.ok ? 'ok' : 'err')
+        if (r.runtime) setRt(r.runtime)
+        refreshRuntime()
+      }
+      const cancelRuntime = async (kind) => {
+        const r = await post('/tts/local/runtime/' + kind + '/cancel', { engine })
+          .catch((e) => ({ ok: false, message: e.message }))
+        toast(r.message || '已暂停', r.ok === false ? 'err' : 'ok')
+        if (r.runtime) setRt(r.runtime)
+        refreshRuntime()
+      }
+      // 导入 = 移动：默认不留两份。只有「这份下载不到、必须保留原件」才用次要按钮。
+      const pickSource = async (keepSource) => {
+        const r = await pickPath('dir', keepSource ? '选整包（会复制，原件保留）' : '选整包 / 权重目录（会移动进固定目录）')
+        if (!r || !r.ok || !r.path) { toast((r && r.message) || '没选到目录', 'err'); return }
+        act('install', { source: r.path, keepSource: Boolean(keepSource) })
+      }
+      const badge = !st || st.ok === false ? '读取中'
+        : st.phase === 'online' ? '● 在线' : st.phase === 'starting' ? '◌ 启动中' : st.phase === 'installed' ? '○ 已装、没启动' : '○ 未安装'
+      const steps = (st && st.steps) || []
+      const plan = dl && dl.plan
+      const rtPlan = rt && rt.plan
+      const files = (dl && dl.files) || []
+      const green = files.filter((f) => f.done).length
+      const failed = files.filter((f) => !f.done && f.error)
+      const mb = (n) => (Number(n || 0) / 1024 / 1024).toFixed(1) + ' MB'
+      // 用户要的「感知」：不能只有一个总百分比。进度条不动时至少能看出
+      // 正在下哪个文件、速度多少、还剩多久、已经自动重试过几次。
+      const speedText = (n) => {
+        const v = Number(n || 0)
+        if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + ' MB/s'
+        if (v >= 1024) return (v / 1024).toFixed(0) + ' KB/s'
+        return Math.max(0, Math.round(v)) + ' B/s'
+      }
+      const etaText = (s) => {
+        const v = Math.max(0, Math.round(Number(s || 0)))
+        if (v >= 60) return Math.floor(v / 60) + ' 分 ' + (v % 60) + ' 秒'
+        return v + ' 秒'
+      }
+      return h('div', { className: cx('ab-note', st && st.online ? '' : 'warn'), style: { marginTop: 10 } },
+        h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap' } },
+          h('b', null, (st && st.label) || (engine === 'qwen' ? '千问 3-TTS' : 'GPT-SoVITS'), ' · 一键下载 / 安装 / 启动'),
+          h('span', { className: cx('ab-badge', st && st.online ? 'ok' : 'warn'), style: { flex: 'none' } }, badge),
+          h('div', { className: 'ab-spacer' }),
+          h('span', { className: 'ab-muted ab-small' }, st && st.port ? '端口 ' + st.port + ' · ' + (st.platform === 'win' ? 'Windows' : st.platform === 'mac' ? 'macOS' : 'Linux') : '')),
+        h('div', { className: 'ab-muted ab-small', style: { marginTop: 6, wordBreak: 'break-word', overflowWrap: 'anywhere' } }, (st && st.message) || '正在读本机状态…'),
+        h('div', { className: 'ab-checks', style: { marginTop: 8 } },
+          steps.map((x) => h('div', { key: x.id, className: cx('ab-check', x.done && 'done') },
+            h('i', null, x.done ? '✓' : '·'),
+            h('span', null, h('b', { style: { fontWeight: 500 } }, x.label),
+              h('span', { className: 'ab-muted ab-small', style: { display: 'block' } }, x.hint || ''))))),
+        // ---------------- 联网一键下载 ----------------
+        h('div', { className: 'ab-note', style: { marginTop: 10 } },
+          h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap' } },
+            h('b', null, '① 联网一键下载'),
+            h('span', { className: 'ab-muted ab-small' }, plan ? (plan.repo + ' · ' + plan.sizeHint) : '')),
+          plan && !plan.available
+            ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 6 } },
+                plan.message + '。下面第 ② 步照样能用。')
+            : null,
+          plan && plan.available ? h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', marginTop: 8 } },
+            h(Select, { value: profile, width: 190,
+              options: (plan.profiles || ['default']).map((p) => ({ value: p, label: p === 'default' ? '精简档（够用）' : p === 'full' ? '完整档（很大）' : p })),
+              onChange: setProfile }),
+            h(Btn, { small: true, kind: 'primary', disabled: Boolean(busy), onClick: startDownload },
+              busy === 'download' ? '正在准备…' : (dl && dl.phase === 'failed' ? '续传：只补没绿的' : '一键下载')),
+            h('label', { className: 'ab-flex ab-small', style: { gap: 4, cursor: 'pointer' } },
+              h('input', { type: 'checkbox', checked: autoStart, onChange: (e) => setAutoStart(Boolean(e.target.checked)) }),
+              '下载完自动启动服务'),
+            dl && dl.running ? h(Btn, { small: true, onClick: cancelDownload }, '暂停') : null,
+            h(Btn, { small: true, kind: 'ghost', onClick: refreshDownload }, '刷新进度')) : null,
+          plan && plan.available ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 6, wordBreak: 'break-all' } },
+            '下载到固定模型目录：', h('code', null, plan.target)) : null,
+          dl && dl.phase !== 'idle' ? h('div', { style: { marginTop: 8 } },
+            h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap' } },
+              h('b', null, dl.phase === 'done' ? '✓ 下载完成' : dl.phase === 'failed' ? '△ 有文件没下完' : dl.phase === 'cancelled' ? '已暂停' : '正在下载'),
+              h('span', { className: 'ab-muted ab-small' },
+                green + '/' + (dl.total || files.length) + ' 个文件已绿 · ' + mb(dl.downloadedBytes) + '/' + mb(dl.totalBytes) + ' · ' + (dl.percent || 0) + '%')),
+            // 当前文件 + 速度 + 预计剩余：进度条不动时也能看出到底在干什么
+            dl.running ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 4, wordBreak: 'break-all' } },
+              dl.current
+                ? ('正在下 ' + dl.current + ' · ' + mb(dl.currentBytes) + ' / ' + mb(dl.currentSize)
+                   + (dl.speed ? ' · ' + speedText(dl.speed) : ' · 连接中…')
+                   + (dl.etaSeconds ? ' · 约剩 ' + etaText(dl.etaSeconds) : '')
+                   + (dl.retries ? ' · 已自动重试 ' + dl.retries + ' 次' : ''))
+                : '正在准备下一个文件…') : null,
+            h('div', { style: { height: 7, marginTop: 6, borderRadius: 4, background: 'var(--ab-line, #e5e7eb)', overflow: 'hidden' } },
+              h('div', { style: { width: (dl.percent || 0) + '%', height: '100%', background: 'var(--ab-ok, #16a34a)', transition: 'width .4s' } })),
+            // 每个文件一行：绿了 ✓ / 没绿显示 .part 已下字节 / 失败写清原因，下次只补没绿的
+            h('div', { className: 'ab-checks', style: { marginTop: 8 } },
+              files.map((f) => h('div', { key: f.name, className: cx('ab-check', f.done && 'done') },
+                h('i', null, f.done ? '✓' : f.error ? '!' : '·'),
+                h('span', null,
+                  h('b', { style: { fontWeight: 500 } }, f.name),
+                  h('span', { className: 'ab-muted ab-small', style: { display: 'block' } },
+                    f.done ? ('已绿 · ' + mb(f.size) + (f.verification === 'verified' ? ' · 校验通过' : '') + (f.skipped ? ' · 已有，跳过' : ''))
+                      : f.error ? ('没下完 · ' + f.error)
+                        : ('未绿 · 已下 ' + mb(f.partial) + ' / ' + mb(f.size) + '（断了从这里续）')))))),
+            h('div', { className: 'ab-muted ab-small', style: { marginTop: 6 } }, dl.message || ''),
+            dl.autoStarted ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 4 } },
+              '● 权重下完已自动把本机服务带起来，下一句就走这个渠道。') : null,
+            dl.startError ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 4 } },
+              '自动启动没成（' + dl.startError + '）：可以点下面「启动」再试一次。') : null,
+            failed.length ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 4 } },
+              '下次点「续传」只从这几个没绿的地方开始：' + failed.slice(0, 4).map((f) => f.name).join('、') + (failed.length > 4 ? '…' : '') + '。已绿的不重下。') : null,
+            dl.needRuntime ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 4 } },
+              '权重齐了，但还差 9883 / 9881 的启动入口整包：用下面第 ② 步把服务脚本导进来，就能点「启动」。') : null)
+            : null),
+        // ---------------- ② 本机整包导入（移动） ----------------
+        h('div', { className: 'ab-note', style: { marginTop: 10 } },
+          h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap' } },
+            h('b', null, '② 本机整包导入'),
+            h('span', { className: 'ab-muted ab-small' }, '自己电脑上已经装好的整包 / 权重，直接移动进来（不留两份）')),
+          h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', marginTop: 8 } },
+            h(Btn, { small: true, disabled: Boolean(busy), onClick: () => pickSource(false) },
+              busy === 'install' ? '正在移动…' : '选整包 / 权重目录（移动进来）'),
+            h(Btn, { small: true, kind: 'ghost', disabled: Boolean(busy), onClick: () => pickSource(true) },
+              '保留原件导入（会占两份）'),
+            h(Btn, { small: true, kind: 'ghost', disabled: Boolean(busy), onClick: () => act('install', {}) },
+              '只建目录 / 体检'))),
+        // ---------------- ③ 服务程序（就是原来那句「启动入口」） ----------------
+        h('div', { className: 'ab-note', style: { marginTop: 10 } },
+          h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap' } },
+            h('b', null, '③ 服务程序（就是「启动入口」）'),
+            h('span', { className: 'ab-muted ab-small' }, rtPlan && rtPlan.sizeHint ? rtPlan.sizeHint : '')),
+          // 用户最容易被绕住的就是这里：权重全绿了为什么还起不来？必须直说
+          h('div', { className: 'ab-muted ab-small', style: { marginTop: 6, lineHeight: 1.6 } },
+            '权重是「模型的参数」，决定声音像不像；服务程序是「把参数读进来、监听端口的那个程序」（',
+            h('code', null, (rtPlan && rtPlan.entry) || 'api_v2.py'),
+            '）。HF 上只有权重，程序在 GitHub 源码里，所以两样都绿了才能启动。'),
+          h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', marginTop: 8 } },
+            rtPlan && rtPlan.available
+              ? h(Btn, { small: true, kind: 'primary', disabled: Boolean(busy) || Boolean(rt && rt.running), onClick: () => runtimeAction('fetch') },
+                  busy === 'fetch' ? '正在准备…' : (rtPlan.installed ? '重新获取服务程序' : '一键获取服务程序'))
+              : null,
+            rtPlan && rtPlan.available
+              ? h(Btn, { small: true, disabled: Boolean(busy) || Boolean(rt && rt.running), onClick: () => runtimeAction('deps') },
+                  busy === 'deps' ? '正在准备…'
+                    : (rt && rt.missingDeps && rt.missingDeps.length ? '装依赖（还缺 ' + rt.missingDeps.length + ' 个）' : '装依赖（已经齐了）'))
+              : null,
+            rt && rt.running ? h(Btn, { small: true, onClick: () => cancelRuntime(rt.phase === 'installing' || rt.phase === 'venv' ? 'deps' : 'fetch') }, '暂停') : null,
+            rtPlan && rtPlan.entryPath
+              ? h('span', { className: 'ab-muted ab-small', style: { wordBreak: 'break-all' } }, '程序：' + rtPlan.entryPath)
+              : null),
+          rt && rt.running ? h('div', { style: { marginTop: 8 } },
+            h('div', { className: 'ab-muted ab-small', style: { wordBreak: 'break-all' } }, rt.message || '正在处理…'),
+            h('div', { style: { height: 7, marginTop: 6, borderRadius: 4, background: 'var(--ab-line, #e5e7eb)', overflow: 'hidden' } },
+              h('div', { style: { width: Math.min(100, rt.percent || 0) + '%', height: '100%', background: 'var(--ab-ok, #16a34a)', transition: 'width .4s' } }))) : null,
+          rt && !rt.running && rt.phase && rt.phase !== 'idle' && rt.message
+            ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 6, wordBreak: 'break-all' } }, rt.message)
+            : null,
+          rt && rt.missingDeps && rt.missingDeps.length ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 4, wordBreak: 'break-all' } },
+            '还缺 Python 依赖：' + rt.missingDeps.join('、') + '。点「装依赖」补上，否则启动会秒退。') : null),
+        // ---------------- 启动 / 停止 ----------------
+        h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', marginTop: 10 } },
+          h(Btn, { small: true, kind: 'primary', disabled: Boolean(busy) || Boolean(st && st.online), onClick: () => act('start') },
+            busy === 'start' ? '正在拉起…' : '启动'),
+          st && st.online ? h(Btn, { small: true, disabled: Boolean(busy), onClick: () => act('stop') }, '停止') : null,
+          h(Btn, { small: true, kind: 'ghost', onClick: () => { refreshStatus(); refreshDownload(); refreshRuntime() } }, '刷新状态')),
+        st && st.dirs ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 8, wordBreak: 'break-all' } },
+          '固定目录（两端一样）：模型 ' + st.dirs.models + '；整包 ' + st.dirs.runtime,
+          h('div', { style: { marginTop: 4 } }, '导入是「移动」不是 copy：不会留两份占空间；只有点「保留原件导入」才复制。插件自己管进程，不依赖 qq-stack.sh。')) : null)
+    }
+
     function ServiceVoiceDetail({ tts, eng, rvcOn, reload, toast, ctlRef, onDirtyChange }) {
       const sig = JSON.stringify(tts || {}) + '|' + eng
       const init = useMemo(() => voiceDetailInitial(tts || {}), [sig])
@@ -2437,12 +2688,25 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const modelRow = (engine, label) => {
         const row = models.find((x) => x.engine === engine) || null
         const path = (row && row.configured) || ''
+        // 导航里显示的那个固定目录才是「模型目录」；已删掉的 HF cache 源路径不该再出现
+        const dir = (row && row.dir) || ''
+        const stale = Boolean(row && row.stale)
+        const cleared = async () => {
+          const r = await post('/song/models', { engine, clear: true }).catch((e) => ({ ok: false, message: e.message }))
+          toast(r.message || (r.ok ? '失效路径清掉了' : '没清掉'), r.ok ? 'ok' : 'err')
+          setModels(((r && r.models) || {}).rows || [])
+        }
         return h(Row, { key: 'md' + engine, label: label + '模型目录',
-          hint: row && row.auto ? '自动找到的，不用填：' + path : row && row.exists ? '已选：' + path : '还没选：点「选目录」指到你下载的模型文件夹' },
+          hint: (row && row.hint) || (row && row.exists ? '已选：' + path : '没有：点「一键下载」或「选目录」把权重放进固定目录 ' + dir) },
           h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', flex: 1 } },
-            h('code', { className: 'ab-small', style: { flex: '1 1 240px', wordBreak: 'break-all' } }, path || '还没选'),
+            h('code', { className: 'ab-small', style: { flex: '1 1 240px', wordBreak: 'break-all', ...(stale ? { color: 'var(--ab-warn)' } : {}) } },
+              path || (stale ? '没有（旧路径已失效，不再显示）' : '没有')),
+            stale ? h('span', { className: 'ab-badge warn', style: { flex: 'none' } }, '旧路径已失效') : null,
             h(Btn, { small: true, kind: 'ghost', onClick: () => pickModel(engine) }, '选目录'),
-            h(Btn, { small: true, kind: 'ghost', onClick: loadModels }, '刷新')))
+            stale ? h(Btn, { small: true, kind: 'ghost', onClick: cleared }, '清除') : null,
+            h(Btn, { small: true, kind: 'ghost', onClick: loadModels }, '刷新'),
+            dir ? h('div', { className: 'ab-muted ab-small', style: { flex: '1 1 100%', wordBreak: 'break-all' } },
+              '固定模型目录：' + dir + '（一键下载 / 导入会放到这里）') : null))
       }
       const set = (k, v) => setD((prev) => ({ ...prev, [k]: v }))
       // 只提交当前渠道真正用得上的字段。把别的渠道的参数一起写回去，
@@ -2541,6 +2805,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         rows.push(h(Row, { key: 'lu', label: '本机服务地址', hint: '留空 = 用下面的模型目录直接跑；填了就连这个常驻服务（默认 9883）' },
           text('qwenUrl', 'http://127.0.0.1:9883')))
         rows.push(modelRow('qwen', '千问 3-TTS '))
+        rows.push(h('div', { key: 'localtts' }, h(LocalTtsCard, { engine: 'qwen', toast })))
       } else if (eng === 'gptsovits') {
         rows.push(h(Row, { key: 'lu', label: '本机服务地址', hint: 'GPT-SoVITS 的 api_v2.py，默认 9881' },
           text('gptsovitsUrl', 'http://127.0.0.1:9881')))
@@ -2557,6 +2822,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h(Btn, { small: true, kind: 'ghost', onClick: pickRef }, '选文件'),
             h(Btn, { small: true, kind: 'ghost', onClick: reloadRefs }, '刷新列表'))))
         rows.push(h(Row, { key: 'rt', label: '这段音频说的是', hint: '逐字稿，越准越像；换音频记得一起改' }, text('refText', '例：今天也要好好吃饭哦')))
+        rows.push(h('div', { key: 'localtts' }, h(LocalTtsCard, { engine: 'gptsovits', toast })))
       }
       // 换声贴合度是 RVC 的参数，不是渠道参数：关掉「说话换声」它就没意义，别一直摆着。
       if (rvcOn) {
@@ -2581,11 +2847,39 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const r = svc
       const eng = (r && r.engine) || ''
       const tts = (r && r.tts) || {}
-      // 每个渠道的音色存在不同字段：Breeze 用 voice id，edge 用神经网络音色名。
-      // 旧版一律显示 edgeVoice，选了 Breeze 也显示 zh-CN-YunxiNeural，看着像「配了没生效」。
+      // 每个渠道的「当前生效」标识各不一样。以前除了 Breeze 一律显示 tts.voice
+      // （edge 的神经网络音色名），于是选了「千问本地 / GPT-SoVITS」也显示
+      // zh-CN-XiaoyiNeural，看起来就像「上面选本地没生效、还是走 edge」。
       const activeVoice = eng === 'breeze'
         ? (tts.breezeVoice || '没填 voice id（走 Breeze 默认）')
-        : (tts.voice || tts.edgeVoice || '默认')
+        : eng === 'edge' ? (tts.voice || tts.edgeVoice || '默认')
+          : eng === 'qwen' ? (tts.qwenUrl ? '千问本机服务（' + tts.qwenUrl + '）' : '千问本地推理（没填服务地址）')
+            : eng === 'gptsovits' ? (tts.refAudio ? 'GPT-SoVITS 参考音色 · ' + String(tts.refAudio).split(/[\\/]/).pop() : 'GPT-SoVITS 本机服务')
+              : eng === 'http' ? (tts.httpUrl || '自定义 HTTP 接口（没填地址）') : '默认'
+      const localChannel = eng === 'qwen' || eng === 'gptsovits'
+      const [localOnline, setLocalOnline] = useState(null)
+      const [localBusy, setLocalBusy] = useState(false)
+      // 本地渠道探测在线状态：没起就要明说「现在会回退到本机备用渠道」，
+      // 不能再让用户听到兜底声音却以为本地渠道生效了。
+      useEffect(() => {
+        if (!localChannel || !(r && r.ok)) { setLocalOnline(null); return undefined }
+        let alive = true
+        const probe = () => get('/tts/local/status?engine=' + encodeURIComponent(eng))
+          .then((x) => { if (alive) setLocalOnline(Boolean(x && x.ok !== false && x.online)) })
+          .catch(() => { if (alive) setLocalOnline(false) })
+        probe()
+        const timer = setInterval(probe, 5000)
+        return () => { alive = false; clearInterval(timer) }
+      }, [eng, localChannel, r && r.ok])
+      const startLocal = async () => {
+        setLocalBusy(true)
+        try {
+          const out = await post('/tts/local/start', { engine: eng })
+          toast(out.message || (out.ok === false ? '没起来' : '已启动'), out.ok === false ? 'err' : 'ok')
+          setLocalOnline(Boolean(out && out.online))
+          if (out && out.ok !== false) reload()
+        } catch (e) { toast('没起来：' + e.message, 'err') } finally { setLocalBusy(false) }
+      }
       const rvcOn = tts.rvc === undefined ? true : !['false', '0', 'no', 'off'].includes(String(tts.rvc).toLowerCase())
       // 换声音色和唱歌共用服务里那份 RVC 音色库（cfg.song）：这里选完，说话、唱歌、
       // 只读大屏试听用的是同一个音色，不会出现「唱是一个声、说是另一个声」。
@@ -2670,18 +2964,35 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         h(Card, { title: '声音（音频服务统一管）',
           status: r === null ? 'saving' : 'saved', statusText: r === null ? '读取中' : '即改即生效',
           desc: '这一页按「你选了什么」从上往下长：先选说话渠道，紧跟着就是它真正用得上的参数；再往下是换声（说话和唱歌共用一个音色）。渠道参数改完要保存；开关和音色点完就生效。网页大屏只读。' },
-        h(Row, { label: '说话渠道', hint: r === null ? '正在读…' : (r.ok ? '当前生效音色 ' + activeVoice : '音频服务没连上：选渠道会自动帮你启动，也可以点「启动音频服务」') },
+        h(Row, { label: '说话渠道', hint: (() => {
+          if (r === null) return '正在读…'
+          if (!r.ok) return '音频服务没连上：选渠道会自动帮你启动，也可以点「启动音频服务」'
+          if (!localChannel) return '当前生效 ' + activeVoice
+          if (localOnline === false) return '⚠ 本机服务没起：现在说话会回退到「本机备用渠道」；选的是 ' + activeVoice
+          if (localOnline === true) return '● 本机服务在线 · ' + activeVoice
+          return '正在检查本机服务状态… · ' + activeVoice
+        })() },
           h(Select, {
             value: eng || 'edge', width: 240, disabled: busy,
             onChange: switchEngine,
             options: [
-              { value: 'edge', label: '微软 edge-tts（Windows 默认，可直接出声）' },
-              { value: 'qwen', label: '千问 3 本地（本机 9883 常驻服务，Windows 可用）' },
+              { value: 'edge', label: '微软 edge-tts（Mac / Windows 通用，零下载，可直接出声）' },
+              { value: 'qwen', label: '千问 3-TTS（本机 9883 服务；Mac / Windows）' },
               { value: 'breeze', label: 'Breeze 远程（要填 Key）' },
-              { value: 'gptsovits', label: '本地 GPT-SoVITS（9881，用 9890 控制台或启动脚本带起）' },
+              { value: 'gptsovits', label: '本地 GPT-SoVITS（本机 9881 服务；Mac / Windows）' },
               { value: 'http', label: '其他 HTTP 接口' },
             ],
           })),
+        // 「选了本地渠道却听到兜底声音」以前是静默的：服务没起就悄悄回退。
+        // 这里把原因摆出来，并给一个不用翻页的启动按钮。
+        localChannel && localOnline === false && r && r.ok
+          ? h('div', { className: 'ab-note warn', style: { marginTop: 8 } },
+              h('b', null, '这个本地渠道还没在线，所以你听到的是兜底声音'),
+              h('div', { className: 'ab-small', style: { marginTop: 4 } },
+                '本机 ' + (eng === 'qwen' ? '9883' : '9881') + ' 连不上时，插件会自动回退到下面「本机备用渠道」' +
+                '（通常是 edge-tts），不是上面选的这个渠道。点「一键启动」把服务带起来，看到「● 在线」后下一句就生效。'),
+              h(Btn, { small: true, kind: 'primary', disabled: localBusy, onClick: startLocal },
+                localBusy ? '正在拉起…' : '一键启动本渠道服务')) : null,
         // 渠道参数紧贴渠道下拉：选完渠道，下面立刻就是它的参数，
         // 不用滚到另一张卡片去对「上面选的是哪个、下面这堆是谁的」。
         r && r.ok ? h(ServiceVoiceDetail, { tts, eng, rvcOn, reload, toast, ctlRef, onDirtyChange })
@@ -2807,6 +3118,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [src, setSrc] = useState('')
       const [savedTo, setSavedTo] = useState('')
       const [savedDir, setSavedDir] = useState('')
+      const [fallbackReason, setFallbackReason] = useState('')
       const [svc, setSvc] = useState(null)
       // 试听生成的是本机真实文件：把路径回显出来，用户不用再猜「保存在哪」。
       // 文件就落在「语音试听」目录里，所以旁边能直接打开那个文件夹。
@@ -2815,6 +3127,9 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         setSrc('data:' + r.mime + ';base64,' + r.data)
         setSavedTo(r.file || r.dir || '')
         setSavedDir(r.dir || '')
+        // 选了本地渠道却听到兜底声音：这里必须说清，不再静默回退
+        setFallbackReason(String(r.fallbackReason || ''))
+        if (r.fallbackReason) toast('这句走的是兜底渠道：' + r.fallbackReason, 'err')
       }
       const loadSvc = () => get('/song/tts').then(setSvc).catch(() => setSvc({ ok: false, message: '音频服务没开' }))
       useEffect(() => { loadSvc() }, [])
@@ -2863,6 +3178,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               h('input', { value: txt, placeholder: '输入一句话，听听她的声音', onChange: (e) => setTxt(e.target.value), onKeyDown: (e) => e.key === 'Enter' && post('/voice/test', { text: txt }).then(applyTest) }),
               h(Btn, { small: true, kind: 'primary', onClick: async () => applyTest(await post('/voice/test', { text: txt })) }, '生成')),
             src ? h('audio', { src, controls: true, autoPlay: true, style: { height: 34 } }) : null,
+            fallbackReason ? h('div', { className: 'ab-note warn', style: { flex: '1 1 100%', marginTop: 6 } },
+              h('b', null, '这句没走你选的渠道'), h('div', { className: 'ab-small' }, fallbackReason)) : null,
             savedTo ? h('div', { style: { marginTop: 8 } },
               h('div', { className: 'ab-flex', style: { gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
                 h('span', { className: 'ab-muted ab-small' }, '刚生成的文件：'),
@@ -3493,6 +3810,12 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     function PetPanel({ toast }) {
       const [pet, setPet] = useState(null)
       const [purpose, setPurpose] = useState(null)
+      // 宿主给的绝对路径（模块目录 / 客户端 / 素材包）：面板摊开显示 + 一键复制，别只写半截相对路径
+      const [petPaths, setPetPaths] = useState(null)
+      // 桌宠是社区模块，不是内置的：把真实版本/来源显示在卡顶，免得对着开关猜是哪一个插件
+      const [petModule, setPetModule] = useState(null)
+      // 宿主侧的 Electron 体检：装了但残缺（macOS 缺 framework 符号链接）要能在最上面一眼看到
+      const [electron, setElectron] = useState(null)
       const [loaded, setLoaded] = useState(false)
       const [busy, setBusy] = useState('')
       // 碎碎念 / 干活状态的本地编辑态（数字与文案池要「应用」才提交；开关、下拉即点即存）
@@ -3515,7 +3838,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [cc, setCc] = useState(null)
       const load = async () => {
         const [pr, pu] = await Promise.all([get('/panel/pet/status'), get('/panel/purpose/status')])
-        if (pr.ok) { setPet(pr.pet); setWs((old) => old || (pr.pet && pr.pet.whisper ? { ...pr.pet.whisper } : null)) }
+        if (pr.ok) {
+          setPet(pr.pet)
+          if (pr.paths) setPetPaths(pr.paths)
+          if (pr.module) setPetModule(pr.module)
+          if (pr.electron) setElectron(pr.electron)
+          setWs((old) => old || (pr.pet && pr.pet.whisper ? { ...pr.pet.whisper } : null))
+        }
         if (pu.ok) setPurpose(pu.purpose)
         setLoaded(true)
       }
@@ -3551,6 +3880,11 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           else toast(res.message || okMsg, 'ok')
         } catch (e) { toast(e.message) } finally { setBusy(''); load() }
       }
+      // 完整路径/地址一律铺满一行并可复制：窄输入框会把 URL 砍成 https://npmmirror.com/n 这种半截
+      const fullLine = (label, value) => !value ? null : h('div', { className: 'ab-flex', style: { marginTop: 6, flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
+        h('span', { className: 'ab-muted ab-small', style: { whiteSpace: 'nowrap' } }, label),
+        h('code', { className: 'ab-small', style: { flex: '1 1 320px', minWidth: 0, overflowWrap: 'anywhere', lineHeight: 1.6, color: 'var(--ab-text, inherit)' }, title: value }, value),
+        h(Btn, { small: true, kind: 'ghost', onClick: () => { try { navigator.clipboard.writeText(value); toast('复制好了', 'ok') } catch (e) { toast(value) } } }, '复制'))
       // 桌宠页下方的设置：统一走 /panel/pet/config（写 ext.pet.*）
       const savePet = async (patch, okMsg) => {
         setBusy('cfg')
@@ -3646,7 +3980,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [q, setQ] = useState({})
       const [qErr, setQErr] = useState('')
       const PET_GROUPS = {
-        main: ['petScale', 'petChatHotkey', 'petChatCloseKeyword', 'petChatMaxEntries', 'petChatRetentionDays', 'petWeatherCity', 'electronMirror'],
+        setup: ['electronMirror'],
+        main: ['petScale', 'petChatHotkey', 'petChatCloseKeyword', 'petChatMaxEntries', 'petChatRetentionDays', 'petWeatherCity'],
         pack: ['petPackUrl'],
         behavior: ['behaviorMinMinutes', 'behaviorMaxMinutes', 'behaviorMaxPerDay', 'behaviorIdleCursorMinutes', 'behaviorIconQuarantineDays', 'behaviorMoodCloseWindowBelow', 'behaviorWindowWhitelist'],
         chat: ['chatBehaviorWhitelist', 'chatBehaviorCooldownMinutes', 'chatBehaviorMaxPerDay'],
@@ -3660,7 +3995,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         setQ((old) => { const n = { ...old }; qKeys(g).forEach((k) => delete n[k]); return n })
         setQErr('')
         // 本地草稿置 null = 输入框跟着服务端真值走
-        if (g === 'main') { setCc(null); setScVal(null); setEmUrl(null) }
+        if (g === 'main') { setCc(null); setScVal(null) }
+        else if (g === 'setup') setEmUrl(null)
         else if (g === 'pack') setPkUrl(null)
         else if (g === 'behavior' || g === 'chat') setBcfg(null)
         else if (g === 'whisper') setWs(null)
@@ -3686,17 +4022,82 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         finally { setBusy('') }
       }
       return h('div', { className: 'ab-grid' },
+        // ① 前置操作统一放最上面：客户端 → Electron（含镜像）→ 启动/停止。
+        // 下面的开关全都要桌宠真跑起来才有意义，别让人翻到卡片最底下才找到启动按钮。
+        h(Card, { title: '① 先装好，再启动', status: qStatus('setup'),
+          statusText: qStatus('setup') === 'saved' ? '镜像地址已保存' : undefined,
+          onSave: () => qSave('setup', '镜像地址已保存'), onRevert: () => qReset('setup'), saveLabel: '保存镜像地址',
+          desc: '顺序：生成客户端 → 安装 Electron（镜像可先改）→ 启动桌宠。下面「桌宠」卡里的所有开关，都要等它真跑起来才看得到效果。' },
+          h('div', { className: 'ab-flex', style: { marginBottom: 8, flexWrap: 'wrap', gap: 8 } },
+            h('span', { className: 'ab-pill' }, h('i', { className: cx('ab-dot', dotCls) }), state),
+            h('span', { className: 'ab-muted ab-small' },
+              '模块 ' + (petModule?.running ? '在跑' : '没在跑') +
+              '｜Electron ' + (electronInstalled ? (electron?.healthy === false ? '装了但不完整' : '已装') : '未装') +
+              '｜运行 ' + (online ? '在跑' : '没在跑') + (pet?.pid ? '（pid ' + pet.pid + '）' : '') +
+              (portReady ? '' : '｜端口未就绪（等宿主注入）'))),
+          electron?.installed && electron?.healthy === false ? h('div', { className: 'ab-note warn', style: { marginBottom: 10 } },
+            h('div', null, '⚠ Electron 安装不完整，直接点启动会弹「因为出现问题而无法打开」。常见原因：macOS 官方压缩包里的 framework 符号链接在解压时丢了。'),
+            h('div', { className: 'ab-small', style: { marginTop: 4 } }, (electron.problems || []).join('；')),
+            h('div', { style: { marginTop: 8 } },
+              h(Btn, { small: true, kind: 'primary', disabled: busy === 'er', onClick: () => act('er', '/panel/pet/electron-repair', 'Electron 已修复') }, busy === 'er' ? '修复中…' : '修复 Electron（不用重新下载）'))) : null,
+          h(Row, { label: 'Electron 镜像', hint: '装 Electron 从哪下（末尾带 /）。默认 npmmirror，国内一般快；连不上可换其他镜像。留空 = 用内置默认。npm 装失败会自动改用 zip 直装' },
+            h('div', { style: { width: '100%', minWidth: 0 } },
+              h('input', { className: 'ab-input wide', title: emUrl == null ? (pet?.electronMirror || '') : emUrl, value: emUrl == null ? (pet?.electronMirror || '') : emUrl, placeholder: 'https://npmmirror.com/mirrors/electron/', onChange: (e) => { setEmUrl(e.target.value); qPut({ electronMirror: String(e.target.value).trim() }) } }),
+              fullLine('当前生效', pet?.electronMirror || 'https://npmmirror.com/mirrors/electron/（内置默认）'))),
+          h('div', { className: 'ab-flex', style: { marginTop: 10, flexWrap: 'wrap', gap: 6 } },
+            h(Btn, { small: true, disabled: busy === 'dl', onClick: async () => { setBusy('dl'); try { const r = await post('/panel/pet/download'); if (!r.ok) toast(r.message || '没成功', 'err'); else toast(clientBad ? '客户端已重新生成，重启 Electron 后生效' : '客户端已放到数据目录，按桌宠模块说明启动即可', 'ok') } catch (e) { toast(e.message) } finally { setBusy(''); load() } } }, busy === 'dl' ? '生成中…' : clientBad ? '重新生成客户端' : '下载 / 生成客户端'),
+            pet?.remoteClient
+              ? h(Btn, { small: true, disabled: busy === 'pkg', onClick: () => { window.open(API + '/panel/pet/client-package', '_blank') } }, busy === 'pkg' ? '打包中…' : '下载客户端包')
+              : h('span', { className: 'ab-flex', style: { flexWrap: 'wrap', gap: 6 } },
+                h(Btn, { small: true, kind: 'primary', disabled: busy === 'ei', onClick: () => act('ei', '/panel/pet/electron-install', 'Electron 安装完成') }, busy === 'ei' ? '安装中…' : electronInstalled ? '重装 Electron' : '安装 Electron'),
+                h(Btn, { small: true, disabled: busy === 'la', onClick: () => act('la', '/panel/pet/launch', '已启动') }, busy === 'la' ? '启动中…' : '启动桌宠'),
+                h(Btn, { small: true, disabled: busy === 'st', onClick: () => act('st', '/panel/pet/stop', '已停止') }, busy === 'st' ? '停止中…' : '停止桌宠')),
+          pet?.remoteClient ? h('div', { className: 'ab-small ab-muted', style: { marginTop: 6 } }, '服务器模式：解压到你自己的电脑，装好 Electron 后在解压目录运行 npx electron main.js（包内已内嵌远端地址与令牌，别外传）') : null,
+          clientBad ? h('div', { className: 'ab-note warn', style: { marginTop: 8 } },
+            h('div', null, '⚠ 客户端和插件版本对不上：' + (clientInfo.message || '需要重新生成')),
+            clientInfo.missing && clientInfo.missing.length ? h('div', { className: 'ab-small', style: { marginTop: 4 } }, '缺文件：' + clientInfo.missing.join('、') + '（缺 behavior.js 时行为层整个不生效，只打日志）') : null,
+            clientInfo.needsRestart ? h('div', { className: 'ab-small', style: { marginTop: 4 } }, 'Electron 现在在跑：重新生成后要「停止桌宠」再「启动桌宠」才生效') : null) : null,
+          fullLine('客户端目录', petPaths?.clientDir || '~/.dsh/plugins-data/aurabot/modules-data/pet/app'),
+          h('div', { className: 'ab-small ab-muted', style: { marginTop: 8 } },
+            'macOS 与 Windows 都支持。macOS 若弹出「Electron 因为出现问题而无法打开」，点上面的「修复 Electron」补回 framework 链接即可，不用重新下载；Windows 的官方包是扁平结构，不受这个问题影响。'))),
         h(Card, { title: '桌宠', status: qStatus('main'),
           statusText: qStatus('main') === 'saved' ? '已保存 · 开关即点即生效' : undefined,
           onSave: () => qSave('main', '桌宠设置已保存'), onRevert: () => qReset('main'), saveLabel: '保存桌宠设置',
           desc: '把「大肥鱼」请到桌面上：一个小小的ta待在屏幕角落，主动搭话走气泡；你也可以点ta聊天。开关点完就生效；文字和数字改动后，这张卡会变色并在下面弹出保存。' },
+        h('div', { className: 'ab-note', style: { marginBottom: 10 } },
+          h('div', null,
+            '这一页来自单独安装的社区模块「桌宠 pet」' + (petModule?.version ? ' v' + petModule.version : '') +
+            '，' + (petModule?.running ? '当前正在运行' : '当前没在跑') +
+            '。它不是本插件内置模块，也不随插件自动更新；来源、许可和升级说明写在下面目录的 README.md 里。'),
+          fullLine('本机模块目录', petPaths?.moduleDir || '~/.dsh/plugins-data/aurabot/modules/pet'),
+          h('div', { className: 'ab-small', style: { marginTop: 4 } },
+            '这张卡里的开关都归桌宠；「主动搭话发 QQ 还是发桌宠气泡」已收拢到下面的「投递载体」，和「主动搭话 → 目的机制」卡是同一个值，两边改哪边都生效。')),
         h('div', { className: 'ab-flex', style: { marginBottom: 8 } },
           h('span', { className: 'ab-pill' }, h('i', { className: cx('ab-dot', dotCls) }), state),
           h('span', { className: 'ab-muted ab-small' }, heart ? '上次心跳 ' + timeAgo(heart) : loaded ? '还没有心跳记录' : '加载中…')),
-        h(Row, { label: '投递载体联动', hint: '在「主动搭话」页的目的机制卡里切换；现在是「' + (carrier === 'pet' ? '桌宠' : 'QQ 私聊') + '」' },
-          h('span', { className: 'ab-muted ab-small' }, carrier === 'pet'
-            ? (online ? '主动搭话正走桌宠气泡' : purpose?.petFallbackToQQ === false ? '桌宠离线，且已关闭回落：现在不会主动搭话' : '桌宠离线，主动搭话会回落到 QQ')
-            : '主动搭话走 QQ 私聊，桌宠只显示气泡不发')),
+        // 载体总开关原本在「主动搭话 → 目的机制」卡里，桌宠卡只回显；现在两边都能改，写的是同一个 ext.purpose.carrier
+        h(Row, { label: '投递载体', hint: '主动搭话发到哪，改完即生效；和「主动搭话 → 目的机制」卡是同一个开关' },
+          h(Select, { value: carrier, options: [{ value: 'qq', label: 'QQ 私聊' }, { value: 'pet', label: '桌宠气泡' }], onChange: async (v) => {
+            setBusy('carrier')
+            try {
+              const r = await post('/panel/purpose/config', { carrier: v })
+              if (!r.ok) toast(r.message || '没成功', 'err')
+              else toast(v === 'pet' ? '主动搭话改走桌宠气泡' : '主动搭话改走 QQ 私聊', 'ok')
+            } catch (e) { toast(e.message) }
+            finally { setBusy(''); load() }
+          } })),
+        h(Row, { label: '桌宠离线时回落 QQ', hint: carrier === 'pet'
+          ? (online ? '桌宠在线，主动搭话走气泡' : purpose?.petFallbackToQQ === false ? '桌宠离线且没开回落：现在不会主动搭话' : '桌宠离线，主动搭话会回落到 QQ')
+          : '当前走 QQ 私聊，桌宠只显示气泡不发' },
+          h(Switch, { on: purpose?.petFallbackToQQ !== false, onChange: async (v) => {
+            setBusy('carrier')
+            try {
+              const r = await post('/panel/purpose/config', { petFallbackToQQ: v })
+              if (!r.ok) toast(r.message || '没成功', 'err')
+              else toast(v ? '桌宠离线时会回落到 QQ' : '桌宠离线时静默', 'ok')
+            } catch (e) { toast(e.message) }
+            finally { setBusy(''); load() }
+          } })),
         h(Row, { label: '专注模式', hint: '开着时ta不弹气泡、也不主动搭话（学习/开会不被打扰）' },
           h(Switch, { on: focus, onChange: async (v) => { setBusy('focus'); try { const r = await post('/panel/pet/focus', { enabled: v }); if (!r.ok) toast(r.message || '没成功', 'err'); else toast(v ? '专注模式开了' : '专注模式关了', 'ok') } catch (e) { toast(e.message) } finally { setBusy(''); load() } } })),
         // 只有 1.0.3 以上的桌宠模块才支持缩放
@@ -3738,24 +4139,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               h('input', { className: 'ab-input', style: { width: 'min(200px, 100%)' }, placeholder: '留空 = 不接入', value: cg('weatherCity', ''), onChange: (e) => { setCg('weatherCity', e.target.value); qPut({ petWeatherCity: String(e.target.value).trim() }) } }),
               null,
               chatCfg.weather ? h('span', { className: 'ab-muted ab-small' }, '现在：' + chatCfg.weather) : null))) : null,
-        clientBad ? h('div', { className: 'ab-note warn', style: { marginTop: 8 } },
-          h('div', null, '⚠ 客户端和插件版本对不上：' + (clientInfo.message || '需要重新生成')),
-          clientInfo.missing && clientInfo.missing.length ? h('div', { className: 'ab-small', style: { marginTop: 4 } }, '缺文件：' + clientInfo.missing.join('、') + '（缺 behavior.js 时行为层整个不生效，只打日志）') : null,
-          clientInfo.needsRestart ? h('div', { className: 'ab-small', style: { marginTop: 4 } }, 'Electron 现在在跑：重新生成后要「停止桌宠」再「启动桌宠」才生效') : null) : null,
-        h('div', { className: 'ab-flex', style: { marginTop: 10 } },
-          h(Btn, { small: true, disabled: busy === 'dl', onClick: async () => { setBusy('dl'); try { const r = await post('/panel/pet/download'); if (!r.ok) toast(r.message || '没成功', 'err'); else toast(clientBad ? '客户端已重新生成，重启 Electron 后生效' : '客户端已放到数据目录，按桌宠模块说明启动即可', 'ok') } catch (e) { toast(e.message) } finally { setBusy(''); load() } } }, busy === 'dl' ? '生成中…' : clientBad ? '重新生成客户端' : '下载 / 生成客户端'),
-          h('span', { className: 'ab-muted ab-small' }, '放到数据目录 modules-data/pet/app，随插件自动发现')),
-        h('div', { className: 'ab-flex', style: { marginTop: 6 } },
-          // 远端直连模式（pet.remoteClient = 配了 publicBaseUrl）：服务器无桌面，Electron 三键换成「下载客户端包」
-          pet?.remoteClient ? h('span', null,
-            h(Btn, { small: true, disabled: busy === 'pkg', onClick: () => { window.open(API + '/panel/pet/client-package', '_blank') } }, busy === 'pkg' ? '打包中…' : '下载客户端包'),
-            h('span', { className: 'ab-muted ab-small', style: { marginLeft: 8 } }, '服务器模式：解压到你自己的电脑，装好 Electron 后在解压目录运行 npx electron main.js（host.json 已内嵌远端地址与令牌，别外传这个包）'))
-          : h('span', null,
-            h(Btn, { small: true, disabled: busy === 'ei', onClick: () => act('ei', '/panel/pet/electron-install', 'Electron 安装完成') }, busy === 'ei' ? '安装中…' : electronInstalled ? '重装 Electron' : '安装 Electron'),
-            h(Btn, { small: true, disabled: busy === 'la', onClick: () => act('la', '/panel/pet/launch', '已启动') }, busy === 'la' ? '启动中…' : '启动桌宠'),
-            h(Btn, { small: true, disabled: busy === 'st', onClick: () => act('st', '/panel/pet/stop', '已停止') }, busy === 'st' ? '停止中…' : '停止桌宠')),
-          h('span', { className: 'ab-muted ab-small' },
-            pet?.remoteClient ? '' : 'Electron ' + (electronInstalled ? '已装' : '未装') + '｜运行 ' + (online ? '在跑' : '没在跑') + (pet?.pid ? '（pid ' + pet.pid + '）' : '') + (portReady ? '' : '｜端口未就绪（等宿主注入）'))),
+        // 客户端生成 / Electron 三键 / 镜像地址已统一移到页首「① 先装好，再启动」卡。
         // 远端直连的安全状态与应急动作（2026-11-02）：明文阻断提示 + 令牌轮换
         pet?.remoteClient ? h('div', { style: { marginTop: 8 } },
           pet?.publicBaseInsecure
@@ -3778,10 +4162,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               (pet?.tokenIssuedAt ? '｜签发于 ' + new Date(pet.tokenIssuedAt).toLocaleString() : '') +
               (pet?.tokenTtlDays ? '（有效期 ' + pet.tokenTtlDays + ' 天）' : '（永不过期）'))))
           : null,
-        h(Row, { label: 'Electron 镜像', hint: '装 Electron 从哪下（末尾带 /）。默认 npmmirror，国内一般快；连不上可换 https://github.com/electron/electron/releases/download/。留空 = 用内置默认。npm 装失败会自动改用 zip 直装' },
-          h('div', { className: 'ab-flex' },
-            h('input', { className: 'ab-input', style: { width: 'min(300px, 100%)' }, value: emUrl == null ? (pet?.electronMirror || '') : emUrl, placeholder: 'https://npmmirror.com/mirrors/electron/', onChange: (e) => { setEmUrl(e.target.value); qPut({ electronMirror: String(e.target.value).trim() }) } }),
-            null)),
         h(Row, { label: '表情预览', hint: '气泡与心情事件会用到这些表情' },
           h('div', { style: { flex: 1, display: 'flex', flexWrap: 'wrap', gap: 6 } },
             moods.map((m, i) => h('span', { key: (m.key || m) + i, className: 'ab-pill' }, moodLabel(m))))),
@@ -3803,11 +4183,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                   pi.downloading ? h('span', { className: 'ab-pill' }, '正在下载…') : null,
                   !okPack ? h('span', { className: 'ab-muted ab-small' }, '缺包时每 10 分钟会自动重试一次') : null),
                 h(Row, { label: '下载地址', hint: 'zip 直链。留空即不自动下载素材；需要时填自己的 zip 直链（国内网络可用镜像）。zip 里素材放文件夹即可（如 pet-pack/default-animation/）' },
-                  h('input', { className: 'ab-input', style: { width: 'min(380px, 100%)' }, value: cur, placeholder: 'https://…/archive/refs/heads/main.zip', onChange: (e) => { setPkUrl(e.target.value); qPut({ petPackUrl: String(e.target.value).trim() }) } })),
+                  h('div', { style: { width: '100%', minWidth: 0 } },
+                    h('input', { className: 'ab-input wide', title: cur, value: cur, placeholder: 'https://…/archive/refs/heads/main.zip', onChange: (e) => { setPkUrl(e.target.value); qPut({ petPackUrl: String(e.target.value).trim() }) } }),
+                    fullLine('仓库地址', cur || '未填（用模块内置默认）'))),
                 h('div', { className: 'ab-flex', style: { marginTop: 8 } },
                   null,
                   h(Btn, { small: true, disabled: busy === 'pk', onClick: () => act('pk', '/panel/pet/fetch-pack', '素材包已就位') }, busy === 'pk' ? '下载中…' : okPack ? '重新下载素材包' : '下载素材包'),
-                  h('span', { className: 'ab-muted ab-small' }, '落位到 modules-data/pet/packs/，下完自动生效')))
+                  h('span', { className: 'ab-muted ab-small' }, '落位到素材包目录，下完自动生效')),
+                fullLine('素材包目录', petPaths?.packsDir || '~/.dsh/plugins-data/aurabot/modules-data/pet/packs'))
             })()),
         // ---------- 行为动作（面板测试通道）：状态行 + 逐动作「试一下」/ AI 开关 + 行内最近回执 ----------
         h(Card, { title: '行为动作', desc: 'ta的「行为大脑」每隔一会儿自己挑一个动作演：追鼠标、叼鼠标、叼图标、推窗口……这里可以逐个「试一下」（绕过专注模式与安静时段，立刻下发），也可以把某个动作从 AI 的动作表里拿掉——「试一下」按钮不受影响。桌宠没在跑时点按钮只是下发排队，等ta跑起来才演。右边「最近回执」是客户端演完或拒演回来的结果。AI 每次决策都在工作区里单独开一条「行为大脑」会话，能当场看到ta怎么想的。' },
@@ -4671,6 +5054,65 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         h(Btn, { small: true, kind: 'ghost', onClick: async () => { await post('/memory/delete', { id: m.id }); onChanged() } }, '忘掉'))
     }
 
+    /** 人声分离模型单独一张卡：它属于「翻唱依赖」，不该混在音色导入里。
+     *  每个文件单独标绿；重试只补没绿的，断了的从 .download 已下载的字节续传。 */
+    function SeparatorModelCard({ s, toast, onChange }) {
+      const DEP_LABEL = { python: 'Python 运行环境', applio: 'Applio 推理引擎', separator: '人声分离',
+        separatorModel: '人声分离模型', ffmpeg: 'ffmpeg', weights: '预训练文件' }
+      const files = s.separatorFiles || []
+      const done = files.filter((f) => f.done).length
+      const [over, setOver] = useState(false)
+      const detect = async () => {
+        const r = await get('/song/status').catch((e) => ({ ok: false, message: e.message }))
+        if (!r || r.ok === false) { toast((r && r.message) || '检测失败', 'err'); return }
+        const miss = r.missing || []
+        toast(miss.length
+          ? '检测完成：还差 ' + miss.map((k) => DEP_LABEL[k] || k).join('、') + '。点「一键安装 / 再试一次」只会补这几项，已绿的不重下。'
+          : '检测完成：依赖全绿了 ✓', miss.length ? 'err' : 'ok')
+        onChange()
+      }
+      const upload = async (list) => {
+        for (const f of [...list]) {
+          const r = await fetch(API + '/song/import?name=' + encodeURIComponent(f.name), { method: 'POST', body: f })
+            .then((x) => x.json()).catch((e) => ({ ok: false, message: '上传失败：' + e.message }))
+          toast(r.message, r.ok ? 'ok' : 'err')
+        }
+        onChange()
+      }
+      const pick = () => {
+        const inp = document.createElement('input')
+        inp.type = 'file'
+        inp.multiple = true
+        inp.accept = '.ckpt,.yaml'
+        inp.onchange = () => inp.files && upload(inp.files)
+        inp.click()
+      }
+      return h(Card, { title: '人声分离模型（翻唱依赖）',
+        desc: '把原曲拆成人声 + 伴奏用的权重，和你的 RVC 音色是两回事，所以单独放这里。下面按文件逐个显示状态：绿了的不重下，重试只从没绿的那个开始，断了的从已下载字节续传。' },
+        h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap' } },
+          h(Btn, { small: true, onClick: detect }, '检测'),
+          h('span', { className: 'ab-muted ab-small' }, files.length ? done + ' / ' + files.length + ' 个文件已就绪' : '还没开始下载')),
+        h('div', { className: 'ab-checks', style: { marginTop: 10 } },
+          files.map((f) => h('div', { key: f.name, className: cx('ab-check', f.done && 'done') },
+            h('i', null, f.done ? '✓' : '·'),
+            h('span', null, h('b', { style: { fontWeight: 500 } }, f.name),
+              h('span', { className: 'ab-muted ab-small', style: { display: 'block' } },
+                f.done ? '已就绪，不会重下' : f.partial
+                  ? '上次下到 ' + Math.round(f.partial / 1048576) + ' MB，重试从这儿接着下'
+                  : '还没下，重试从这一个开始'))))),
+        !files.length || done < files.length ? h('div', { className: 'ab-note', style: { marginTop: 10 } },
+          h('b', null, '自动下载老失败？'), ' 用浏览器或下载工具下好下面任一个（同一个文件），拖进这里或点选，插件会核对 sha256 再放好：',
+          (s.separatorLinks || []).map((u) => h('div', { key: u, className: 'ab-flex', style: { marginTop: 4 } },
+            h('code', { className: 'ab-small', style: { wordBreak: 'break-all', flex: 1 } }, u),
+            h(Btn, { small: true, kind: 'ghost', onClick: () => { navigator.clipboard.writeText(u); toast('复制了', 'ok') } }, '复制')))) : null,
+        !files.length || done < files.length ? h('div', {
+          className: 'ab-drop' + (over ? ' over' : ''), role: 'button', tabIndex: 0, style: { marginTop: 8 },
+          onClick: pick, onKeyDown: (e) => (e.key === 'Enter' || e.key === ' ') && pick(),
+          onDragOver: (e) => { e.preventDefault(); setOver(true) }, onDragLeave: () => setOver(false),
+          onDrop: (e) => { e.preventDefault(); setOver(false); upload(e.dataTransfer.files) },
+        }, h('span', null, '把 .ckpt / .yaml 拖到这里，或者点击选择文件')) : null)
+    }
+
     /** 导入音色：把 .zip / .pth / .index 拖进来或点选，自动识别；下面列出已有的音色，可以删。 */
     function VoiceImport({ s, toast, onChange }) {
       const [over, setOver] = useState(false)
@@ -4701,12 +5143,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           onDragOver: (e) => { e.preventDefault(); setOver(true) }, onDragLeave: () => setOver(false),
           onDrop: (e) => { e.preventDefault(); setOver(false); upload(e.dataTransfer.files) },
         }, busy ? h('span', null, h('i', { className: 'ab-spin' }), ' ' + busy) : h('span', null, '把 .zip / .rar / .pth / .index 拖到这里，或者点击选择文件')),
-        // 分离模型自动下载不动时：给几个地址，用浏览器或下载工具下好，拖进上面这个框
-        s.parts && !s.parts.separatorModel && (s.separatorLinks || []).length ? h('div', { className: 'ab-note', style: { marginTop: 10 } },
-          h('b', null, '人声分离模型下不动？'), ' 安装时会自动试好几个源（断了能接着下，太慢会换源）。实在不行，用浏览器或下载工具下好下面任一个（约 640 MB，是同一个文件），拖进上面这个框就行，插件会核对文件对不对：',
-          (s.separatorLinks || []).map((u) => h('div', { key: u, className: 'ab-flex', style: { marginTop: 4 } },
-            h('code', { className: 'ab-small', style: { wordBreak: 'break-all', flex: 1 } }, u),
-            h(Btn, { small: true, kind: 'ghost', onClick: () => { navigator.clipboard.writeText(u); toast('复制了', 'ok') } }, '复制')))) : null,
         s.voices.length && !s.enabled ? h('div', { className: 'ab-note warn', style: { marginTop: 10 } }, '音色导入好了，但翻唱开关还没开（这一页最上面），打开并保存后ta才会唱。') : null,
         h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } }, '音色的选择、改名、删除都在上面的「音色」卡片里；这里只负责把文件拖进来。'))
     }
@@ -4898,45 +5334,81 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           : h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } }, '还没有音色：把 .pth（可带 .index）或装着它们的 zip 拖进来。'))
     }
 
-    /** 本机已有资源：扫描只读，导入是复制。 */
+    /** 本机已有资源：进页面就自动扫；导入默认「移动」，不留两份占空间。 */
     function ScanCard({ toast, onImported }) {
       const [d, setD] = useState(null)
       const [busy, setBusy] = useState('')
-      const scan = async () => {
-        setBusy('正在扫本机…')
+      // 只有「保留原件」那次复制导入才会记进来，移动过的原件已经不在了
+      const [adopted, setAdopted] = useState([])
+      const scan = useCallback(async () => {
         const r = await get('/res/scan')
-        setBusy('')
         if (r && r.ok === false) { toast(r.message || '扫描失败', 'err'); return }
         setD(r)
+      }, [toast])
+      // 不用等用户点「扫描本机」：本机已有音色/参考音频直接列出来
+      useEffect(() => { scan() }, [])
+      const remember = (r) => {
+        const rows = r && (r.sources || (r.sourceInfo ? [r.sourceInfo] : []))
+        if (rows && rows.length) setAdopted((prev) => {
+          const seen = new Set(prev.map((x) => x.source))
+          return [...prev, ...rows.filter((x) => x && x.source && !seen.has(x.source))]
+        })
       }
-      const adoptAll = async () => {
-        setBusy('正在复制进资源库…')
-        const r = await post('/res/adopt', { all: true })
-        setBusy('')
+      const adoptOne = async (kind, m, keepSource) => {
+        const r = await post('/res/adopt', { kind, path: m.path, keepSource: Boolean(keepSource) })
+          .catch((e) => ({ ok: false, message: e.message }))
         toast(r.message, r.ok ? 'ok' : 'err')
+        if (r.ok) remember(r)
         scan()
         onImported && onImported()
       }
+      const adoptAll = async () => {
+        setBusy('正在移动进资源库…')
+        const r = await post('/res/adopt', { all: true }).catch((e) => ({ ok: false, message: e.message }))
+        setBusy('')
+        toast(r.message, r.ok ? 'ok' : 'err')
+        if (r.ok) remember(r)
+        scan()
+        onImported && onImported()
+      }
+      const deleteOriginal = async (item) => {
+        const warn = `把原件「${item.name}」移进系统回收站？\n\n已经导入进资源库的那份会保留，插件照常用。\n只有这次确实复制成功（没移动）的文件才会被移走；清空回收站后才真正腾出磁盘空间。`
+        if (!window.confirm(warn)) return
+        const r = await post('/res/source/delete', item).catch((e) => ({ ok: false, message: e.message }))
+        toast(r.message || (r.ok ? '原件已移进回收站' : '没删成'), r.ok ? 'ok' : 'err')
+        if (r.ok) {
+          setAdopted((prev) => prev.filter((x) => x.source !== item.source))
+          scan()
+        }
+      }
       const refs = (d && d.refs) || []
       const models = (d && d.models) || []
-      return h(Card, { title: '本机已有的资源', desc: '扫描下载、音乐、老项目和工具目录里现成的音色与参考音频。扫描只读，导入是复制一份进资源库，原文件不动。' },
+      return h(Card, { title: '本机已有的资源', desc: '进页面就自动扫描下载、音乐、老项目和工具目录里现成的音色与参考音频。扫描只读；导入默认是「移动」进资源库，不会留两份占空间。~/tools/models 里的原件下载不到，默认保留（会复制，可再一键把原件移进回收站）；其它来源想留原件就点「留原件导入」。Mac 废纸篓 / Windows 回收站都支持。' },
         h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap' } },
-          h(Btn, { small: true, onClick: scan, disabled: Boolean(busy) }, busy ? h(Fragment, null, h('i', { className: 'ab-spin' }), ' ' + busy) : '扫描本机'),
+          h(Btn, { small: true, onClick: scan, disabled: Boolean(busy) }, busy ? h(Fragment, null, h('i', { className: 'ab-spin' }), ' ' + busy) : '重新扫描'),
           d && (refs.length || models.length) ? h(Btn, { small: true, kind: 'primary', onClick: adoptAll, disabled: Boolean(busy) }, '全部导入（' + (refs.length + models.length) + '）') : null),
-        !d ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } }, '点「扫描本机」看看已经有什么。') : null,
+        !d ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } }, '正在自动扫本机…') : null,
         d && !refs.length && !models.length ? h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } }, '没找到现成的资源。上面两个目录都可以手动加。') : null,
+        adopted.length ? h('div', { className: 'ab-note', style: { marginTop: 10 } },
+          h('b', null, '保留了原件的 ×' + adopted.length),
+          h('div', { className: 'ab-muted ab-small', style: { marginBottom: 6 } }, '这几份是「留原件导入」复制进来的，所以现在有两份。删掉原件才不占空间；只会移进回收站，随时能找回。移动导入的那些不在这里。'),
+          adopted.map((item) => h('div', { key: item.source, className: 'ab-file', style: { marginTop: 6 } },
+            h('div', { className: 'nm' }, h('b', null, item.name), h('div', { className: 'pth' }, item.source)),
+            h(Btn, { small: true, kind: 'ghost', onClick: () => deleteOriginal(item) }, '删原件（进回收站）')))) : null,
         models.length ? h('div', { style: { marginTop: 10 } },
           h('div', { className: 'ab-muted ab-small' }, '音色模型 ×' + models.length),
           models.slice(0, 40).map((m) => h('div', { key: m.path, className: 'ab-file', style: { marginTop: 6 } },
             h('div', { className: 'nm' }, h('b', null, m.name.replace(/\.pth$/i, '')), h('div', { className: 'pth' }, m.dir)),
             h('span', { className: cx('ab-badge', m.hasIndex ? 'ok' : 'warn'), style: { flex: 'none' } }, m.hasIndex ? '有索引' : '缺索引'),
-            h(Btn, { small: true, kind: 'ghost', onClick: async () => { const r = await post('/res/adopt', { kind: 'model', path: m.path }); toast(r.message, r.ok ? 'ok' : 'err'); scan(); onImported && onImported() } }, '导入')))) : null,
+            h(Btn, { small: true, kind: 'ghost', onClick: () => adoptOne('model', m) }, '导入（移动）'),
+            h(Btn, { small: true, kind: 'ghost', onClick: () => adoptOne('model', m, true) }, '留原件导入')))) : null,
         refs.length ? h('div', { style: { marginTop: 10 } },
           h('div', { className: 'ab-muted ab-small' }, '参考音频 ×' + refs.length),
           refs.slice(0, 40).map((m) => h('div', { key: m.path, className: 'ab-file', style: { marginTop: 6 } },
             h('div', { className: 'nm' }, h('b', null, m.name), h('div', { className: 'pth' }, m.dir)),
             h('audio', { src: resUrl(m.path), controls: true, preload: 'none', style: { height: 30, maxWidth: 180, flex: 'none' } }),
-            h(Btn, { small: true, kind: 'ghost', onClick: async () => { const r = await post('/res/adopt', { kind: 'ref', path: m.path }); toast(r.message, r.ok ? 'ok' : 'err'); scan(); onImported && onImported() } }, '导入')))) : null)
+            h(Btn, { small: true, kind: 'ghost', onClick: () => adoptOne('ref', m) }, '导入（移动）'),
+            h(Btn, { small: true, kind: 'ghost', onClick: () => adoptOne('ref', m, true) }, '留原件导入')))) : null)
     }
 
     /** 模型库：RVC 音色 + TTS 本地模型。 */
@@ -5368,7 +5840,28 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h('div', { className: cx('ab-check', s.voices.length && 'done'), title: s.voices.map((v) => v.id).join('、') },
               h('i', null, s.voices.length ? '✓' : '·'),
               h('span', null, h('b', { style: { fontWeight: 500 } }, s.voices.length ? '音色模型 ×' + s.voices.length : '音色模型（在下面导入）'),
-                h('span', { className: 'ab-muted ab-small', style: { display: 'block' } }, '你自己的 .pth 音色；没有它就只能唱原声，别人给的音色包也能直接导入')))),
+                h('span', { className: 'ab-muted ab-small', style: { display: 'block' } },
+                  s.voices.length ? '已自动认出本机音色' + (s.externalVoices ? '（其中 ' + s.externalVoices + ' 个在本机别的目录，不用重复导入）' : '') : '你自己的 .pth 音色；没有它就只能唱原声，别人给的音色包也能直接导入')))),
+          // 「检测」只重新体检、不下载：绿了哪些、还差哪些，一句人话说清楚
+          h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', marginTop: 10 } },
+            h(Btn, { small: true, kind: 'ghost', onClick: async () => {
+              const r = await get('/song/status').catch((e) => ({ ok: false, message: e.message }))
+              if (!r || r.ok === false) { toast((r && r.message) || '检测失败', 'err'); return }
+              const miss = r.missing || []
+              toast(miss.length ? '检测完成：还差 ' + miss.length + ' 项（' + miss.join('、') + '），重试只补没绿的这些' : '检测完成：依赖全绿了 ✓', miss.length ? 'err' : 'ok')
+              load()
+            } }, '检测'),
+            s.missing && s.missing.length ? h('span', { className: 'ab-muted ab-small' }, '没绿：' + s.missing.join('、') + '。点安装 / 再试一次只会补这几项，已下好的不重下。') : null,
+            s.externalVoices ? h(Btn, { small: true, kind: 'ghost', onClick: async () => {
+              const ext = (s.voices || []).filter((v) => v.external && v.path)
+              let n = 0
+              for (const v of ext.slice(0, 10)) {
+                const r = await post('/res/adopt', { kind: 'model', path: v.path }).catch(() => ({ ok: false }))
+                if (r.ok) n++
+              }
+              toast(n ? '收进音色库 ' + n + ' 个（原件没动，可在资源库里一键删）' : '没有要收的音色', n ? 'ok' : 'err')
+              load()
+            } }, '把本机音色收进音色库（' + s.externalVoices + '）') : null),
           // 先讲清「一键安装到底下什么」，再让人点按钮。
           s.unsupported ? null : h('div', { className: 'ab-note', style: { marginTop: 10 } },
             h('b', null, isMac ? '一键安装会下载什么（macOS）：' : '一键安装会下载什么（Windows）：'),
@@ -5396,8 +5889,11 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h('div', { className: 'ab-flex', style: { marginTop: 8 } },
               h(Btn, { small: true, kind: 'primary', onClick: async () => { const r = await post('/song/install'); toast(r.message); setTimeout(load, 800) } }, '再试一次'),
               h(Btn, { small: true, onClick: () => { try { navigator.clipboard.writeText(['懂你的QQ大肥鱼 ' + st.version + ' 翻唱安装失败', s.install.message, '', s.install.error || '', '', ...(s.install.log || []).slice(-30)].join('\n')); toast('报错复制好了，发给作者就行', 'ok') } catch (e) { toast('复制失败，展开「详细日志」手动复制吧', 'err') } } }, '复制报错'),
-              h('span', { className: 'ab-muted ab-small' }, '已经下好的部分不会重下'))) : null,
+              h('span', { className: 'ab-muted ab-small' }, (s.missing || []).length
+                ? '下次只从没绿的地方开始：' + s.missing.join('、') + '；已绿的不重下，断了的从已下载字节续传'
+                : '已经下好的部分不会重下'))) : null,
         ),
+        h(SeparatorModelCard, { s, toast, onChange: load }),
         h(VoiceImport, { s, toast, onChange: load }),
         // 以前这张卡里塞了三种保存语义：插件 draft、service 混音（滑动即存）、service 策略（要点保存）。
         // 现在拆成三张独立的卡，每张自己报状态，不再让人猜「到底保存了没有」。
@@ -5629,7 +6125,22 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [q, setQ] = useState('')
       const [show, setShow] = useState('all')
       const [cat, setCat] = useState('')
+      // 索引地址 = 市场开关。默认留空（离线、不回连上游），填了 index.json 才有模块可逛。
+      const [regUrl, setRegUrl] = useState(st.config?.communityRegistryUrl || '')
+      const [regSaved, setRegSaved] = useState(st.config?.communityRegistryUrl || '')
+      useEffect(() => {
+        const v = st.config?.communityRegistryUrl || ''
+        setRegUrl(v); setRegSaved(v)
+      }, [st.config?.communityRegistryUrl])
       const load = (force) => get('/modules/community' + (force ? '?force=1' : '')).then(setData)
+      const saveRegistry = async () => {
+        setBusy('registry')
+        try {
+          const r = await post('/modules/community/registry', { url: String(regUrl || '').trim() })
+          toast(r.message || (r.ok ? '已保存' : '没保存上'), r.ok ? 'ok' : 'err')
+          if (r.ok) { setRegSaved(r.url || ''); await load(true); reload() }
+        } catch (e) { toast(e.message) } finally { setBusy('') }
+      }
       useEffect(() => { load() }, [])
       // 一直查进度：恢复备份、老用户迁移时模块在后台装，不是从这个页面点的
       useEffect(() => {
@@ -5704,6 +6215,16 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       return h('div', { className: 'ab-grid' },
         progBar,
         h(Card, { title: '模块市场', desc: '给ta装更多本事。模块由社区提供、维护者审核后上架；它们和插件在同一进程运行，能接触账号配置，装之前看清下面列的能力。', right: h(Btn, { small: true, kind: 'ghost', onClick: () => load(true) }, '刷新') },
+          // 市场默认是关的：不预置上游地址、不自动回连。填一个 index.json 就能搜索/安装/更新/卸载。
+          h('div', { className: 'ab-note', style: { marginBottom: 12 } },
+            h('div', { className: 'ab-flex', style: { flexWrap: 'wrap', gap: 8, alignItems: 'center' } },
+              h('b', { className: 'ab-small' }, '① 模块索引地址（市场开关）'),
+              h('span', { className: 'ab-muted ab-small' }, regSaved ? '当前：已启用 · ' + (list.length || 0) + ' 个模块' : '当前：离线（留空 = 不联网）')),
+            h('div', { className: 'ab-flex', style: { marginTop: 8, gap: 8, alignItems: 'center' } },
+              h('input', { className: 'ab-input wide', placeholder: '留空 = 市场离线；填 https://…/index.json 开启', value: regUrl, onChange: (e) => setRegUrl(e.target.value) }),
+              h(Btn, { small: true, kind: 'primary', disabled: busy === 'registry', onClick: saveRegistry }, busy === 'registry' ? '保存中…' : '保存并刷新')),
+            h('div', { className: 'ab-small ab-muted', style: { marginTop: 6 } },
+              '索引是 schema 1 的 index.json：列出 id / 版本 / 分类 / 能力 / sha256 / 下载路径。填好后本页即可搜索、按分类筛、安装与更新；安装前会显示来源与能力并核对 sha256。清空并保存 = 立刻回到离线。格式与自建方法见 docs/flows/module-market.md。')),
           h('div', { className: 'ab-flex' },
             h('input', { className: 'ab-input', placeholder: '搜模块', value: q, onChange: (e) => setQ(e.target.value) }),
             chip('all', '全部'), chip('installed', '已安装'), chip('update', '可更新')),
@@ -7061,23 +7582,42 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h('i', { className: cx('ab-dot', l.on ? 'ok' : '') }), l.label)))
     }
 
-    /** 可选增强：默认折叠，写清体积和「不装会怎样」，别挡在必装步骤前面。 */
+    /** 可选增强：默认折叠，写清体积和「不装会怎样」，别挡在必装步骤前面。
+     *  页签是按「模块在不在跑」动态生成的（TAB_MODS / tabs）。模块没装时直接 nav
+     *  会落到 tabs[0]「概览」，看起来像点了没反应；这里按状态换按钮并给出路。 */
     function OptionalExtras({ st, nav }) {
+      const [openHint, setOpenHint] = useState(null)
       const isMac = st.platform === 'darwin'
       const items = [
-        { tab: 'song', title: '翻唱 / 用自己的声音唱歌', desc: isMac ? '约 5 GB · 装一套独立环境（CPU / MPS），不碰系统 Python' : '约 8 GB · 装一套独立环境，有 NVIDIA 独显会快很多' },
-        { tab: 'voice', title: '本地音色（TTS）', desc: '不想用在线音色时再装；在线渠道零下载就能说话' },
-        { tab: 'pet', title: '桌宠', desc: '让她在桌面上陪着你，可选' },
-        { tab: 'imagegen', title: '生图', desc: '接入生图模型后她才能发自己画的图，可选' },
+        { tab: 'song', title: '翻唱 / 用自己的声音唱歌', desc: isMac ? '约 5 GB · 装一套独立环境（CPU / MPS），不碰系统 Python' : '约 8 GB · 装一套独立环境，有 NVIDIA 独显会快很多',
+          hint: '「翻唱」页由 song 模块提供，现在没在跑。到「模块 → 已安装」看它是不是被关了；想装翻唱环境，看「安装中心」或文档里的翻唱一节。' },
+        { tab: 'voice', title: '本地音色（TTS）', desc: '不想用在线音色时再装；在线渠道零下载就能说话',
+          hint: '「语音」页由 voice 模块提供，现在没在跑。到「模块 → 已安装」确认；在线音色不依赖本地服务也能说话。' },
+        { tab: 'pet', title: '桌宠', desc: '让她在桌面上陪着你，可选',
+          hint: '桌宠是社区模块，本仓库不内置：把 modules/pet（含 index.mjs 与 module.json）放到 ~/.dsh/plugins-data/aurabot/modules/pet/，确认没开安全模式，重启 DSH 后这一页才会出现。装好后在本页装客户端和素材包。' },
+        { tab: 'imagegen', title: '生图', desc: '接入生图模型后她才能发自己画的图，可选',
+          hint: '「生图」页由 imagegen 模块提供，现在没在跑。到「模块 → 已安装」确认；接入生图模型后她才能发自己画的图。' },
       ]
+      // 和 AurabotPage 里 tabs 的过滤规则保持一致：模块没跑，页签就不存在
+      const ready = (tab) => {
+        const need = TAB_MODS[tab]
+        if (!need) return true
+        const mods = st.modules || []
+        return need.some((id) => mods.some((m) => m.id === id && m.running))
+      }
       return h('details', { style: { marginTop: 14 } },
         h('summary', { className: 'ab-muted ab-small', style: { cursor: 'pointer' } }, '可选增强（不装也能正常聊天）'),
         h('div', { style: { marginTop: 8 } },
-          items.map((it) => h('div', { key: it.tab, className: 'ab-flex', style: { padding: '7px 0', borderBottom: '1px solid var(--ab-line)', gap: 10 } },
-            h('div', { style: { flex: '1 1 auto' } },
-              h('b', { style: { fontWeight: 500, fontSize: 13 } }, it.title),
-              h('div', { className: 'ab-muted ab-small' }, it.desc)),
-            nav ? h(Btn, { small: true, onClick: () => nav(it.tab) }, '去设置') : null))))
+          items.map((it) => h('div', { key: it.tab, style: { padding: '7px 0', borderBottom: '1px solid var(--ab-line)' } },
+            h('div', { className: 'ab-flex', style: { gap: 10 } },
+              h('div', { style: { flex: '1 1 auto' } },
+                h('b', { style: { fontWeight: 500, fontSize: 13 } }, it.title),
+                h('div', { className: 'ab-muted ab-small' }, it.desc)),
+              ready(it.tab)
+                ? (nav ? h(Btn, { small: true, onClick: () => nav(it.tab) }, '去设置') : null)
+                : h(Btn, { small: true, kind: 'ghost', onClick: () => setOpenHint(openHint === it.tab ? null : it.tab) }, '未就绪 · 怎么装')),
+            !ready(it.tab) && openHint === it.tab
+              ? h('div', { className: 'ab-note', style: { marginTop: 6 } }, it.hint) : null))))
     }
 
     function Wizard({ st, draft, setDraft, save, toast, reload, onClose, nav }) {
@@ -7246,7 +7786,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         if (!dirtyRef.current) setDraft(clone(r.config))
       }, [])
       useEffect(() => { reload(); const t = setInterval(reload, 5000); return () => clearInterval(t) }, [reload])
-      const go = (id) => { setTab(id); try { localStorage.setItem('aurabot.tab', id) } catch (e) {} }
+      // 目标页签可能被 TAB_MODS 过滤掉（模块没在跑）。以前 setTab 之后 curTab 会静默
+      // 回落 tabs[0]「概览」，用户还以为按钮坏了；这里直接说清楚，也不写坏上次的页面。
+      const tabIdsRef = useRef(null)
+      const go = (id) => {
+        const list = tabIdsRef.current
+        if (list && !list.some((t) => t.id === id)) { toast('这一页还没就绪：对应的模块没在跑'); return }
+        setTab(id); try { localStorage.setItem('aurabot.tab', id) } catch (e) {}
+      }
       // 标签多、一屏放不下：滚轮横着滚，选中的标签自动滚进视野
       const tabsRef = useRef(null)
       useEffect(() => {
@@ -7310,6 +7857,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const extTabs = mods.filter((m) => hasUi(m) && !intoTab(m)).map((m) => ({ id: 'ext:' + m.id, label: m.name, ext: m.id, flag: m.flag ? `ext.${m.id}.${m.flag}` : '', flagDefault: getPath(m.defaults || {}, m.flag || '') }))
       const tabs = TABS.filter((t) => !TAB_MODS[t.id] || TAB_MODS[t.id].some(running))
       tabs.splice(tabs.findIndex((t) => t.id === 'logs'), 0, ...extTabs)
+      tabIdsRef.current = tabs
       const curTab = tabs.find((t) => t.id === tab) || tabs[0]
       const body = curTab.ext ? ExtPage : {
         overview: Overview, install: InstallCenter, connect: Connect, character: Persona, access: Access, group: Group, model: Model, voice: Voice,

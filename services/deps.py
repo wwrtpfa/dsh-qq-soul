@@ -119,7 +119,7 @@ def check(cfg: ServiceConfig) -> dict:
                 up = True
         except OSError:
             up = False
-        rows.append(_row("qwen", "千问 3-TTS 常驻服务（Windows 可用）", up,
+        rows.append(_row("qwen", "千问 3-TTS 常驻服务（Mac / Windows）", up,
                          "%s:%d %s" % (host, port, "在跑" if up else "没起"),
                          "接本机 9883 服务即可，不需要 MLX / 模型目录"))
     else:

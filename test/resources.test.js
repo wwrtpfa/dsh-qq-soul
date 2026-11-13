@@ -1,6 +1,7 @@
-// 资源库回归：导入 / 改名 / 删除只动受管目录；外来文件先复制进来；扫描只读。
-// 钉住三件事：① 参考音频必须真的落进 refs 目录；② RVC 要校验权重文件、index 缺失要告警；
-// ③ 本机别处的音色只能复制进来，不能在原地被删。
+// 资源库回归：扫描只读；改名 / 删除只动受管目录；外来文件改名才复制。
+// 钉住：① 参考音频必须真的落进 refs 目录；② RVC 要校验权重、index 缺失要告警；
+// ③ **`adopt`（导入）默认是移动**，绝不留下两份占几 GB；只有 ~/tools/models
+//    （用户说下载不到）或显式 keepSource 才复制，且 message 如实说明会占两份。
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -125,4 +126,67 @@ test('本机发现：扫描是只读的，不会把别处的文件搬走', () =>
   const before = readdirSync(join(tmp, 'elsewhere')).length
   res.scan()
   assert.equal(readdirSync(join(tmp, 'elsewhere')).length, before)
+})
+
+// ---------------------------------------------------------------- adopt = 移动
+
+const sourcePack = (dir, name) => {
+  mkdirSync(dir, { recursive: true })
+  const pth = join(dir, name + '.pth')
+  const idx = join(dir, name + '.index')
+  writeFileSync(pth, fakePth())
+  writeFileSync(idx, Buffer.from('paired-index'))
+  return { pth, idx }
+}
+
+test('导入默认移动：原件和配对的 .index 都不再留在原处', () => {
+  const { pth, idx } = sourcePack(join(tmp, 'adopt-src'), '搬家的音色')
+  const r = res.adopt('model', pth)
+  assert.equal(r.ok, true, r.message)
+  assert.equal(r.mode, 'move')
+  assert.equal(r.moved, true)
+  assert.equal(r.keepSource, false)
+  assert.equal(r.precious, false)
+  assert.equal(r.pairedIndex, idx, '配对的 .index 要一起搬，别留孤儿')
+  assert.ok(existsSync(r.path))
+  assert.ok(!existsSync(pth), '导入是移动，不是 copy，磁盘上不能留两份')
+  assert.ok(!existsSync(idx))
+  assert.match(r.message, /不会占两份/)
+})
+
+test('显式 keepSource 才复制，并如实说明会占两份', () => {
+  const { pth } = sourcePack(join(tmp, 'adopt-keep'), '留一手的音色')
+  const r = res.adopt('model', pth, { keepSource: true })
+  assert.equal(r.ok, true, r.message)
+  assert.equal(r.mode, 'copy')
+  assert.equal(r.moved, false)
+  assert.equal(r.keepSource, true)
+  assert.ok(existsSync(pth), '用户明确要留原件')
+  assert.ok(existsSync(r.path))
+  assert.match(r.message, /占两份/)
+})
+
+test('~/tools/models 这份「下载不到」的默认保留；forceMove 可强制搬走', () => {
+  // os.homedir() 在 POSIX 读 $HOME，指到测试临时目录即可，不碰真实 ~/tools/models
+  const oldHome = process.env.HOME
+  process.env.HOME = tmp
+  try {
+    const preciousDir = join(tmp, 'tools', 'models')
+    mkdirSync(preciousDir, { recursive: true })
+    const a = sourcePack(preciousDir, '删不掉的音色')
+    const kept = res.adopt('model', a.pth)
+    assert.equal(kept.precious, true)
+    assert.equal(kept.mode, 'copy')
+    assert.ok(existsSync(a.pth), '这份下载不到，默认必须留着')
+    assert.match(kept.message, /tools\/models/)
+    assert.match(kept.message, /占两份/)
+
+    const b = sourcePack(preciousDir, '强制搬走')
+    const forced = res.adopt('model', b.pth, { forceMove: true })
+    assert.equal(forced.mode, 'move')
+    assert.ok(!existsSync(b.pth))
+  } finally {
+    if (oldHome === undefined) delete process.env.HOME
+    else process.env.HOME = oldHome
+  }
 })

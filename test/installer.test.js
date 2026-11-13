@@ -59,6 +59,9 @@ const baseFiles = () => [
   { path: 'THIRD-PARTY-NOTICES.md', bytes: 2316 },
   { path: 'NOTICE.md', bytes: 2997 },
   { path: 'services/server.py', bytes: 12000 },
+  { path: 'services/local_tts.py', bytes: 15000 },
+  { path: 'services/model_download.py', bytes: 18000 },
+  { path: 'services/runtime_fetch.py', bytes: 16000 },
   { path: 'docs/prototype/index.html', bytes: 59000 },
   { path: 'src/core/community.js', bytes: 3000 },
   { path: 'package.json', bytes: 1233 },
@@ -108,6 +111,38 @@ test('分发门禁：缺 LICENSE / 第三方署名拒绝（MIT 硬性条件）',
   const r = checkDistribution({ files, readText: () => '' })
   assert.equal(r.ok, false)
   assert.ok(r.checks.find((c) => c.id === 'required' && !c.ok))
+})
+
+test('分发门禁：漏掉 services/local_tts.py 不许发布', () => {
+  // server.py 里有 `from . import local_tts`，少了这个文件插件一启动就 ImportError，
+  // 必须让打包门禁先拦下来，而不是等用户装完才发现。
+  const files = baseFiles().filter((f) => f.path !== 'services/local_tts.py')
+  const r = checkDistribution({ files, readText: () => '' })
+  assert.equal(r.ok, false)
+  const required = r.checks.find((c) => c.id === 'required' && !c.ok)
+  assert.ok(required)
+  assert.match(required.detail, /local_tts\.py/)
+})
+
+test('分发门禁：漏掉 services/model_download.py 不许发布', () => {
+  // server.py 里有 `from . import model_download`，少了它「一键下载」路由整个 ImportError。
+  const files = baseFiles().filter((f) => f.path !== 'services/model_download.py')
+  const r = checkDistribution({ files, readText: () => '' })
+  assert.equal(r.ok, false)
+  const required = r.checks.find((c) => c.id === 'required' && !c.ok)
+  assert.ok(required)
+  assert.match(required.detail, /model_download\.py/)
+})
+
+test('分发门禁：漏掉 services/runtime_fetch.py 不许发布', () => {
+  // server.py 里有 `from . import runtime_fetch`，少了它「获取服务程序」整条链路 ImportError，
+  // 用户就永远补不上「启动入口」。
+  const files = baseFiles().filter((f) => f.path !== 'services/runtime_fetch.py')
+  const r = checkDistribution({ files, readText: () => '' })
+  assert.equal(r.ok, false)
+  const required = r.checks.find((c) => c.id === 'required' && !c.ok)
+  assert.ok(required)
+  assert.match(required.detail, /runtime_fetch\.py/)
 })
 
 test('分发白名单含 service 包与面板 HTML', () => {

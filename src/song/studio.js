@@ -326,6 +326,51 @@ export function listVoices(modelsDir) {
   })
 }
 
+/** 音色不只住在翻唱自己的 models/：这些目录里的原件用户明确说过「不删」，也算已有音色。 */
+export function externalVoiceDirs() {
+  return [
+    join(homedir(), 'tools', 'models'),
+    join(homedir(), 'models'),
+    join(homedir(), '.dsh', 'plugins-data', 'qqsoul', 'service', 'models', 'rvc'),
+    dataDir('models', 'rvc'),
+  ].filter((p) => p && existsSync(p))
+}
+
+function walkVoices(dir, depth, out) {
+  if (depth < 0 || out.length >= 60) return out
+  let names = []
+  try { names = readdirSync(dir, { withFileTypes: true }) } catch (error) { return out }
+  for (const e of names) {
+    if (e.name.startsWith('.') || out.length >= 60) continue
+    const full = join(dir, e.name)
+    if (e.isDirectory()) { walkVoices(full, depth - 1, out); continue }
+    if (!e.isFile() || !e.name.toLowerCase().endsWith('.pth')) continue
+    const id = e.name.slice(0, -4)
+    let index = ''
+    try {
+      const hit = names.find((m) => m.name.toLowerCase().endsWith('.index') && m.name.toLowerCase().includes(id.toLowerCase()))
+      if (hit) index = join(dir, hit.name)
+    } catch (error) {}
+    out.push({ id, pth: full, index })
+  }
+  return out
+}
+
+/** 翻唱页「音色」应该自动认出本机已有的音色，而不是只认自己 models/ 里那一份。 */
+export function discoverVoices(modelsDir) {
+  const own = listVoices(modelsDir).map((v) => ({ ...v, external: false }))
+  const seen = new Set(own.map((v) => v.id.toLowerCase()))
+  const extra = []
+  for (const dir of externalVoiceDirs()) {
+    for (const v of walkVoices(dir, 3, [])) {
+      if (seen.has(v.id.toLowerCase())) continue
+      seen.add(v.id.toLowerCase())
+      extra.push({ ...v, external: true })
+    }
+  }
+  return [...own, ...extra]
+}
+
 /** 像不像 RVC 模型：PyTorch 存的 .pth 要么是 zip 格式（PK 开头），要么是老的 pickle（0x80 开头）。 */
 export function looksLikePth(buf) {
   return buf.length > 1024 * 1024 && ((buf[0] === 0x50 && buf[1] === 0x4b) || buf[0] === 0x80)
@@ -483,7 +528,8 @@ export function createSongStudio({ getConfig, log, sendVoiceFile, sendText, onSu
 
   function status() {
     const p = P()
-    const voices = listVoices(p.models)
+    // 音色自动扫本机（~/tools/models、声音插件的 models/rvc 等），不是只看自己的 models/
+    const voices = discoverVoices(p.models)
     // Intel Mac：新版 PyTorch 不再发 macOS x86_64 轮子，一键安装必然在 pip 那步失败，
     // 提前说清楚，不要让用户等几 GB 下载后才看到报错。
     const unsupported = IS_MAC && process.arch === 'x64'
@@ -509,14 +555,29 @@ export function createSongStudio({ getConfig, log, sendVoiceFile, sendText, onSu
       rootCheck: checkRoot(p.root),
       pypiMirror: cfg().pypiMirror || 'auto',
       parts,
-      voices: voices.map((v) => ({ id: v.id, hasIndex: Boolean(v.index) })),
+      // 文件级「绿 / 没绿」：面板能说清是哪一项失败，重试只补没绿的那几项
+      missing: Object.entries(parts).filter(([, done]) => !done).map(([key]) => key),
+      separatorFiles: (SEPARATOR_FILES[cfg().separatorModel] || [[cfg().separatorModel]]).map(([name]) => {
+        const target = join(p.separatorModels, name)
+        const part = target + '.download'
+        const done = existsSync(target) && statSync(target).size > 0
+        let partial = 0
+        try { if (existsSync(part)) partial = statSync(part).size } catch (error) {}
+        return { name, done, partial }
+      }),
+      voices: voices.map((v) => ({ id: v.id, hasIndex: Boolean(v.index), path: v.pth, external: Boolean(v.external) })),
+      externalVoices: voices.filter((v) => v.external).length,
+      voiceDirs: externalVoiceDirs(),
       separatorLinks: parts.separatorModel ? [] : separatorLinks(cfg().separatorModel),
       voice: cfg().voice,
       install: { ...install, log: install.log.slice(-30) },
       current: current ? { ...current } : null,
       queue: queue.map((q) => ({ query: q.query, chatId: q.chatId })),
       history: history.slice(0, 10),
-      message: !voices.length ? '还没有音色：去「翻唱 → 音色模型」导入你有权使用的 RVC 模型（.pth 或 zip / rar）' : ready ? (cfg().enabled ? '可以点歌了' : '准备好了，打开开关就能用') : '还差一些组件，点「一键安装」',
+      message: !voices.length
+        ? '还没有音色：去「翻唱 → 音色模型」导入你有权使用的 RVC 模型（.pth 或 zip / rar）'
+        : ready ? (cfg().enabled ? '可以点歌了' : '准备好了，打开开关就能用')
+          : '还差一些组件，点「一键安装」；本机已有的音色可以直接在「模型库」里导入 / 收进音色库',
     }
   }
 

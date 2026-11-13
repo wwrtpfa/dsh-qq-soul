@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 """下载底座：sha256 校验 / 镜像 fallback / 断点续传 / 手动拖入。
 
-零第三方依赖，只用标准库。安装包本身不带任何权重；这里只负责把用户
-自己下载好的文件校验并放到正确位置，不自动拉取大模型（决策 13）。
+零第三方依赖，只用标准库。**安装包本身仍然不带任何权重**（决策 13）。
+这里是给 ``models.json`` 那些小组件用的通用底座；千问 / GPT-SoVITS 这种
+多 GB、文件会随上游增删改的模型**不走本表硬编码**，改由
+``services/model_download.py`` 运行时向 HF API 取文件级清单 + 真 sha256，
+自己做 Python 进度 / .part 续传 / 逐文件绿或未绿。本模块仍被
+``services/installer`` 的按需小件安装复用，占位 sha256 绝不会假装校验通过。
 """
 
 from __future__ import annotations

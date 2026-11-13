@@ -160,6 +160,44 @@ def test_panel路由托管同一份可双击打开的HTML(panel_srv):
     assert "state.live" in html
 
 
+def test_功能课堂页面与五份流程文档可由服务托管(panel_srv):
+    base, _ = panel_srv
+    with urllib.request.urlopen(base + "/panel", timeout=8) as res:
+        html = res.read().decode("utf-8")
+    assert "功能课堂" in html and 'id="v-classroom"' in html
+    assert "showLesson" in html and "renderClassroom" in html
+    titles = {"memory": "记忆是怎么设计的", "song": "翻唱是怎么跑起来的",
+              "tts": "一句话怎么变成语音条", "speakup": "她为什么主动找你说话",
+              "pet": "桌宠是怎么装起来、又是谁在管"}
+    for name, title in titles.items():
+        assert 'data-lesson="%s"' % name in html
+        assert 'data-doc="%s"' % name in html
+        # 文档是静态说明，带 token 的服务也不该挡住课堂阅读
+        with urllib.request.urlopen(base + "/classroom/doc/" + name + ".md", timeout=8) as res:
+            assert "text/markdown" in res.headers.get("Content-Type", "")
+            text = res.read().decode("utf-8")
+        assert text.startswith("# " + title)
+
+
+def test_模块市场说明文档也由课堂白名单提供(panel_srv):
+    base, _ = panel_srv
+    with urllib.request.urlopen(base + "/classroom/doc/module-market.md", timeout=8) as res:
+        assert "text/markdown" in res.headers.get("Content-Type", "")
+        text = res.read().decode("utf-8")
+    assert text.startswith("# 模块市场")
+    assert "index.json" in text and "模块索引地址" in text
+
+
+def test_功能课堂文档按白名单提供_拒绝未知课程与路径穿越(panel_srv):
+    base, _ = panel_srv
+    code, _, body = _call(base, "GET", "/classroom/doc/unknown.md")
+    assert code == 404 and body.get("code") == "CLASSROOM_DOC_MISSING"
+    for bad in ("/classroom/doc/../server.py.md", "/classroom/doc/../../etc/passwd.md",
+                "/classroom/doc/memory.txt"):
+        code, _, _ = _call(base, "GET", bad)
+        assert code == 404
+
+
 def test_体检与模型目录可直接被面板消费(panel_srv):
     base, _ = panel_srv
     _, _, deps = _call(base, "GET", "/deps/check")

@@ -4,7 +4,7 @@
 import { execFile } from 'node:child_process'
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, unlinkSync } from 'node:fs'
 import { userInfo } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 const granted = new Set()
 
@@ -41,6 +41,26 @@ function tally(dir) {
 const isLink = (p) => { try { return lstatSync(p).isSymbolicLink() } catch (error) { return false } }
 const inside = (parent, child) => { const r = relative(parent, child); return r === '' || (!r.startsWith('..') && !isAbsolute(r)) }
 
+/**
+ * 把路径里「已存在的各层」解析掉符号链接，还没创建的层原样保留。
+ * macOS 的 /var -> /private/var 是系统链接：只把 from 做 realpathSync、to 不处理的话，
+ * 「新位置在旧位置里面」会被漏判，cpSync 就会把目录拷进自己，一路递归到路径超长、进程直接崩。
+ */
+function canonical(p) {
+  const abs = resolve(String(p || ''))
+  let current = abs
+  const tail = []
+  while (!existsSync(current)) {
+    const parent = dirname(current)
+    if (parent === current) break
+    tail.unshift(basename(current))
+    current = parent
+  }
+  let base = current
+  try { if (existsSync(current)) base = realpathSync(current) } catch (error) { /* 权限不足就按原路径比较 */ }
+  return tail.length ? join(base, ...tail) : base
+}
+
 /** 现在文件实际在哪（搬过就是新位置）。 */
 export function realWorkspace(dir) {
   try { return realpathSync(dir) } catch (error) { return dir }
@@ -52,7 +72,10 @@ export function moveWorkspace(from, to) {
   if (!String(to || '').trim() || !isAbsolute(String(to).trim())) return { ok: false, message: '要填完整路径，比如 D:\\qq-soul\\qq-chats' }
   mkdirSync(from, { recursive: true })
   const real = realpathSync(from)
-  if (inside(real, target) || inside(target, real)) return { ok: false, message: '新位置不能和现在的位置重叠' }
+  // 两边都按同一套规则解析后再比，别让 /var 这类上层链接把包含关系藏起来
+  const fromCanon = canonical(from)
+  const targetCanon = canonical(target)
+  if (inside(fromCanon, targetCanon) || inside(targetCanon, fromCanon)) return { ok: false, message: '新位置不能和现在的位置重叠' }
   if (existsSync(target) && (!statSync(target).isDirectory() || readdirSync(target).length)) return { ok: false, message: '新位置已经有东西了，换一个空文件夹' }
   const linked = isLink(from)
   const hold = `${from}.moving`

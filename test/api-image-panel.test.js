@@ -113,13 +113,14 @@ test('浅渲染：填入帮手不白屏', () => {
   assert.match(sub, /重新检测/)
 })
 
-test('原型工具页只读展示，接口格式与真实面板一致', () => {
-  const line = prototype.split(/\r?\n/).find((l) => l.includes('qq_draw_image'))
-  assert.ok(line, '原型缺 qq_draw_image 行')
-  assert.ok(line.includes('data-lock'), '原型 qq_draw_image 开关要标明只读')
-  assert.ok(!line.includes('class="sw on"'), '原型默认状态应与真实默认（未开启）一致')
-  assert.ok(!prototype.includes('本地 api-image'), '原型也不该再提「本地 api-image」')
-  assert.ok(prototype.includes('唯一配置入口'), '原型没说明配置入口在真实面板')
-  assert.ok(prototype.includes('自定义接口 · OpenAI 兼容') && prototype.includes('自定义接口 · URL 模板') && prototype.includes('Codex 订阅'), '原型的接口格式要与真实页一致')
-  assert.ok(prototype.includes('去真实面板「表达 > 生图」'), '只读开关点击后要指路')
+// 原型已整体重构成「只读运行看盘」：旧的工具页（qq_draw_image 那一行 data-lock 开关）随之移除，
+// 配置入口只剩真实面板。原来的断言描述的是一个已不存在的页面，这里改为校验新页面的只读契约。
+test('原型是只读运行看盘：不写配置，功能课堂与安装引导都在同一份 HTML', () => {
+  assert.ok(prototype.includes('懂你的QQ大肥鱼'), '原型标题要还在')
+  assert.ok(prototype.includes('只读看盘'), '原型要标明自己只读')
+  assert.ok(prototype.includes('/status') && prototype.includes('/deps/check'), '原型要消费 service 的真实接口')
+  assert.ok(!prototype.includes('data-sw'), '原型不该再带可写的开关控件')
+  assert.ok(!prototype.includes('本地 api-image'), '原型不该再提已合并掉的「本地 api-image」')
+  assert.ok(prototype.includes('docs/INSTALL-WITH-AI.md'), '安装引导要指向权威文档')
+  assert.ok(prototype.includes('id="v-classroom"'), '功能课堂页要在同一份 HTML 里')
 })

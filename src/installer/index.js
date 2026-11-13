@@ -19,7 +19,9 @@ export const DISTRIBUTION_FILES = [
 
 const REQUIRED_FILES = [
   'LICENSE', 'THIRD-PARTY-NOTICES.md', 'NOTICE.md',
-  'services/server.py', 'docs/prototype/index.html',
+  'services/server.py', 'services/local_tts.py', 'services/model_download.py',
+  'services/runtime_fetch.py',
+  'docs/prototype/index.html',
 ]
 
 const WEIGHT_SUFFIXES = ['.pth', '.bin', '.pt', '.onnx', '.safetensors', '.ckpt', '.gguf', '.index']

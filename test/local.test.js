@@ -95,3 +95,10 @@ test('模型文件能读就放行，不存在的跳过', async () => {
   writeFileSync(join(d, 'a.ckpt'), 'x'.repeat(32))
   await studio.ensureReadable([join(d, 'a.ckpt'), join(d, 'missing.ckpt')], 1, 1)
 })
+
+test('生视频槽也能在面板「生成模板」：路由白名单要和 SLOTS 对齐', () => {
+  const host = readFileSync(new URL('../src/host.js', import.meta.url), 'utf8')
+  const route = host.slice(host.indexOf("route('/local/template'"), host.indexOf("route('/local/open'"))
+  assert.match(route, /\['tts', 'image', 'song', 'asr', 'video'\]/, '漏了 video 时按钮会报「没有这一项」')
+  assert.ok(Object.keys(L.SLOTS).includes('video'), 'SLOTS 里要有 video')
+})

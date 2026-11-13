@@ -701,17 +701,33 @@ def _discover_gptsovits(cfg) -> Path | None:
     return None
 
 
+def _has_weights(folder: Path) -> bool:
+    weight_ext = (".safetensors", ".gguf", ".bin", ".pth", ".ckpt", ".pt", ".onnx")
+    try:
+        return any(p.suffix.lower() in weight_ext for p in folder.rglob("*") if p.is_file())
+    except OSError:
+        return False
+
+
 def _discover_qwen(cfg) -> Path | None:
+    """只认插件自己的固定模型目录，不再扫 HuggingFace 的 cache snapshot。
+
+    以前这里会把 ``~/.cache/huggingface/hub/models--*Qwen3-TTS*/snapshots/<hash>``
+    当「自动找到的模型」显示出来。那是下载缓存 / **源目录**，不是导航里那个
+    模型目录；用户把旧快照删掉之后，配置里残留的路径还会被摆回面板，看起来
+    像「删了又冒出来」。现在统一只认 ``<data_dir>/models/qwen``：没有就如实说没有。
+    """
     explicit = str(cfg.paths.get("qwenModel") or "").strip()
     if explicit and Path(explicit).expanduser().exists():
         return Path(explicit).expanduser()
-    hub = Path.home() / ".cache" / "huggingface" / "hub"
-    if hub.is_dir():
-        for repo in sorted(hub.glob("models--*Qwen3-TTS*")):
-            snaps = sorted((repo / "snapshots").glob("*"))
-            if snaps:
-                return snaps[-1]
-    return None
+    folder = dir_for(cfg, "models") / "qwen"
+    if not folder.is_dir():
+        return None
+    # 一键下载会落在 models/qwen/<项目名>/，项目子目录优先
+    for child in sorted(folder.iterdir()):
+        if child.is_dir() and _has_weights(child):
+            return child
+    return folder if _has_weights(folder) else None
 
 
 def _discover_demucs(cfg) -> Path | None:
@@ -759,6 +775,26 @@ def local_models(cfg) -> dict:
                 auto = True
         picked = Path(configured).expanduser() if configured else None
         exists = bool(picked and picked.exists())
+        stale = False
+        healed = False
+        # 配置里记着的目录被删 / 移走了：别把死路径一直摆在面板上。
+        # 先按同一套规则重新扫一遍本机，扫到就显示「自动找到」，扫不到才标失效。
+        if configured and not exists:
+            detected = {"qwen": _discover_qwen, "gptsovits": _discover_gptsovits,
+                        "htdemucs": _discover_demucs}.get(engine)
+            found = detected(cfg) if detected else None
+            if found is not None:
+                configured = str(found)
+                picked = Path(configured).expanduser()
+                exists = bool(picked.exists())
+                auto = True
+                healed = True
+            else:
+                stale = True
+                # 面板不许再摆一个已经不存在的旧源目录（用户：「没有的话就是没有」）。
+                # 清成空，前端就会显示「没有」+ 导航里那个固定模型目录。
+                configured = ""
+                picked = None
         files = []
         if folder.is_dir():
             try:
@@ -767,8 +803,19 @@ def local_models(cfg) -> dict:
                 files = []
         if exists and picked and picked.is_file():
             files = [picked.name] + [f for f in files if f != picked.name]
-        if not exists:
-            hint = "还没选；点「选择目录」指到你下载的权重上"
+        if stale:
+            hint = ("没有：配置里那条旧路径已经失效，不再显示。模型统一放在 %s，"
+                    "点「一键下载」或「选目录」把权重放进这个固定目录" % folder)
+        elif healed:
+            hint = "原路径失效，已自动在本机找到：%s（点「清除」可去掉旧配置）" % (picked.name if picked else configured)
+        elif not exists:
+            # 用户：「按道理没有的话，就是没有啊」「模型目录不是导航目录那里显示的那个吗」。
+            # 没装就把导航里那个固定目录明写出来，别让用户以为要去翻 HF cache 的 snapshot。
+            if engine in ("qwen", "gptsovits"):
+                hint = ("没有：模型还没装。统一放在 %s，点「一键下载」直接下到这个固定目录，"
+                        "或用「选目录导入」把本机整包移动进来" % folder)
+            else:
+                hint = "还没选；点「选择目录」指到权重上（固定目录 %s）" % folder
         elif auto:
             hint = "自动找到：%s（点「选择目录」可换）" % (picked.name if picked else configured)
         else:
@@ -776,7 +823,8 @@ def local_models(cfg) -> dict:
         rows.append({
             "engine": engine, "label": label, "kind": kind,
             "dir": str(folder), "configured": configured,
-            "exists": exists, "files": files[:8], "auto": auto,
+            "exists": exists, "stale": stale, "healed": healed,
+            "files": files[:8], "auto": auto,
             "bytes": _size(picked) if exists and picked else _size(folder),
             "hint": hint,
         })
@@ -786,6 +834,22 @@ def local_models(cfg) -> dict:
                         for engine, _, _, _ in MODEL_SLOTS if engine in TTS_ENGINES},
             "voices": rvc_voices(cfg)["items"],
             "message": "所有模型都放在 %s 下面，换机器整包搬走即可" % models_root}
+
+
+#: 引擎 → config.json 里 paths 段真正存路径的键。清失效路径时按这个映射删。
+MODEL_PATH_KEYS = {"qwen": "qwenModel", "gptsovits": "gptSovits", "htdemucs": "demucs"}
+
+
+def clear_model(cfg, engine: str) -> dict:
+    """清掉某个引擎已失效的路径配置，让面板不再显示那个被删掉的旧目录。"""
+    engine = str(engine or "").strip()
+    key = MODEL_PATH_KEYS.get(engine)
+    if not key:
+        raise ValueError("不认识的引擎：%s" % engine)
+    cfg.clear_paths([key])
+    return {"ok": True, "engine": engine, "cleared": key,
+            "models": local_models(cfg),
+            "message": "失效路径已清除，可以重新选目录或一键安装"}
 
 
 def set_model(cfg, engine: str, path: str = "", extra: dict | None = None) -> dict:

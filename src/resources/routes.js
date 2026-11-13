@@ -4,9 +4,11 @@
 
 import { execFile } from 'node:child_process'
 import { statSync } from 'node:fs'
+import { basename } from 'node:path'
 import { createResources } from './library.js'
 
 const MAX_UPLOAD = 1024 * 1024 * 1024 // 1 GB：RVC 权重 + zip 够用
+const basenameOf = (p) => basename(String(p || '').replace(/\\/g, '/'))
 
 /** 在文件管理器里定位。只允许打开资源目录里的路径，别处一律拒绝。 */
 function reveal(path) {
@@ -75,23 +77,37 @@ export function registerResourceRoutes({ route, getConfig, readBody, readRaw, qu
   // 本机发现：只读，不搬
   route('/res/scan', async () => res.scan())
 
-  // 把发现到的资源复制进受管目录（原件不动）
+  // 导入 = 移动进受管目录（默认不留两份）。只有「保留原件」的那次复制才回带 source，
+  // 面板据此提供「删原件」；已经移动过的原件不存在了，不该再挂删除按钮。
   route('/res/adopt', async (req) => {
     const body = await readBody(req)
+    const opts = { keepSource: !!body.keepSource, forceMove: !!body.forceMove }
     if (body.all) {
       const found = res.scan()
       const done = []
-      // 一次最多搬 30 个，避免把下载目录整个复制进来
-      for (const f of found.refs.slice(0, 15)) done.push(res.adopt('ref', f.path))
-      for (const f of found.models.slice(0, 15)) done.push(res.adopt('model', f.path))
+      // 一次最多搬 30 个，避免把下载目录整个搬进来
+      for (const f of found.refs.slice(0, 15)) done.push(res.adopt('ref', f.path, opts))
+      for (const f of found.models.slice(0, 15)) done.push(res.adopt('model', f.path, opts))
       const ok = done.filter((x) => x.ok).length
       const skipped = Math.max(0, found.refs.length + found.models.length - done.length)
+      const moved = done.filter((x) => x.ok && x.moved).length
       return {
-        ok: true, done: ok, failed: done.length - ok, skipped,
-        message: `导入了 ${ok} 个本机资源${done.length - ok ? `，${done.length - ok} 个没成` : ''}${skipped ? `；还有 ${skipped} 个没搬（可以单个导入）` : ''}`,
+        ok: true, done: ok, failed: done.length - ok, skipped, moved,
+        sources: done.filter((x) => x.ok && x.source && !x.moved).map((x) => ({
+          source: x.source, importedPath: x.path, index: x.pairedIndex || '', name: basenameOf(x.source),
+        })),
+        message: `导入了 ${ok} 个本机资源（${moved} 个是移动，不会留两份）${done.length - ok ? `，${done.length - ok} 个没成` : ''}${skipped ? `；还有 ${skipped} 个没搬（可以单个导入）` : ''}`,
       }
     }
-    return res.adopt(body.kind, body.path)
+    const r = res.adopt(body.kind, body.path, opts)
+    if (r.ok && r.source && !r.moved) r.sourceInfo = { source: r.source, importedPath: r.path, index: r.pairedIndex || '', name: basenameOf(r.source) }
+    return r
+  })
+
+  // 导入后删原件（兼容以前复制导入留下的两份）：只走系统回收站
+  route('/res/source/delete', async (req) => {
+    const body = await readBody(req)
+    return res.deleteSource(body)
   })
 
   // 在 Finder / 资源管理器里打开（只允许资源目录）
