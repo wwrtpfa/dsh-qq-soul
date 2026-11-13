@@ -81,6 +81,11 @@ STAGE_MIX = (0.90, 1.0)
 
 #: 换声预计耗时 = **刚刚量到的分离耗时** × 这个比值。本机 2026-10-30 实测
 #: 279 s 的歌：分离 71.4 s → 换声 105.1 s，比值 1.47。
+#: 2026-11-13 同一台机器重装引擎后再测：190 s 的歌分离 87 s → 换声 480 s，
+#: 比值 5.5 —— 已确认不是引擎变慢，而是 MPS 缓存池累积把 16 GB 机器逼到换页，
+#: 每块清缓存后同一首 39 s（见 ``services/rvc/rvc_driver._free_gpu_cache``）。
+#: 换引擎版本、机器负载仍会让它成倍变化，所以它只是**先验**，跑超了由
+#: ``convert_tick_text`` 改口，不能让面板一直挂着过期的预计。
 CONVERT_VS_SEPARATE = 1.5
 #: 极短样本也要载模型，所以换声的预计不低于这一档
 CONVERT_MIN_S = 45.0
@@ -123,6 +128,17 @@ def convert_eta(duration: float, separate_elapsed: float) -> float:
     if separate_elapsed > 0:
         return max(CONVERT_MIN_S, separate_elapsed * CONVERT_VS_SEPARATE)
     return max(CONVERT_MIN_S, float(duration or 0.0) * CONVERT_RATIO + CONVERT_BASE_S)
+
+
+def convert_tick_text(elapsed: float, eta: float) -> str:
+    """换声段的进度文案：跑超了就说「比预计久，还在跑」。
+
+    以前这里永远写 ``换声 4:42 / 约 2:10``——预计早就过期，观众看到的是一个
+    自相矛盾、像卡死的画面。预计本来就是推算，跑超了就该改口，而不是硬撑。
+    """
+    if eta > 0 and elapsed > eta * 1.5:
+        return f"换声 {_clock(elapsed)}（比预计久，还在跑）"
+    return f"换声 {_clock(elapsed)} / 约 {_clock(eta)}"
 
 
 def original_fingerprint(path: str | Path) -> str:
@@ -634,10 +650,7 @@ class CoverRenderer:
             nonlocal shown
             ratio = min(1.0, (elapsed / eta) if eta > 0 else 1.0)
             shown = max(shown, min(CONVERT_CEILING, _lerp(low, high, ratio)))
-            report(
-                shown,
-                f"换声 {_clock(elapsed)} / 约 {_clock(eta)}",
-            )
+            report(shown, convert_tick_text(elapsed, eta))
             #: 超过预计还在跑是**正常的**（预计本来就是推算），但一声不吭就变成
             #: 「卡死了」。这里留一行，主人翻日志时能分清「慢」和「死」。
             if eta > 0 and elapsed > eta * 1.5 and not overrun[0]:
@@ -1050,4 +1063,5 @@ __all__ = [
     "STAGE_SEARCH",
     "STAGE_SEPARATE",
     "convert_eta",
+    "convert_tick_text",
 ]
