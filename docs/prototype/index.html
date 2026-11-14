@@ -1407,8 +1407,8 @@ function renderTokenChart(chartId,xId,statsId,tagId,noteId){
 // ------------------------------------------------------------------ 安装与体检
 const GUIDE_STEPS=[
   {n:'1',t:'装插件',req:true,where:'DSH',
-   d:'在 DSH 里选「本地目录安装」，指向你解压出来的项目文件夹，不要填 GitHub 地址。装完重启 DSH，左侧栏会出现「懂你的QQ大肥鱼」。',
-   note:'这一步不需要音频服务，也不用开终端。升级也是同一个动作：重新选一次文件夹再重启。',check:'plugin'},
+   d:'在 DSH 的插件管理里地址栏填 github:wwrtpfa/dsh-qq-soul，确认安装后重启 DSH，左侧栏会出现「懂你的QQ大肥鱼」。要改代码才用「本地目录安装」；不要填 git@github.com: 开头的地址，那个装不上。',
+   note:'这一步不需要音频服务，也不用开终端。github: 装的是安装那一刻的 commit 副本，升级 = 再装一次；设置和记忆都在 ~/.dsh/plugins-data 里，不会丢。',check:'plugin'},
   {n:'2',t:'让机器人号上线',req:true,where:'QQ / 桌面端',
    mac:'macOS 用 NapCat：装在 QQ 里，扫码登录机器人号，开「正向 WebSocket」（本机推荐 6700，以实际监听为准）。QQ 更新会覆盖注入文件，更新后重装一次 NapCat。',
    win:'Windows 用 SnowLuma 完整版（不是 lite），解压到纯英文目录（如 C:\\qq-soul\\snowluma），在里面登录机器人号。控制台密码插件自动生成保存。',
@@ -1478,8 +1478,8 @@ async function runSelfcheck(){if(!needLive('自检'))return;const b=$('#scRun');
   catch(e){toast('自检失败：'+e.message);}finally{b.disabled=false;b.textContent='跑一遍自检';}}
 function offlinePrompt(){const os=state.os==='win'?'Windows':'macOS';
   return ['我要在我的电脑上装一个叫「懂你的QQ大肥鱼」的 DSH 插件。','我不懂技术，请你一步一步带我装，每次只让我做一件事，做完等我说「好了」继续。','',
-    '我的情况：','- 系统：'+os,'- 插件目录：（贴你放这个插件的文件夹路径）','- 机器人 QQ 号（小号）：（填）','- 我自己的 QQ 号（主人号）：（填）','',
-    '请按这个顺序带我（前三步必装，做完就能在 QQ 里说话）：','1. 装插件：用本地目录安装（不要用 github 地址），装完重启 DSH。',
+    '我的情况：','- 系统：'+os,'- 插件安装方式：DSH 插件管理 → 地址栏填 github:wwrtpfa/dsh-qq-soul','- 机器人 QQ 号（小号）：（填）','- 我自己的 QQ 号（主人号）：（填）','',
+    '请按这个顺序带我（前三步必装，做完就能在 QQ 里说话）：','1. 装插件：DSH 插件管理里地址栏填 github:wwrtpfa/dsh-qq-soul，确认安装后重启 DSH。不要用 git@github.com: 开头的地址，那个装不上。',
     '2. 重启后在 DSH 左侧栏找到「懂你的QQ大肥鱼」，打开面板 →「安装中心」。',
     os==='macOS'?'3. 装 QQ 网关：macOS 用 NapCat（扫码登录，开正向 WebSocket，本机推荐 6700）；':'3. 装 QQ 网关：Windows 用 SnowLuma 完整版（不是 lite），解压到纯英文目录，登录机器人号。',
     '   然后回面板「连接」页启动 QQ 与网关，核对登录的是机器人号；先开试运行聊两句再上线。','',

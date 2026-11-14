@@ -1,5 +1,7 @@
 // 检查更新：读 GitHub 上主分支的 package.json，比版本号。结果缓存 6 小时。
 
+import { fileURLToPath } from 'node:url'
+
 const STAGE = { alpha: 1, beta: 2, rc: 3 }
 
 /** 比较 x.y.z、x.y.z-beta.n、x.y.z-rc.n：a > b 返回正数；同一版本号里 beta < rc < 正式版。 */
@@ -29,12 +31,32 @@ export function repoOf(pkg) {
   return m ? `${m[1]}/${m[2]}` : ''
 }
 
-/** 更新命令：把安装命令再跑一次就会拉到最新版。 */
-export function updateCommand(repo, channel = 'main') {
-  return `& "$env:LOCALAPPDATA\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd" plugin --profile desktop add github:${repo}${channel === 'main' ? '' : '#' + channel}`
+/** 插件装在哪个 profile：从安装路径里认（…/.dsh/profiles/<profile>/node_modules/…）。
+ *
+ *  `link:` 安装指向的是你自己的仓库目录，路径里没有 profiles 段，认不出来时交给
+ *  调用方兜底（桌面端最多，默认 desktop）。
+ */
+export function profileOf(path) {
+  const m = String(path || '').replace(/\\/g, '/').match(/\/profiles\/([^/]+)\//)
+  return m ? m[1] : ''
 }
 
-export function createUpdateChecker({ pkg, log, fetchImpl = fetch, unstable = () => null }) {
+/** 更新命令：把安装命令再跑一次就会拉到最新版。
+ *
+ *  以前不管什么系统都吐 Windows 桌面版那条 PowerShell 全路径，Mac / Linux 用户
+ *  复制过去直接报「command not found」；服务器上 `dsh web` 装的是 `--profile web`，
+ *  写死 desktop 又会装到另一个 profile 去。现在按平台和真实 profile 生成。
+ */
+export function updateCommand(repo, channel = 'main', { platform = process.platform, profile = '' } = {}) {
+  const spec = `github:${repo}${channel === 'main' ? '' : '#' + channel}`
+  const prof = profile || 'desktop'
+  if (platform === 'win32') {
+    return `& "$env:LOCALAPPDATA\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd" plugin --profile ${prof} add ${spec}`
+  }
+  return `dsh plugin --profile ${prof} add ${spec}`
+}
+
+export function createUpdateChecker({ pkg, log, fetchImpl = fetch, unstable = () => null, platform = process.platform, profile = profileOf(fileURLToPath(import.meta.url)) }) {
   let cache = null
   return async function check({ force = false } = {}) {
     const repo = repoOf(pkg)
@@ -67,7 +89,7 @@ export function createUpdateChecker({ pkg, log, fetchImpl = fetch, unstable = ()
       const best = found.reduce((a, b) => (compareVersions(b.version, a.version) > 0 ? b : a))
       const latest = best.version
       const channel = best.branch
-      const value = { ok: true, current: pkg.version, latest, newer: compareVersions(latest, pkg.version) > 0, repo, unstable: subscribed, channel, command: updateCommand(repo, channel) }
+      const value = { ok: true, current: pkg.version, latest, newer: compareVersions(latest, pkg.version) > 0, repo, unstable: subscribed, channel, command: updateCommand(repo, channel, { platform, profile }) }
       cache = { at: Date.now(), value, subscribed }
       return value
     } catch (error) {

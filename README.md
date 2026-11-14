@@ -69,11 +69,24 @@ QQ ⇄ NapCat / SnowLuma（OneBot v11，你自己安装）⇄ 本插件 ⇄ DSH 
 
 **① 装插件**
 
-DSH 里选「**从本地目录安装**」，指向你解压出来的项目文件夹，**不要填 GitHub 地址**；装完重启 DSH，左侧栏出现「懂你的QQ大肥鱼」。
+DSH 的插件管理里两种写法都能一键装，按你的目的选：
+
+| 你想 | 地址栏填 |
+|---|---|
+| **直接用它**（推荐） | `github:wwrtpfa/dsh-qq-soul` |
+| **改代码** | 选「从本地目录安装」，指向你解压出来的项目文件夹 |
+
+`github:` 装的是**安装那一刻的 commit 副本**，升级 = 再装一次；本地目录是 `link:` 软链，改的就是跑的那份。设置、人格、记忆都在 `~/.dsh/plugins-data/aurabot/`（音频服务的数据在 `qqsoul/`），两种装法都保留。
+
+> ⚠️ **不要填 `git@github.com:wwrtpfa/dsh-qq-soul.git`。** 那是 SSH 的 scp 写法，DSH 会原样交给 pnpm，pnpm 不认（`ERR_PNPM_UNSUPPORTED_PROTOCOL`），配没配 SSH key 都一样。想填网址就用 `https://github.com/wwrtpfa/dsh-qq-soul.git`，它会被归一成 `github:` 形式。
+
+装完重启 DSH，左侧栏出现「懂你的QQ大肥鱼」。
 
 命令行等价：
 
 ```bash
+dsh plugin --profile <profile> add github:wwrtpfa/dsh-qq-soul
+# 本地改代码才用：
 dsh plugin --profile <profile> add "<插件目录>"
 ```
 

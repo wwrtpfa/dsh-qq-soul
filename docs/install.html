@@ -133,9 +133,13 @@
 
   <h2><span class="n">1</span> 装插件 <span style="font-size:12px;color:var(--muted);font-weight:400">必装</span></h2>
   <div class="step">
-    <h3>用本地目录安装 <span class="where">DSH</span></h3>
-    <p>在 DSH 里选「本地目录安装」，指向你解压出来的项目文件夹，<b>不要填 GitHub 地址</b>。装完重启 DSH，左侧栏会出现「懂你的QQ大肥鱼」。</p>
-    <div class="note">这一步不需要音频服务，也不需要开终端。升级也是同一个动作：重新选一次这个文件夹，然后重启。</div>
+    <h3>装插件 <span class="where">DSH</span></h3>
+    <p>在 DSH 的插件管理里，地址栏填 <code>github:wwrtpfa/dsh-qq-soul</code>，确认安装，然后重启 DSH。</p>
+    <ul>
+      <li><b>要改代码</b>才选「本地目录安装」，指向你解压出来的项目文件夹（<code>link:</code> 软链，改的就是跑的那份）。</li>
+      <li><b>别填 <code>git@github.com:wwrtpfa/dsh-qq-soul.git</code></b>：SSH 的 scp 写法，DSH 会原样交给 pnpm，pnpm 不认，必然报 <code>ERR_PNPM_UNSUPPORTED_PROTOCOL</code>（配了 SSH key 也一样）。要填网址就用 <code>https://github.com/wwrtpfa/dsh-qq-soul.git</code>。</li>
+    </ul>
+    <div class="note">这一步不需要音频服务，也不用开终端。<code>github:</code> 装的是<b>安装那一刻的 commit 副本</b>，升级 = 再装一次；设置、人格、记忆都在 <code>~/.dsh/plugins-data/</code>，不会丢。</div>
   </div>
 
   <h2><span class="n">2</span> 让机器人号上线 <span style="font-size:12px;color:var(--muted);font-weight:400">必装</span></h2>
@@ -259,12 +263,12 @@
       '',
       '我的情况：',
       '- 系统：' + osName,
-      '- 插件目录：（贴你放这个插件的文件夹路径）',
+      '- 插件安装方式：DSH 插件管理 → 地址栏填 github:wwrtpfa/dsh-qq-soul（如果我要改代码，才用本地目录）',
       '- 机器人 QQ 号（小号）：（填）',
       '- 我自己的 QQ 号（主人号）：（填）',
       '',
       '请按这个顺序带我（前三步是必装，做完就能在 QQ 里说话）：',
-      '1. 装插件：用本地目录安装（不要用 github 地址），装完重启 DSH。',
+      '1. 装插件：DSH 插件管理里地址栏填 github:wwrtpfa/dsh-qq-soul，确认安装后重启 DSH。不要用 git@github.com: 开头的地址，那个装不上。',
       '2. 重启后让我在 DSH 左侧栏找到「懂你的QQ大肥鱼」，打开面板 →「安装中心」。',
       osName === 'macOS'
         ? '3. 装 QQ 网关：macOS 用 NapCat（扫码登录，开「正向 WebSocket」，本机推荐 6700，以它实际监听的为准）；'

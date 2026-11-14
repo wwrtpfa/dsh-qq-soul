@@ -19,7 +19,7 @@
 
 | 步 | 做什么 | 在哪 | 必装？ |
 |---|---|---|---|
-| 1 | 装插件：DSH 里选「从本地目录安装」，或 `dsh plugin --profile <profile> add <本机仓库目录>` | DSH / 终端 | **是** |
+| 1 | 装插件：DSH 插件管理里地址栏填 `github:wwrtpfa/dsh-qq-soul`（要改代码才用「从本地目录安装」），或 `dsh plugin --profile <profile> add github:wwrtpfa/dsh-qq-soul` | DSH / 终端 | **是** |
 | 2 | 装完重启 DSH，左侧栏打开面板 →「安装中心」，按系统走完最前面的网关和试运行步骤 | 面板 | **是** |
 | 3 | 装 QQ 网关（macOS 用 NapCat，Windows 用 SnowLuma 完整版 / NapCat），在「连接」页 →「本机服务」点一次**「启动 QQ 与网关」**，再填**正向 WebSocket** 地址 | 见第二节 | **是** |
 | 4 | 要发语音条才起音频服务：桌面端「概览 → 音频服务」点「启动服务」，或 `python -m services --serve`（macOS / Linux 用 `python3`） | 桌面端 / 终端 | 可选 |

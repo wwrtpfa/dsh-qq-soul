@@ -18,12 +18,12 @@
 
 我的情况：
 - 系统：（macOS / Windows，二选一）
-- 插件目录：（贴你放这个插件的文件夹路径）
+- 插件安装方式：DSH 插件管理 → 地址栏填 github:wwrtpfa/dsh-qq-soul（我要改代码才用本地目录）
 - 机器人 QQ 号（小号）：（填）
 - 我自己的 QQ 号（主人号）：（填）
 
 请按这个顺序带我（前三步是必装，做完就能在 QQ 里说话）：
-1. 装插件：用本地目录安装（不要用 github 地址），装完重启 DSH。
+1. 装插件：DSH 插件管理里地址栏填 github:wwrtpfa/dsh-qq-soul，确认安装后重启 DSH。不要用 git@github.com: 开头的地址，那个装不上。
 2. 重启后让我在 DSH 左侧栏找到「懂你的QQ大肥鱼」，打开面板 →「安装中心」。
 3. 装 QQ 网关：macOS 用 NapCat（扫码登录，开「正向 WebSocket」，本机推荐 6700，以它实际监听的为准）；
    Windows 用 SnowLuma 完整版（不是 lite），解压到纯英文目录（例如 C:\qq-soul\snowluma），在里面登录机器人号。

@@ -23,16 +23,24 @@
 
 ## 第 1 步 · 装插件（必装）
 
-### 用面板装（推荐，不用开终端）
+### 用 DSH 装（推荐，不用开终端）
 
-1. 打开 DSH。
-2. 找到插件管理里的「**从本地目录安装**」。
-3. 选你解压出来的这个项目文件夹，**不要填 GitHub 地址**。
-4. 装完重启 DSH。
+1. 打开 DSH 的插件管理，地址栏填 **`github:wwrtpfa/dsh-qq-soul`**，确认安装。
+2. 装完重启 DSH。
 
 左侧栏会出现「**懂你的QQ大肥鱼**」，点开就是面板。
 
+> **两种装法怎么选：** `github:` 装的是**安装那一刻的 commit 副本**，升级 = 再装一次，适合"只想用"；要改代码就用「从本地目录安装」指向你的文件夹，那是 `link:` 软链，改的就是跑的那份。设置、人格、记忆都在 `~/.dsh/plugins-data/`，两种都保留。
+>
+> ⚠️ **别填 `git@github.com:wwrtpfa/dsh-qq-soul.git`。** 那是 SSH 的 scp 写法，DSH 原样交给 pnpm，pnpm 不认（`ERR_PNPM_UNSUPPORTED_PROTOCOL`），配了 SSH key 也一样挂。要填网址就用 `https://github.com/wwrtpfa/dsh-qq-soul.git`。
+
 ### 用命令行装
+
+```bash
+dsh plugin --profile <profile> add github:wwrtpfa/dsh-qq-soul
+```
+
+改本地代码时才用本地目录：
 
 ```bash
 dsh plugin --profile <profile> add "<插件目录>"
@@ -41,10 +49,8 @@ dsh plugin --profile <profile> add "<插件目录>"
 Windows 桌面版的 `dsh` 在安装目录里：
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<插件目录>"
+& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add github:wwrtpfa/dsh-qq-soul
 ```
-
-> **为什么强调本地目录安装？** 本地目录是 `link:` 软链，你改的就是跑的那份；用 `github:` 地址装会变成「改仓库版、跑副本」，排查问题时容易对不上。
 
 **怎么算好了：** DSH 重启后左侧栏出现「懂你的QQ大肥鱼」。
 
@@ -185,7 +191,7 @@ python3 -m services --check-deps     # Windows 把 python3 换成 python
 
 ### 升级
 
-重新用本地目录安装一次（还是那个文件夹），然后重启 DSH。**设置、人格、记忆、表情、你自己写的模块都会保留。**
+装到哪就再装一次，然后重启 DSH：`github:` 装的重填 `github:wwrtpfa/dsh-qq-soul`，本地目录装的重选那个文件夹。**设置、人格、记忆、表情、你自己写的模块都会保留**（数据在 `~/.dsh/plugins-data/`，不随插件文件走）。
 
 ### 卸载
 

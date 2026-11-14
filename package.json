@@ -2,6 +2,11 @@
   "name": "dsh-qq-soul",
   "version": "1.2.0",
   "description": "懂你的QQ大肥鱼：住在 QQ 里的 AI 伙伴「大肥鱼」—— DeepSeek Harness 插件（经 NapCat / SnowLuma，OneBot v11 接 QQ）",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wwrtpfa/dsh-qq-soul.git"
+  },
+  "homepage": "https://github.com/wwrtpfa/dsh-qq-soul#readme",
   "license": "MIT",
   "private": true,
   "type": "module",

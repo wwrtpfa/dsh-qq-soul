@@ -69,11 +69,24 @@ QQ ⇄ NapCat / SnowLuma (OneBot v11, installed by you) ⇄ this plugin ⇄ DSH 
 
 **① Install the plugin**
 
-In DSH choose **"install from a local directory"** and point it at this folder — **not** a GitHub URL. Restart DSH and **QQ Soul** appears in the sidebar.
+In DSH's plugin manager you can install either way — pick by intent:
+
+| You want to | Enter |
+|---|---|
+| **just use it** (recommended) | `github:wwrtpfa/dsh-qq-soul` |
+| **change the code** | "install from a local directory", pointing at the folder you unzipped |
+
+`github:` installs a **copy of the commit as of install time** (upgrade = install again); a local directory is a `link:` symlink, so edits are live. Settings, persona and memory all live under `~/.dsh/plugins-data/`, so both keep your data.
+
+> ⚠️ **Do not use `git@github.com:wwrtpfa/dsh-qq-soul.git`.** That is SSH's scp syntax; DSH passes it to pnpm verbatim and pnpm rejects it (`ERR_PNPM_UNSUPPORTED_PROTOCOL`) — SSH keys make no difference. For a URL use `https://github.com/wwrtpfa/dsh-qq-soul.git`, which is normalized to the `github:` form.
+
+Restart DSH and **QQ Soul** appears in the sidebar.
 
 CLI equivalent:
 
 ```bash
+dsh plugin --profile <profile> add github:wwrtpfa/dsh-qq-soul
+# local development only:
 dsh plugin --profile <profile> add "<plugin directory>"
 ```
 

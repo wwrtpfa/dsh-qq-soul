@@ -2,6 +2,10 @@
 
 ## 未发布
 
+- **插件可以一键从仓库装了，文档不再赶人去填本地目录**：以前 README / quickstart / install.html / USER-MANUAL / 给 AI 的提示词里都写「不要填 GitHub 地址」，等于把最自然的一条路堵死，用户只能自己找地址 —— 而 GitHub「Code」下拉里 SSH 就在 HTTPS 旁边，复制到 `git@github.com:...` 就必挂（DSH 把这个 scp 写法原样交给 pnpm，pnpm 拆成「包名 git + 版本 github.com:…」报 `ERR_PNPM_UNSUPPORTED_PROTOCOL`，配没配 SSH key 都一样）。现在统一成：**首选 `github:wwrtpfa/dsh-qq-soul`**（安装那一刻的 commit 副本，升级 = 再装一次），要改代码才用「从本地目录安装」，并明确写出「别用 `git@github.com:`」，网址形式给 `https://github.com/wwrtpfa/dsh-qq-soul.git`（会被归一成 `github:`）。
+- **「检查更新」不再永远说「不知道从哪检查更新」**：`package.json` 一直缺 `repository` 字段，`repoOf()` 读出来是空串，面板点检查更新只会得到这句话 —— 等于功能是死的。现在补上 `repository` / `homepage`，实测能解析出 `wwrtpfa/dsh-qq-soul`。
+- **更新命令按系统和真实 profile 生成**：以前不管什么系统都吐 Windows 桌面版那条 `$env:LOCALAPPDATA\...\dsh.cmd` 全路径，Mac / Linux 的用户复制过去只会 `command not found`；profile 还写死 `desktop`，服务器上 `dsh web`（profile = web）装的人照着重装会装到另一个 profile 去。现在非 Windows 输出 `dsh plugin --profile <profile> add github:…`，profile 从插件自身的安装路径（`…/profiles/<profile>/node_modules/…`）认出来，认不出（`link:` 安装）才退回 `desktop`。
+
 - **「停掉它」不再怎么点都关不掉**：真实现场是 21:33–21:40 连点 8 次停止，端口上还跑着 GPT-SoVITS。起因是几次「一键启动」让两个进程抢 9881，后起的绑定失败秒退却把状态文件里的 PID 覆盖掉，先起的那个从此没人记得，`stop()` 只能回一句「没有插件启动过的进程，请自己关」。现在按**端口后面真实的 PID** 认人（`lsof -sTCP:LISTEN`），再用入口脚本路径 / 工作目录核身份；`ps` 被权限拦住时退回 `pgrep`，ps 没给状态时也不再把活进程判成死，僵尸进程不会让「已经关掉」被报成「没能停掉」。真认不出来时把 PID 和可直接执行的 `kill` 命令写进提示，并钉在按钮旁边，不再只弹一闪而过的 toast。端到端复现：把状态 PID 抹成 0、9881 仍被占 → 一次停止就收回进程和端口。
 - **「目录与路径」不再指着空目录装没装 TTS**：一键安装下载的千问 / GPT-SoVITS 权重在音频服务的 `models/qwen`、`models/gptsovits`，面板以前却把「TTS 模型」指到插件自己的 `aurabot/models/tts`、把「参考音频」指到不存在的 `aurabot/refs`，两行都显示「不存在」。现在「TTS 模型」指向真的装了权重的总目录，另外拆出「千问 TTS 模型」「GPT-SoVITS 模型」两行（实测 1.59 GiB / 1.24 GiB 都在），参考音频指向服务真正在读的 `service/refs`；旧目录 / 手动导入目录只有真的存在才列，不再挂一排「不存在」。面板导入参考音频、模型库扫描也统一到这套真目录。
 - **所有音频都能暂停、能单条删**：参考音频、试听语音、翻唱语音、原曲缓存、分离中间产物以前只有挤在 180px 里的原生 `<audio controls>`（看不出暂停也点不到删），或者只能「清空整个目录」。现在统一成 `▶/⏸ + 时间 + 可拖进度 + 删除`，同一时刻只播一条；「模型库 / 目录与路径」新增「所有音频」一张表，按类型筛、逐条删。删除先确认、只动这一个音频文件、优先进系统回收站（回收站不可用时只对自己数据目录兜底直删），别处路径一律拒绝；`/res/file` 也放宽到本机扫描列出来的下载 / 音乐 / 桌面音频，点播放不再 404。
