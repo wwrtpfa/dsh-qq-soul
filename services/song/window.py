@@ -14,8 +14,14 @@ def pick(strategy: dict, *, duration: float, peaks: list[tuple[float, float]] | 
     duration = max(0.0, float(duration))
 
     def clamp(start: float, length: float) -> tuple[float, float]:
+        want = max(0.0, float(length))
         start = max(0.0, min(float(start), duration))
-        length = max(0.0, min(float(length), duration - start))
+        length = max(0.0, min(want, duration - start))
+        # 「从哪里开始唱」填得比歌还长：退回结尾前，唱满能唱的长度，
+        # 别产出 0 秒空文件（真正裁剪时会被当成失败）。
+        if length <= 0.0 and duration > 0.0:
+            length = min(want, duration)
+            start = max(0.0, duration - length)
         return round(start, 2), round(length, 2)
 
     if mode == "full":

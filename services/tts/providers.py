@@ -233,14 +233,30 @@ class BreezeProvider(BaseProvider):
         key = str(os.environ.get("BREEZE_API_KEY") or self.cfg.tts.get("breezeKey") or "").strip()
         if not key:
             raise ServiceError("BREEZE_KEY_MISSING", "还没填 Breeze 的 key")
-        vid = voice or str(self.cfg.tts.get("breezeVoice") or "default")
+        #: ``voice`` 来自全局说话配置，切到 Breeze 后那里往往还是 edge 的音色 id
+        #: （``zh-CN-XiaoyiNeural``）。直接拿去拼 URL，Breeze 会回 404
+        #: ``Voice not found``，看起来就像「渠道配置没生效」。edge 音色一律不认，
+        #: 只认面板里填的 ``breezeVoice``（或调用方明确传的非 edge 音色）。
+        vid = str(voice or "").strip()
+        if _looks_like_edge_voice(vid):
+            vid = ""
+        vid = vid or str(self.cfg.tts.get("breezeVoice") or "").strip() or "default"
         base = str(self.cfg.tts.get("breezeUrl") or "https://api.breezeblue.ai/v1/text-to-speech")
         url = "%s/%s?output_format=mp3" % (base.rstrip("/"), urllib.parse.quote(vid))
         req = urllib.request.Request(
             url, data=json.dumps({"text": text}).encode("utf-8"), method="POST",
             headers={"Content-Type": "application/json", "xi-api-key": key},
         )
-        data = _fetch_audio(req, timeout=_timeout_for(text))
+        try:
+            data = _fetch_audio(req, timeout=_timeout_for(text))
+        except ServiceError as exc:
+            if exc.code == "TTS_HTTP_404":
+                raise ServiceError(
+                    "BREEZE_VOICE_NOT_FOUND",
+                    "Breeze 说找不到这个 Voice ID（%s）：去 Breeze 后台确认音色还在，"
+                    "再把它重新粘到「Voice ID」里保存一次" % vid,
+                ) from exc
+            raise
         if not data:
             raise ServiceError("TTS_EMPTY", "语音服务返回了空音频，等会儿再试")
         Path(out).write_bytes(data)

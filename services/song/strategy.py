@@ -10,6 +10,9 @@
   最终混音基于裁剪后的两条轨，等价于 trimStart 同步作用于混音。
 * 起唱点在 **分离后的 vocals 轨** 上做自适应 RMS，不需要 VAD 模型、不需要新权重。
 * 四档取窗在「裁掉前奏之后」的坐标系里算，所以「副歌附近起」不会被 25 s 前奏带偏。
+* ``window.startSec`` 一律从**起唱点**往后数（伴奏保留前奏时起唱点就是 0）；
+  ``window.durationSec`` 是**源素材**长度，不是成品长度——清唱还会收紧间奏空白，
+  成品可能更短，所以结果里同时回显「配置要多久 / 实际取到多久」。
 * 策略指纹进曲库 slug：换策略不会命中上一次的旧成品 / 旧分离产物戳。
 
 纯标准库，可单测；不联网、不启动 demucs / RVC。
@@ -86,11 +89,14 @@ def resolve(payload: dict | None, cfg) -> dict:
     t["mode"] = str(t.get("mode") or "auto")
     if t["mode"] not in TRIM_MODES:
         raise ValueError("不认识的前奏处理：%s" % t["mode"])
-    #: 模式决定前奏怎么处理：带伴奏保前奏 = 不裁；其余两档默认从人声起点开始。
-    #: 后台显式选的 off / fixed 仍然优先，方便手工控制（面板上已经不提供 off 了：
-    #: 「清唱 / 去前奏」配「不裁」自相矛盾，会在开头留一段没人声的静音）。
+    #: 模式决定前奏怎么处理：带伴奏保前奏 = 不裁；清唱 / 去前奏必须从人声起点开始。
+    #: 后台显式选的 fixed 仍然优先（固定裁 N 秒），但 off 与这两档自相矛盾——会在开头
+    #: 留一段没人声的静音，《爱错》那次「配置 120 秒、成品 101 秒」就是这么来的——
+    #: 这里统一改成 auto。（面板早就不提供 off 了，只剩旧配置还会带。）
     if st["mode"] == "accompaniment":
         t["mode"] = "off"
+    elif t["mode"] == "off":
+        t["mode"] = "auto"
     t["sensitivity"] = _clamp(t.get("sensitivity", 0.5), 0.1, 2.0)
     t["paddingSec"] = _clamp(t.get("paddingSec", 0.4), 0.0, 5.0)
     t["fixedSec"] = _clamp(t.get("fixedSec", 0), 0.0, 3600.0)
@@ -146,6 +152,11 @@ class StrategyResult:
     startSec: float = 0.0
     durationSec: float = 0.0
     totalSec: float = 0.0
+    #: 配置里要的取窗长度；原曲不够长时 durationSec 会小于它，shortened 置真。
+    wantDurationSec: float = 0.0
+    shortened: bool = False
+    #: 给作业日志 / 面板看的一句人话：为什么没唱到配置的时长。
+    note: str = ""
     threshold: float = 0.0
     curve: list[dict] = field(default_factory=list)
     files: dict = field(default_factory=dict)
@@ -158,6 +169,9 @@ class StrategyResult:
             "startSec": self.startSec,
             "durationSec": self.durationSec,
             "totalSec": self.totalSec,
+            "wantDurationSec": self.wantDurationSec,
+            "shortened": self.shortened,
+            "note": self.note,
             "threshold": self.threshold,
             "curve": self.curve,
             "files": {k: str(v) for k, v in self.files.items()},
@@ -203,9 +217,21 @@ def apply_to_tracks(strategy_: dict, tracks: dict, out_dir: str | Path) -> Strat
 
     after = max(0.0, result.totalSec - base)
     peaks_after = [(max(0.0, sec - base), value) for sec, value in curve if sec >= base]
-    win_start, win_len = window.pick(st["window"], duration=after, peaks=peaks_after)
+    w = st["window"]
+    win_start, win_len = window.pick(w, duration=after, peaks=peaks_after)
     result.startSec = round(base + win_start, 2)
     result.durationSec = round(win_len, 2)
+    want_len = after if w["mode"] == "full" else float(w.get("durationSec") or 0.0)
+    result.wantDurationSec = round(want_len, 2)
+    if w["mode"] != "full":
+        want_start = float(w.get("startSec") or 0.0)
+        # 起点被夹回结尾附近，或请求时长没取满：都说明「配置和这首歌对不上」。
+        result.shortened = win_start + 0.05 < want_start or want_len - win_len > 0.5
+        if result.shortened:
+            result.note = (
+                "起唱点之后只剩 %ss，配置「%ss 起唱 %ss」唱不到，实际取 %ss"
+                % (round(after, 1), round(want_start, 1), round(want_len, 1), round(win_len, 1))
+            )
 
     began = time.monotonic()
     for name, path in tracks.items():

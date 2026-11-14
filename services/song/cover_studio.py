@@ -49,6 +49,7 @@ import logging
 import re
 import shutil
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -110,6 +111,39 @@ SEPARATED_STAMP = ".separated.json"
 #: 分离方式升级后，旧的分离产物一律作废。旧戳没有 version 字段，读到就重分离，
 #: 避免继续复用「整首混音直喂 RVC + 静音伴奏」那版脏干声（实测伴奏 -91 dB）。
 SEPARATED_STAMP_VERSION = "mdx2"
+
+#: 每次渲染的独占工作目录前缀。同一首歌被同时点两次时，两条链各自写自己的
+#: ``work/<歌名>/run-xxxx/``，谁也不会删掉对方的干声 / 换声输出。
+#: 2026-11-14 事故：两次《晚风》并发，先做完的那轮 ``rmtree(work/<歌名>)``
+#: 把后一轮刚生成的 ``vocals-gated.wav`` 一起删了，RVC 于是报
+#: ``File not found: .../vocals-gated.wav``；更糟的是两条链同时写同一个
+#: ``vocal-converted.wav``，成品前后半段可能来自两次不同的推理（听感就是
+#: 「前半和后半音高不一样」）。独占目录把这两件事一起断根。
+RUN_DIR_PREFIX = "run-"
+#: 失败那轮的工作目录先留着给主人翻日志，超过一天再清；只清自己产的 run-*，
+#: 绝不碰 work/ 下别的目录或文件。
+RUN_DIR_MAX_AGE_S = 24 * 3600.0
+
+
+def prune_stale_runs(work_root: Path, *, max_age_s: float = RUN_DIR_MAX_AGE_S) -> int:
+    """清掉过期的 ``run-*`` 目录，返回清了几个；读不到目录就当 0。"""
+    try:
+        entries = list(Path(work_root).iterdir())
+    except OSError:
+        return 0
+    now = time.time()
+    removed = 0
+    for entry in entries:
+        if not entry.name.startswith(RUN_DIR_PREFIX) or not entry.is_dir():
+            continue
+        try:
+            stale = now - entry.stat().st_mtime >= float(max_age_s)
+        except OSError:
+            continue
+        if stale:
+            shutil.rmtree(entry, ignore_errors=True)
+            removed += 1
+    return removed
 
 
 def convert_eta(duration: float, separate_elapsed: float) -> float:
@@ -594,14 +628,14 @@ class CoverRenderer:
         report(STAGE_DOWNLOAD[1], "原曲下载好了")
 
         # ---- 3. 分离 -------------------------------------------------
-        work = self.store.work_dir(song_key)
+        work_root = self.store.work_dir(song_key)
+        work_root.mkdir(parents=True, exist_ok=True)
+        prune_stale_runs(work_root)
+        #: 本轮独占目录：并发同歌的两条链各自写自己的干声 / 换声输出，谁也删不到
+        #: 对方的文件；成功只清本轮目录，失败先留着给主人翻日志（见 RUN_DIR_PREFIX）。
+        work = work_root / (RUN_DIR_PREFIX + uuid.uuid4().hex[:8])
         work.mkdir(parents=True, exist_ok=True)
-        #: 上一轮可能在换声/混音处失败：半截成品一律清掉，分离的干声尽量留着复用
-        for stale in ("vocal-converted.wav", "cover.mp3", "cover-raw.wav", "vocals-gated.wav"):
-            try:
-                (work / stale).unlink()
-            except OSError:
-                pass
+        log.info("[做歌] 《%s》 本轮工作目录：%s", title, work)
         low, high = STAGE_SEPARATE
         stamp = read_separated_stamp(work, fingerprint)
         if stamp is not None:
@@ -683,12 +717,29 @@ class CoverRenderer:
         )
         #: 清唱只留人声：分轨里没唱的地方剩下的伴奏泄漏 / 换气，RVC 会当气声
         #: 「唱」出来（听感就是滋滋炸麦），所以换声前先按本曲电平压一道。
-        source_vocals = vocals
+        source_vocals = Path(vocals)
         if vocal_only:
             report(low, "压掉分离残留")
-            gated = cover_tools.gate_low_level(vocals, work / "vocals-gated.wav")
+            gated = cover_tools.gate_low_level(source_vocals, work / "vocals-gated.wav")
             if gated is not None:
                 source_vocals = gated
+        #: 换声前再核一次：文件真在、不是空壳。并发同歌时这里可能刚被另一轮
+        #: 清掉，以前只会把死路径丢给 RVC，换来一句英文 File not found，
+        #: 主人根本看不出是「同时点了两遍」还是「引擎坏了」。
+        try:
+            vocal_ready = source_vocals.is_file() and source_vocals.stat().st_size > 0
+        except OSError:
+            vocal_ready = False
+        if not vocal_ready:
+            raise RuntimeError(
+                "换声要用的干声不见了：%s（多半是同一首歌被同时做了两次，中间文件"
+                "被另一轮清掉了）；再点一次就能做好" % source_vocals
+            )
+        if not Path(accompaniment).is_file():
+            raise RuntimeError(
+                "伴奏分轨不见了：%s（同上，多半是并发制作）；再点一次就能做好"
+                % accompaniment
+            )
         self._convert(
             source_vocals,
             raw,
@@ -771,6 +822,8 @@ class CoverRenderer:
                 clip_duration=final_duration or clip_duration,
             )
         )
+        #: 只清本轮独占目录；别再 rmtree(work_root)，那会把同时在做同一首歌的
+        #: 另一条链的干声 / 换声输出一起删掉（2026-11-14《晚风》事故）。
         shutil.rmtree(work, ignore_errors=True)
         log.info("翻唱做好：《%s》（%s）→ %s", entry.title, entry.artist, final)
         return _result(entry, final, probe=self._duration)

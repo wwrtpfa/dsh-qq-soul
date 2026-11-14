@@ -103,6 +103,29 @@ def test_空音频当成失败(tmp_path, monkeypatch):
     assert ei.value.code == "TTS_EMPTY"
 
 
+def test_breeze不把edge音色当VoiceID(tmp_path, monkeypatch):
+    """切到 Breeze 后全局 voice 还是 edge 的音色名：拿它拼 URL 会 404。"""
+    urls = []
+
+    def fake(req, timeout=0):
+        urls.append(req.full_url)
+        return _Resp()
+
+    monkeypatch.setattr(providers.urllib.request, "urlopen", fake)
+    cfg = _Cfg(breezeKey="test-key", breezeVoice="voc_abc", voice="zh-CN-XiaoyiNeural")
+    providers.BreezeProvider(cfg).synth("你好", tmp_path / "a.mp3", voice="zh-CN-XiaoyiNeural")
+    assert urls[0].endswith("/voc_abc?output_format=mp3")
+
+
+def test_breeze音色不存在时说清楚是VoiceID问题(tmp_path, monkeypatch):
+    err = urllib.error.HTTPError("http://x", 404, "Not Found", {}, None)
+    _patch_urlopen(monkeypatch, [err])
+    with pytest.raises(providers.ServiceError) as ei:
+        _breeze().synth("你好呀", tmp_path / "a.mp3")
+    assert ei.value.code == "BREEZE_VOICE_NOT_FOUND"
+    assert "Voice ID" in ei.value.message
+
+
 def test_单段等待上限按字数走且有上下限():
     assert providers._timeout_for("你好") == 45
     assert providers._timeout_for("字" * 100) == 120

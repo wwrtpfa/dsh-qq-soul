@@ -12,6 +12,7 @@ vocals / instrumental / 最终混音（决策 9）。策略指纹进曲库 slug�
 from __future__ import annotations
 
 import inspect
+import threading
 import time
 from pathlib import Path
 
@@ -54,8 +55,32 @@ class SongPipeline:
         # 可注入：测试用假分离产物，不跑 demucs；生产走 cover_tools.separate
         self._separate_fn = separate_fn or cover_tools.separate
         self._toolchain_fn = toolchain_fn or cover_tools.toolchain_problem
+        #: 服务层一次只做一首。``/song/request`` 每来一条就起一个线程，两条消息
+        #: 合并着发过来时（2026-11-14《晚风》）就是两个渲染同时跑：它们共用
+        #: ``music/work/<歌名>``，先做完的那轮把另一轮的干声删掉，换声直接报
+        #: File not found，两个任务还可能同时写同一个换声输出。这里排队，第二个
+        #: 拿到锁时第一个已经入库，``render()`` 开头就直接命中曲库秒回。
+        self._render_lock = threading.Lock()
 
     def request(self, payload: dict, job) -> dict:
+        """排队做歌：拿不到锁先报一句「排队等一下」，别让进度条像死了。"""
+        if not self._render_lock.acquire(blocking=False):
+            try:
+                job.emit(stage="plan", ratio=0.0, text="前面还有一首在做，排队等一下")
+            except Exception:  # noqa: BLE001 —— 假 job / SSE 断开不该让排队崩掉
+                pass
+            #: 排队时也要能被取消：不能让点了「停止」的作业一直挂在锁上。
+            while not self._render_lock.acquire(timeout=1.0):
+                if getattr(job, "cancelled", False):
+                    raise JobCancelled("已取消")
+        try:
+            if getattr(job, "cancelled", False):
+                raise JobCancelled("已取消")
+            return self._request(payload, job)
+        finally:
+            self._render_lock.release()
+
+    def _request(self, payload: dict, job) -> dict:
         query = str(payload.get("query") or payload.get("song") or "").strip()
         local_file = str(payload.get("localFile") or "").strip()
         if not query and not local_file:
@@ -76,12 +101,20 @@ class SongPipeline:
         except ValueError as exc:
             return {"ok": False, "code": "BAD_STRATEGY", "message": str(exc)}
 
-        #: 作业日志第一眼就能看出这一首是清唱还是伴奏，排查「选了清唱却带伴奏」不用猜。
-        job.emit(stage="plan", ratio=0.0, mode=st["mode"], text={
+        #: 作业日志第一眼就能看出这一首是清唱还是伴奏、唱多久，排查「配置 120 秒
+        #: 成品却只有 101 秒」不用猜。startSec 一律从起唱点往后数。
+        win = st["window"]
+        if win["mode"] == "full":
+            window_word = "整首"
+        else:
+            window_word = "起唱点后 %gs 起、唱 %gs" % (
+                float(win.get("startSec") or 0.0), float(win.get("durationSec") or 0.0)
+            )
+        job.emit(stage="plan", ratio=0.0, mode=st["mode"], text="%s · %s" % ({
             "acapella": "清唱 · 只发人声",
             "accompaniment": "伴奏 · 保留原曲前奏",
             "accompaniment-trim": "伴奏 · 从人声第一句开始",
-        }.get(st["mode"], st["mode"]))
+        }.get(st["mode"], st["mode"]), window_word))
 
         # BS-RoFormer 是高质量离线档，需要用户自己配命令与权重；不假装已经实现。
         if st["separator"] != "htdemucs" and not str(
@@ -162,10 +195,16 @@ class SongPipeline:
             snapshot = result.as_dict()
             job.emit(
                 stage="trim", ratio=0.55,
-                text="起唱点 %ss · 裁掉前奏，取窗 %ss" % (result.trimStart, result.durationSec),
+                #: 原曲比配置短时直接说清「只剩多少秒」，别再让用户对着一首
+                #: 101 秒的成品猜 120 秒去哪了。
+                text=result.note or "起唱点 %ss · 裁掉前奏，取窗 %ss（原曲 %ss）" % (
+                    result.trimStart, result.durationSec, result.totalSec),
                 trimStart=result.trimStart,
                 startSec=result.startSec,
                 durationSec=result.durationSec,
+                totalSec=result.totalSec,
+                wantDurationSec=result.wantDurationSec,
+                shortened=result.shortened,
                 energyCurve=result.curve,
                 stageMs=result.stageMs,
             )
@@ -216,6 +255,15 @@ class SongPipeline:
         info = strategy_result.as_dict() if strategy_result else {}
         clip_duration = float(getattr(result, "clip_duration", 0.0) or info.get("durationSec", 0.0) or 0.0)
         clip_start = float(getattr(result, "clip_start", 0.0) or info.get("startSec", 0.0) or 0.0)
+        note = str(info.get("note") or "")
+        #: 清唱会把间奏空白收紧，成品天然比「取窗长度」短；这不算配置错，
+        #: 但要主动说清楚，否则又会被当成「120 秒怎么只出了 101 秒」。
+        want = float(info.get("wantDurationSec") or 0.0)
+        if vocal_only and want and clip_duration and want - clip_duration >= 2.0:
+            note = (note + "；" if note else "") + (
+                "清唱收紧了间奏空白，成品 %ss（取窗 %ss）"
+                % (round(clip_duration, 1), round(want, 1))
+            )
         return {
             "ok": True,
             "file": str(Path(result.wav)),
@@ -231,6 +279,10 @@ class SongPipeline:
             "startSec": clip_start,
             "durationSec": clip_duration,
             "sungSec": clip_duration,
+            #: 配置要多久 / 原曲多长 / 为什么没唱满，一起回显给面板和作业日志。
+            "requestedDurationSec": info.get("wantDurationSec", 0.0),
+            "sourceTotalSec": info.get("totalSec", 0.0),
+            "windowNote": note,
             "energyCurve": info.get("curve", []),
             "files": info.get("files", {}),
             "stageMs": info.get("stageMs", {}),

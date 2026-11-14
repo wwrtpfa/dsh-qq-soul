@@ -507,6 +507,32 @@ def separate(
     return vocals, accompaniment
 
 
+def verify_converted(src: str | Path, dst: str | Path, *, probe=None) -> None:
+    """换声输出必须和输入一样长，差太多就是「半截文件 / 被别的任务写串了」。
+
+    RVC 整首推理不会改变时长（按窗口切块再原样拼回来），所以输入 168 s、
+    输出 84 s 只可能是：另一个进程同时写了同一个 ``vocal-converted.wav``、
+    或者文件还没写完就被下游 ffmpeg 读走了。以前这种成品照样混音入库，
+    主人听到的就是「前半段和后半段音高、音色对不上」。宁可现在拦下来重做，
+    也不放一版坏歌出去。
+
+    ffprobe 缺失 / 量不出时长时直接跳过校验：不能因为量不出来把歌弄丢。
+    """
+    measure = probe or duration_of
+    before = float(measure(src) or 0.0)
+    after = float(measure(dst) or 0.0)
+    if before <= 0 or after <= 0:
+        return
+    drift = abs(after - before)
+    if drift > max(2.0, before * 0.03):
+        raise CoverToolError(
+            "换声输出不完整：干声 %.1fs，换声后 %.1fs（差 %.1fs）。多半是同一首歌"
+            "并行制作时中间文件被写串了，再点一次就好" % (before, after, drift)
+        )
+    if drift > max(1.0, before * 0.01):
+        log.warning("换声输出与干声时长略有出入：%.1fs → %.1fs", before, after)
+
+
 def convert(
     src: str | Path,
     dst: str | Path,
@@ -549,7 +575,7 @@ def convert(
             worker = engine or shared_engine(
                 engine_path, engine_python, model, idle_timeout=idle_timeout
             )
-            return worker.convert(
+            converted = worker.convert(
                 src,
                 target,
                 pitch=pitch,
@@ -559,16 +585,22 @@ def convert(
                 on_phase=on_phase,
                 timeout=timeout,
             )
+            verify_converted(src, converted)
+            return converted
+        except CoverToolError as exc:
+            log.warning("常驻换声输出不完整（%s），回落一次性推理", exc)
         except CoverEngineError as exc:
             log.warning("常驻换声没成（%s），回落一次性推理", exc)
         except Exception as exc:  # noqa: BLE001 —— 常驻这层任何意外都不该带走整首歌
             log.warning("常驻换声异常（%s），回落一次性推理", exc)
-    return _convert_once(
+    converted = _convert_once(
         src, target, model,
         engine_dir=engine_path, python=engine_python,
         pitch=pitch, index_rate=index_rate, protect=protect,
         timeout=timeout, on_tick=_phase_tick(on_tick, on_phase),
     )
+    verify_converted(src, converted)
+    return converted
 
 
 def _phase_tick(
@@ -619,6 +651,11 @@ def _convert_once(
         # 兜底也必须用引擎 venv，不能拿服务进程的系统 Python 去跑 torch。
         engine, py = engine_paths({"engine_dir": str(engine), "python": ""})
     if (engine / "core.py").is_file():
+        #: 这一串必须和常驻引擎 ``rvc_driver._applio_converter`` 逐项对齐：
+        #: 同一首歌只是「常驻失败回落一次性」就变了调，主人会听成音高不稳。
+        #: 尤其 **不要** 加 ``--f0-autotune`` / ``--proposed-pitch``——常驻那边
+        #: 明确传的是 False，CLI 一旦开自动移调，兜底这次会按整首中位音高
+        #: 自己升降 key。这两个开关是 is_flag，靠默认值保持关闭。
         command = [
             str(py), "core.py", "infer",
             "--input-path", str(src),
@@ -628,6 +665,7 @@ def _convert_once(
             "--pitch", str(int(pitch)),
             "--index-rate", str(float(index_rate)),
             "--protect", str(float(protect)),
+            "--volume-envelope", "1.0",
             "--f0-method", "rmvpe",
             "--embedder-model", "contentvec",
             "--export-format", "WAV",
@@ -1156,6 +1194,14 @@ def _explain(what: str, hint: str) -> str:
         return (
             f"换声引擎要联网下载模型但失败了（{text}）——"
             "本机换声权重不全，检查 contentvec / rmvpe 是否在本地"
+        )
+    #: 2026-11-14《晚风》：两轮同歌并发，先做完的那轮 rmtree 删掉了后一轮的
+    #: ``vocals-gated.wav``，页面上只剩一句英文 File not found。现在每轮独占目录
+    #: 已经断根；万一引擎还是读不到，也别让主人对着英文猜。
+    if "file not found" in lowered or "no such file or directory" in lowered:
+        return (
+            f"输入音频读不到（{text}）——多半是同一首歌被同时做了两次，中间文件"
+            "被另一轮清掉了；现在每轮做歌用独立目录，再点一次就好"
         )
     return text
 

@@ -122,9 +122,33 @@ def test_120秒档_夹在音频长度内(tmp_path, cfg, three_tracks):
 
 
 def test_关闭裁剪时_startSec为零(tmp_path, cfg, three_tracks):
-    st = strategy.resolve({"trim": {"mode": "off"}}, cfg)
+    # 只有「伴奏 · 保留前奏」有资格不裁；清唱 / 去前奏配 off 会被改成 auto。
+    st = strategy.resolve({"mode": "accompaniment", "trim": {"mode": "off"}}, cfg)
     out = strategy.apply_to_tracks(st, three_tracks, tmp_path / "out")
     assert out.trimStart == 0.0 and out.startSec == 0.0
+
+
+def test_清唱配不裁前奏会被改成自动找起唱点(cfg):
+    """《爱错》事故：清唱 + off → 120 秒里先白含 14 秒前奏，成品只剩 101 秒。"""
+    st = strategy.resolve({"mode": "acapella", "trim": {"mode": "off"}}, cfg)
+    assert st["trim"]["mode"] == "auto"
+    fixed = strategy.resolve({"mode": "acapella", "trim": {"mode": "fixed", "fixedSec": 8}}, cfg)
+    assert fixed["trim"]["mode"] == "fixed", "固定裁 N 秒是人工控制，仍然保留"
+
+
+def test_配置时长比歌长_回显实际取到多少(tmp_path, cfg, three_tracks):
+    st = strategy.resolve({"window": {"mode": "offset", "startSec": 0, "durationSec": 120}}, cfg)
+    out = strategy.apply_to_tracks(st, three_tracks, tmp_path / "out")
+    assert out.wantDurationSec == 120.0
+    assert out.shortened is True
+    assert "只剩" in out.note and "120.0" in out.note, out.note
+
+
+def test_起点超出歌长也不产出0秒文件(tmp_path, cfg, three_tracks):
+    st = strategy.resolve({"window": {"mode": "manual", "startSec": 999, "durationSec": 30}}, cfg)
+    out = strategy.apply_to_tracks(st, three_tracks, tmp_path / "out")
+    assert out.durationSec > 0
+    assert out.startSec + out.durationSec <= out.totalSec + 0.05
 
 
 def test_能量峰值窗口_在裁剪后坐标系上取(tmp_path, cfg, three_tracks):
@@ -199,6 +223,20 @@ def test_pipeline_结果回显实际生效策略与能量曲线(tmp_path, cfg):
     assert len(result["energyCurve"]) > 10
     stages = [e["stage"] for e in job.snapshot()["events"]]
     assert "trim" in stages and "separate" in stages
+
+
+def test_pipeline_计划阶段说清唱多久_结果回显配置与实际(tmp_path, cfg):
+    pipe, _ = _pipeline(tmp_path, cfg)
+    job = JobStore(tmp_path).create(kind="song", query="测试曲")
+    result = pipe.request({
+        "query": "测试曲", "mode": "acapella",
+        "strategy": {"window": {"mode": "offset", "startSec": 0, "durationSec": 120}},
+    }, job)
+    plan = next(e for e in job.snapshot()["events"] if e["stage"] == "plan")
+    assert "清唱" in plan["text"] and "唱 120s" in plan["text"], plan["text"]
+    assert result["requestedDurationSec"] == 120.0
+    assert result["sourceTotalSec"] == 65.0
+    assert "只剩" in result["windowNote"], result["windowNote"]
 
 
 def test_pipeline_未配置的分离器给可枚举code(tmp_path, cfg):

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""P13：翻唱只认主人给的两个聚合站（txqq + music-dl）。
+"""P13：翻唱音乐源（txqq / meting / kuwo，music-dl 默认关闭）。
 
 口径：
-- 源列表只有 ``txqq`` / ``music-dl``，不再出现「网易云 / QQ」当源；
-- 旧配置（没有 site 字段）自动迁到默认两站，面板不会又冒出旧名字；
-- 每个站取前 10 条，按站序拼起来；一个站被验证拦住不影响另一个；
-- music-dl 是服务端渲染的 HTML，解析 ``li.song-card`` 的 data-*；
-- 两个站都搜不到 = 这首歌不存在，不假装在找。
+- 默认源是 4 个免认证源：txqq（netease）、txqq-qq、meting、kuwo；
+- 旧配置（没有 site 字段）自动迁到默认源，面板不会又冒出旧名字；
+- 每个源取前 10 条，按源序拼起来；一个源出错不影响另一个；
+- music-dl 是服务端渲染的 HTML，解析 ``li.song-card`` 的 data-*，默认关闭；
+- 所有源都搜不到 = 这首歌不存在，不假装在找。
 """
 
 from __future__ import annotations
@@ -87,20 +87,29 @@ class _Sites:
         return _Resp(self.music_dl_html.encode("utf-8"), headers={"Content-Type": "text/html"})
 
 
-def test_默认源就是两个聚合站():
+def test_默认源是四个免认证源加一个关闭的music_dl():
     rows = normalize_sources(None)
-    assert [r["site"] for r in rows] == ["txqq", "music-dl"]
-    assert [r["name"] for r in rows] == ["txqq", "music-dl"]
-    assert all(r["enabled"] for r in rows)
+    assert [r["site"] for r in rows] == ["txqq", "txqq", "meting", "kuwo", "music-dl"]
+    assert [r["name"] for r in rows] == ["txqq", "txqq-qq", "meting", "kuwo", "music-dl"]
+    assert [r["enabled"] for r in rows] == [True, True, True, True, False]
 
 
-def test_旧配置没有site时整体迁到两个站():
+def test_同名站按type保留两条():
+    rows = normalize_sources([
+        {"site": "txqq", "type": "netease", "enabled": True},
+        {"site": "txqq", "type": "qq", "enabled": True},
+        {"site": "txqq", "type": "netease", "enabled": False},
+    ])
+    assert [r["type"] for r in rows] == ["netease", "qq"]
+
+
+def test_旧配置没有site时整体迁到默认源():
     legacy = [
         {"name": "网易云", "type": "netease", "enabled": True},
         {"name": "QQ音乐", "type": "qq", "enabled": True},
     ]
     rows = normalize_sources(legacy)
-    assert [r["site"] for r in rows] == ["txqq", "music-dl"]
+    assert [r["site"] for r in rows] == ["txqq", "txqq", "meting", "kuwo", "music-dl"]
     assert all("网易云" not in r["name"] and "QQ" not in r["name"] for r in rows)
 
 
@@ -120,8 +129,8 @@ def test_源列表保序去重并丢掉无效项():
 
 
 def test_空源列表回到默认而不是把检索配死():
-    assert [r["site"] for r in normalize_sources([])] == ["txqq", "music-dl"]
-    assert [r["site"] for r in normalize_sources([{"site": "nope"}])] == ["txqq", "music-dl"]
+    assert [r["site"] for r in normalize_sources([])] == ["txqq", "txqq", "meting", "kuwo", "music-dl"]
+    assert [r["site"] for r in normalize_sources([{"site": "nope"}])] == ["txqq", "txqq", "meting", "kuwo", "music-dl"]
 
 
 def test_可以按序号站名或旧类型选一个源():
@@ -142,8 +151,13 @@ def test_两站按顺序检索并各自打上站名():
         "type": "netease", "title": "晴天", "author": "周杰伦",
         "songid": "186016", "url": "", "link": "",
     }])
-    hits = search_all_sources("晴天", opener=opener, limit_per_source=10)
-    assert [kind for kind, _ in opener.seen] == ["txqq", "music-dl"]
+    hits = search_all_sources(
+        "晴天",
+        sources=[{"site": "txqq"}, {"site": "music-dl"}],
+        opener=opener,
+        limit_per_source=10,
+    )
+    assert {kind for kind, _ in opener.seen} == {"txqq", "music-dl"}
     assert [h.site for h in hits] == ["txqq", "music-dl", "music-dl"]
     assert [h.source for h in hits] == ["txqq", "music-dl", "music-dl"]
     assert hits[0].source_id == "186016"
@@ -172,6 +186,76 @@ def test_music_dl解析第二张卡片和链接():
     assert query["name"] == ["晴天"]
 
 
+def test_gdstudio搜索后按url_id换直链():
+    class GdOpener:
+        def open(self, request, timeout=0):
+            if "types=search" in request.full_url:
+                return _Resp(json.dumps([
+                    {"id": "186016", "name": "晴天", "artist": ["周杰伦"],
+                     "url_id": "186016"},
+                    {"id": "999", "name": "晴天 (Live)", "artist": ["周杰伦", "五月天"],
+                     "url_id": "999"},
+                ], ensure_ascii=False).encode("utf-8"))
+            assert "types=url" in request.full_url
+            url_id = "999" if "id=999" in request.full_url else "186016"
+            return _Resp(json.dumps({"url": f"https://m701.music.126.net/{url_id}.mp3"}).encode())
+
+    hits = search_all_sources(
+        "晴天", sources=[{"site": "gdstudio"}], opener=GdOpener()
+    )
+    assert [h.title for h in hits] == ["晴天", "晴天 (Live)"]
+    assert [h.source_id for h in hits] == ["186016", "999"]
+    assert hits[0].url == "https://m701.music.126.net/186016.mp3"
+    assert hits[0].link == "https://music.163.com/song?id=186016"
+    assert hits[0].site == "gdstudio" and hits[0].origin == "netease"
+
+
+def test_meting解析搜索并保留每条直链():
+    class MetingOpener:
+        def open(self, request, timeout=0):
+            assert "type=search" in request.full_url
+            return _Resp(json.dumps([
+                {"name": "晴天", "artist": "周杰伦",
+                 "url": "https://api.qijieya.cn/meting/?server=netease&type=url&id=186016",
+                 "lrc": "https://api.qijieya.cn/meting/?type=lrc&id=186016"},
+                {"name": "晴天 (Live)", "artist": ["周杰伦", "五月天"],
+                 "url": "https://api.qijieya.cn/meting/?server=netease&type=url&id=999"},
+            ], ensure_ascii=False).encode("utf-8"))
+
+    hits = search_all_sources(
+        "晴天", sources=[{"site": "meting"}], opener=MetingOpener()
+    )
+    assert [h.title for h in hits] == ["晴天", "晴天 (Live)"]
+    assert [h.source_id for h in hits] == ["186016", "999"]
+    assert hits[0].url.startswith("https://api.qijieya.cn/meting/?server=netease&type=url")
+    assert hits[1].artist == "周杰伦/五月天"
+    assert all(h.site == "meting" and h.origin == "netease" for h in hits)
+
+
+def test_kuwo搜索后用anti_s换成直链():
+    class KuwoOpener:
+        def open(self, request, timeout=0):
+            if "search.kuwo.cn" in request.full_url:
+                return _Resp(json.dumps({"abslist": [
+                    {"SONGNAME": "晴天", "ARTIST": "周杰伦", "MUSICRID": "MUSIC_1",
+                     "DURATION": "269", "ALBUM": "叶惠美"},
+                    {"SONGNAME": "晴天&nbsp;(Live)", "ARTIST": "周杰伦",
+                     "MUSICRID": "MUSIC_2", "DURATION": "28"},
+                ]}, ensure_ascii=False).encode("utf-8"))
+            assert "rid=MUSIC_" in request.full_url
+            return _Resp(b"https://kw.example/a.mp3")
+
+    hits = search_all_sources(
+        "晴天", sources=[{"site": "kuwo"}], opener=KuwoOpener()
+    )
+    assert [h.title for h in hits] == ["晴天", "晴天 (Live)"]
+    assert [h.source_id for h in hits] == ["1", "2"]
+    assert hits[0].url == "https://kw.example/a.mp3"
+    assert hits[0].duration == 269.0
+    assert hits[0].link == "https://www.kuwo.cn/play_detail/1"
+    assert all(h.site == "kuwo" and h.origin == "kuwo" for h in hits)
+
+
 def test_每个源最多取十条():
     rows = [
         {"type": "netease", "title": f"晴天{i}", "author": "周杰伦",
@@ -196,6 +280,7 @@ def test_music_dl被验证拦住时另一个站照常返回并留下诊断():
 
     hits = search_all_sources(
         "晴天",
+        sources=[{"site": "txqq"}, {"site": "music-dl"}],
         opener=Blocked(txqq_rows=[{"type": "netease", "title": "晴天", "author": "周杰伦",
                                    "songid": "186016", "url": ""}]),
         diagnostics=diagnostics,
@@ -209,7 +294,9 @@ def test_music_dl被验证拦住时另一个站照常返回并留下诊断():
 
 def test_两个站都没搜到就是空表():
     hits = search_all_sources(
-        "绝对不存在的歌", opener=_Sites(txqq_rows=[], music_dl_html="<html><body>无结果</body></html>")
+        "绝对不存在的歌",
+        sources=[{"site": "txqq"}, {"site": "music-dl"}],
+        opener=_Sites(txqq_rows=[], music_dl_html="<html><body>无结果</body></html>"),
     )
     assert hits == []
 

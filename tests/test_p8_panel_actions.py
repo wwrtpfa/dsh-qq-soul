@@ -136,7 +136,7 @@ def test_混音音量夹住范围(srv):
 def test_音乐源可读可存且带缓存目录(srv):
     base, cfg = srv
     out = _call(base, "GET", "/song/sources")
-    assert [row["site"] for row in out["sources"]] == ["txqq", "music-dl"]
+    assert [row["site"] for row in out["sources"]] == ["txqq", "txqq", "meting", "kuwo", "music-dl"]
     assert str(out["dirs"]["originals"]).replace("\\", "/").endswith("music/originals")
 
     saved = _call(base, "POST", "/song/sources", {"sources": [
@@ -151,7 +151,7 @@ def test_音乐源可读可存且带缓存目录(srv):
 
     # 空列表 = 恢复默认，不能把检索配成死路
     reset = _call(base, "POST", "/song/sources", {"sources": []})
-    assert [row["site"] for row in reset["sources"]] == ["txqq", "music-dl"]
+    assert [row["site"] for row in reset["sources"]] == ["txqq", "txqq", "meting", "kuwo", "music-dl"]
 
 
 # ---------------------------------------------------------------- 搜歌测试

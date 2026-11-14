@@ -656,6 +656,7 @@ code{overflow-wrap:anywhere;word-break:break-word}
 .ab-card.ms:before{content:"";position:absolute;left:-1px;top:16px;bottom:16px;width:3px;border-radius:0 3px 3px 0;background:var(--ms);opacity:.9}
 .ab-card.ms-saved{--ms:var(--ab-ok)}.ab-card.ms-saved:before{opacity:.5}
 .ab-card.ms-dirty{--ms:var(--ab-warn);border-color:color-mix(in srgb,var(--ab-warn) 45%,var(--ab-line));box-shadow:0 0 0 3px color-mix(in srgb,var(--ab-warn) 9%,transparent)}
+.ab-card.ms-warn{--ms:var(--ab-warn);border-color:color-mix(in srgb,var(--ab-warn) 45%,var(--ab-line));box-shadow:0 0 0 3px color-mix(in srgb,var(--ab-warn) 9%,transparent)}
 .ab-card.ms-saving{--ms:var(--ab-sea);border-color:color-mix(in srgb,var(--ab-sea) 55%,var(--ab-line));box-shadow:0 0 0 3px var(--ab-foam)}
 .ab-card.ms-error{--ms:var(--ab-err);border-color:color-mix(in srgb,var(--ab-err) 50%,var(--ab-line));box-shadow:0 0 0 3px color-mix(in srgb,var(--ab-err) 9%,transparent)}
 .ab-card.ms-readonly{--ms:var(--ab-dim)}
@@ -663,6 +664,7 @@ code{overflow-wrap:anywhere;word-break:break-word}
 .ab-mstate i{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
 .ab-mstate.s-saved{color:var(--ab-ok);background:color-mix(in srgb,var(--ab-ok) 8%,transparent);border-color:color-mix(in srgb,var(--ab-ok) 22%,transparent)}
 .ab-mstate.s-dirty{color:var(--ab-warn);background:color-mix(in srgb,var(--ab-warn) 12%,transparent);border-color:color-mix(in srgb,var(--ab-warn) 30%,transparent)}
+.ab-mstate.s-warn{color:var(--ab-warn);background:color-mix(in srgb,var(--ab-warn) 12%,transparent);border-color:color-mix(in srgb,var(--ab-warn) 30%,transparent)}
 .ab-mstate.s-saving{color:var(--ab-deep);background:var(--ab-foam);border-color:var(--ab-foam-2)}
 .ab-mstate.s-error{color:var(--ab-err);background:color-mix(in srgb,var(--ab-err) 9%,transparent);border-color:color-mix(in srgb,var(--ab-err) 28%,transparent)}
 .ab-mstate.s-readonly{color:var(--ab-dim);background:var(--ab-card-2);border-color:var(--ab-line)}
@@ -813,9 +815,9 @@ code{overflow-wrap:anywhere;word-break:break-word}
       const start = Math.max(0, Number(w.startSec) || 0)
       const dur = Math.max(1, Number(w.durationSec) || 120)
       const mode = s.mode || 'accompaniment-trim'
-      // 前奏只有「伴奏 · 去前奏」这一档才有得选：清唱全程没有伴奏、保留前奏本来就不裁，
-      // 以前这个下拉常驻，还能跟上面选的模式打架（选「清唱」又问前奏怎么裁），最容易看懵。
-      const trimApplies = mode === 'accompaniment-trim'
+      // 只有「伴奏 · 保留前奏」不裁开头；清唱和「伴奏 · 去前奏」都必须从人声起点开始，
+      // 否则「唱 120 秒」会先白唱十几秒前奏（《爱错》那次成品只有 101 秒就是这么来的）。
+      const trimApplies = mode !== 'accompaniment'
       const trimMode = trimApplies ? (t.mode === 'fixed' ? 'fixed' : 'auto') : 'off'
       const setWin = (patch) => setS({ ...s, window: { ...w, ...patch } })
       const dirty = saved.current ? JSON.stringify(s) !== JSON.stringify(saved.current) : false
@@ -853,7 +855,7 @@ code{overflow-wrap:anywhere;word-break:break-word}
             : mode === 'accompaniment-trim'
               ? '伴奏 · 去前奏：从人声第一句开始，开头那段纯伴奏切掉；之后伴奏一直在（间奏也保留）。'
               : '伴奏 · 保留前奏：原曲开头也留着，适合前奏本身好听的歌。'),
-        trimApplies ? h(Row, { label: '起唱点怎么定', hint: '只在「去前奏」时用得上' },
+        trimApplies ? h(Row, { label: '起唱点怎么定', hint: '清唱 / 去前奏都从人声第一句算起' },
           h(Seg, { value: trimMode === 'fixed' ? 'fixed' : 'auto', onChange: (v) => setS({ ...s, trim: { ...t, mode: v } }),
             options: [{ value: 'auto', label: '自动找人声起点' }, { value: 'fixed', label: '固定裁 N 秒' }] })) : null,
         // 选了「固定裁 N 秒」才把 N 展开出来；以前这里只有下拉、没有填秒数的地方，参数一直写不进去。
@@ -882,8 +884,9 @@ code{overflow-wrap:anywhere;word-break:break-word}
           h(Range, { value: Number(s.indexRate) || 0, min: 0, max: 1, step: 0.05,
             fmt: (v) => Number(v).toFixed(2), onChange: (v) => setS({ ...s, indexRate: v }) })),
         h('div', { className: 'ab-note', style: { marginTop: 8 } },
-          offset ? '从起唱点再往后 ' + start + ' 秒开始，唱 ' + dur + ' 秒；原曲不够长就唱到结尾。'
+          offset ? '从起唱点再往后 ' + start + ' 秒开始，唱 ' + dur + ' 秒；原曲不够长就唱到结尾，作业里会写实际取到多少。'
             : '从起唱点一直唱到原曲结尾。想只要一段就切到「只唱一段」。',
+          ' 「唱多久」算的是原曲取窗长度；清唱会把间奏空白收紧，成品可能比它短一点。',
           ' 改完在下面弹出的提示里保存；「撤销」退回上次保存的值。'))
     }
 
@@ -895,7 +898,7 @@ code{overflow-wrap:anywhere;word-break:break-word}
     // 的卡片才显示状态，其余几百张卡片外观完全不变。
     // 设计原则：保存不是一个孤零零的常驻按钮，而是「状态变了 → 卡片底部长出提示」。
     let cardState = null
-    const MS_LABEL = { saved: '已保存', dirty: '有改动', saving: '保存中', error: '没保存上', readonly: '只读' }
+    const MS_LABEL = { saved: '已保存', dirty: '有改动', warn: '没就绪', saving: '保存中', error: '没保存上', readonly: '只读' }
     function ModuleStatus({ status, text }) {
       const s = status || 'saved'
       return h('span', { className: 'ab-mstate s-' + s, title: text || MS_LABEL[s] }, h('i', null), text || MS_LABEL[s])
@@ -3262,7 +3265,8 @@ code{overflow-wrap:anywhere;word-break:break-word}
       }
       return h(Fragment, null,
         h(Card, { title: '声音（音频服务统一管）',
-          status: r === null ? 'saving' : 'saved', statusText: r === null ? '读取中' : '即改即生效',
+          status: r === null ? 'saving' : r.ok ? 'saved' : 'warn',
+          statusText: r === null ? '读取中' : r.ok ? '即改即生效' : '音频服务未启动',
           desc: '这一页按「你选了什么」从上往下长：先选说话渠道，紧跟着就是它真正用得上的参数；再往下是换声（说话和唱歌共用一个音色）。渠道参数改完要保存；开关和音色点完就生效。网页大屏只读。' },
         h(Row, { label: '说话渠道', hint: (() => {
           if (r === null) return '正在读…'
@@ -3284,6 +3288,14 @@ code{overflow-wrap:anywhere;word-break:break-word}
               { value: 'http', label: '其他 HTTP 接口' },
             ],
           })),
+        // 服务没起时这是整张卡里唯一有用的动作，放在渠道下拉正下方，别再让用户往卡片底部找。
+        !(r && r.ok) ? h('div', { className: 'ab-flex', style: { gap: 10, flexWrap: 'wrap', marginTop: 10, alignItems: 'center' } },
+          h(Btn, { small: true, kind: 'primary', disabled: busy, onClick: async () => {
+            const out = await post('/setup/start-service')
+            toast(out.message || (out.ok ? '已启动' : '没起来'), out.ok ? 'ok' : 'err')
+            reload()
+          } }, '启动音频服务'),
+          h('span', { className: 'ab-muted ab-small' }, '起来后这里会自动变成「● 在线 / 即改即生效」')) : null,
         // 「另一个本地服务还在跑」：一次只该用一个，两个都开着白占几 GB 内存和端口。
         otherRunning
           ? h('div', { className: 'ab-note warn', style: { marginTop: 8 } },
@@ -3323,7 +3335,7 @@ code{overflow-wrap:anywhere;word-break:break-word}
         // 渠道参数紧贴渠道下拉：选完渠道，下面立刻就是它的参数，
         // 不用滚到另一张卡片去对「上面选的是哪个、下面这堆是谁的」。
         r && r.ok ? h(ServiceVoiceDetail, { tts, eng, rvcOn, reload, toast, ctlRef, onDirtyChange })
-          : h('div', { className: 'ab-note', style: { marginTop: 10 } }, '音频服务没开：渠道参数读不出来。先点下面的「启动音频服务」，或者直接去「本机备用渠道」用本机这套。'),
+          : h('div', { className: 'ab-note', style: { marginTop: 10 } }, '音频服务没开：渠道参数读不出来。先点上面的「启动音频服务」，或者直接去「本机备用渠道」用本机这套。'),
         h('div', { className: 'ab-vsub', style: { marginTop: 18 } },
           h('b', null, '换声（说话和唱歌同一个声音）'),
           h('span', { className: 'ab-muted ab-small' }, 'TTS 念完再换成这个音色，QQ 语音条、桌面试听、大屏放的是同一份成品')),
@@ -3349,11 +3361,6 @@ code{overflow-wrap:anywhere;word-break:break-word}
             : h('div', { className: 'ab-flex', style: { gap: 10, flex: 1, minWidth: 220 } },
               h(Range, { value: pitch, min: -12, max: 12, step: 1, fmt: (v) => (v > 0 ? '+' : '') + v + ' 半音', onChange: savePitch }))),
         h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', marginTop: 10 } },
-          !(r && r.ok) ? h(Btn, { small: true, disabled: busy, onClick: async () => {
-            const out = await post('/setup/start-service')
-            toast(out.message || (out.ok ? '已启动' : '没起来'), out.ok ? 'ok' : 'err')
-            reload()
-          } }, '启动音频服务') : null,
           h(Btn, { small: true, onClick: () => window.open(panel, '_blank', 'noopener') }, '打开只读大屏看数据'),
           h(Btn, { small: true, onClick: async () => { try { await navigator.clipboard.writeText(panel); toast('地址复制好了') } catch (e) { toast(panel) } } }, '复制地址'),
           onShowFallback ? h(Btn, { small: true, kind: 'ghost', onClick: onShowFallback }, '看本机备用渠道') : null),
@@ -3486,6 +3493,24 @@ code{overflow-wrap:anywhere;word-break:break-word}
         h(Card, { title: '说话方式', right: f.sw('voice.enabled'),
           scope: ['voice.enabled', 'voice.mode', 'voice.autoChance', 'voice.autoMaxChars', 'voice.emojiSeparate'],
           desc: '总开关关掉后一句语音都不发。开着再选：让她自己按内容决定，还是只发文字 / 只发语音 / 文字和语音都发。这一块存在插件配置里：改了这张卡片会变色，并在下面弹出保存。' },
+          // 语音开着、服务没起、兜底又关：这是「必发文字」的死组合，别再让它静悄悄。
+          draft.voice.enabled && draft.voice.mode !== 'text' && svc && !svcOn && draft.voice.fallback === false
+            ? h('div', { className: 'ab-note warn', style: { margin: '8px 0 12px' } },
+                h('b', null, '音频服务没启动，兜底也关着：现在只会发文字'),
+                h('div', { className: 'ab-small', style: { marginTop: 4 } },
+                  '语音开关只是允许她说话，真正合成要靠音频服务。服务没起且「本机备用渠道」关着时，语音条会直接降级成文字。'),
+                h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', marginTop: 8 } },
+                  h(Btn, { small: true, kind: 'primary', onClick: async () => {
+                    const out = await post('/setup/start-service')
+                    toast(out.message || (out.ok ? '已启动' : '没起来'), out.ok ? 'ok' : 'err')
+                    loadSvc()
+                  } }, '启动音频服务'),
+                  h(Btn, { small: true, kind: 'ghost', onClick: () => {
+                    setFallbackOpen(true)
+                    const el = document.getElementById('ab-voice-fallback')
+                    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+                  } }, '去开兜底')))
+            : null,
           h('div', { style: { margin: '4px 0 12px' } }, f.choices('voice.mode', [
             { value: 'auto', label: '自动', desc: '文字为主；对方要语音、或短回复时按概率发语音' },
             { value: 'text', label: '只发文字', desc: '从不发语音条，TTS 不占用' },
@@ -6104,7 +6129,7 @@ code{overflow-wrap:anywhere;word-break:break-word}
         } catch (e) { setSaveState('error'); toast('保存失败：' + e.message, 'err') } finally { setBusy(false) }
       }
       const restore = async () => {
-        if (!confirm('恢复默认音乐源（txqq + music-dl）？')) return
+        if (!confirm('恢复默认音乐源（txqq + txqq-qq + meting + kuwo）？')) return
         setBusy(true)
         try {
           const r = await post('/song/sources', { sources: [] })
@@ -6128,27 +6153,37 @@ code{overflow-wrap:anywhere;word-break:break-word}
         } finally { setTesting(false) }
       }
       const dirs = info.dirs || {}
+      const siteMeta = {
+        txqq: { type: 'netease', placeholder: '留空 = music.txqq.pro（搜网易云）' },
+        gdstudio: { type: 'netease', placeholder: '留空 = music-api.gdstudio.xyz' },
+        meting: { type: 'netease', placeholder: '留空 = api.qijieya.cn/meting（公共实例会限流）' },
+        kuwo: { type: 'all', placeholder: '留空 = search.kuwo.cn' },
+        'music-dl': { type: 'all', placeholder: '留空 = music.zkkp.nyc.mn（要自建）' },
+      }
       return h(Card, { title: '音乐源', status, onSave: save, onRevert: revert, saveLabel: '保存音乐源',
-        desc: '只有两个聚合站：txqq 和 music-dl。按这个顺序搜，每个站取前 10 条，从第一条开始试下载；两个站都没有就告诉用户不存在。地址留空 = 用内置站；改了任意一项，这张卡片会变色并在下面弹出保存。不确定能不能用，就用最下面的「测试搜索」真搜一次。' },
+        desc: '内置 4 个免认证源：txqq（网易云）、txqq-qq（QQ）、meting、kuwo；gdstudio 和 music-dl 需要时再加，music-dl 还要自建实例。按这个顺序搜，每个站取前 10 条，从第一条开始试下载；都没有就告诉用户不存在。地址留空 = 用内置站；改了任意一项，这张卡片会变色并在下面弹出保存。不确定能不能用，就用最下面的「测试搜索」真搜一次。' },
         h('div', { className: 'ab-list', style: { marginTop: 8 } }, rows.map((row, i) => h('div', { key: i, className: 'ab-li', style: { display: 'grid', gridTemplateColumns: 'auto minmax(70px,1fr) 120px minmax(120px,1.4fr) auto auto auto auto', gap: 8, alignItems: 'center' } },
           h('input', { type: 'checkbox', checked: row.enabled !== false, title: '启用这个站', onChange: (e) => update(i, { enabled: e.target.checked }) }),
           h('input', { className: 'ab-input sm', value: row.name || '', placeholder: 'txqq', onChange: (e) => update(i, { name: e.target.value }) }),
-          h('select', { className: 'ab-input sm', value: row.site || 'txqq', 'aria-label': '聚合站', onChange: (e) => update(i, { site: e.target.value }) },
+          h('select', { className: 'ab-input sm', value: row.site || 'txqq', 'aria-label': '聚合站', onChange: (e) => update(i, { site: e.target.value, type: (siteMeta[e.target.value] || {}).type || 'all' }) },
             h('option', { value: 'txqq' }, 'txqq'),
+            h('option', { value: 'gdstudio' }, 'gdstudio'),
+            h('option', { value: 'meting' }, 'meting'),
+            h('option', { value: 'kuwo' }, 'kuwo'),
             h('option', { value: 'music-dl' }, 'music-dl')),
-          h('input', { className: 'ab-input sm', value: row.endpoint || '', placeholder: row.site === 'music-dl' ? '留空 = music.zkkp.nyc.mn' : '留空 = music.txqq.pro', title: '留空就用内置站；要换自己的实例，填完整 http(s) 地址，例如 http://127.0.0.1:8080', onChange: (e) => update(i, { endpoint: e.target.value }) }),
+          h('input', { className: 'ab-input sm', value: row.endpoint || '', placeholder: (siteMeta[row.site] || siteMeta.txqq).placeholder, title: '留空就用内置站；要换自己的实例，填完整 http(s) 地址，例如 http://127.0.0.1:8080', onChange: (e) => update(i, { endpoint: e.target.value }) }),
           h('span', { className: 'ab-muted ab-small' }, i === 0 ? '主源' : '备用'),
           h(Btn, { small: true, disabled: busy || i === 0, onClick: () => move(i, -1) }, '↑'),
           h(Btn, { small: true, disabled: busy || i === rows.length - 1, onClick: () => move(i, 1) }, '↓'),
           h(Btn, { small: true, disabled: busy || rows.length <= 1, onClick: () => setRows((list) => list.filter((x, j) => j !== i)) }, '删除')))),
         rows.length ? null : h('div', { className: 'ab-muted ab-small' }, '一个站都没有。点「添加源」或「恢复默认」。'),
         h('div', { className: 'ab-flex', style: { marginTop: 10, flexWrap: 'wrap', gap: 8 } },
-          h(Btn, { small: true, disabled: busy, onClick: () => setRows((list) => [...list, { name: 'music-dl', site: 'music-dl', type: 'all', endpoint: '', enabled: true }]) }, '添加源'),
+          h(Btn, { small: true, disabled: busy, onClick: () => setRows((list) => [...list, { name: 'gdstudio', site: 'gdstudio', type: 'netease', endpoint: '', enabled: true }]) }, '添加源'),
           h(Btn, { small: true, disabled: busy, onClick: restore }, '恢复默认')),
         h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } },
-          '内置地址不用填：txqq = music.txqq.pro（直接回 JSON），music-dl = music.zkkp.nyc.mn（结果页带 EdgeOne 人机验证，自动搜会被拦，不绕过）。',
+          '内置地址不用填：txqq = music.txqq.pro（直接回 JSON，type=netease/qq 换平台），gdstudio = music-api.gdstudio.xyz，kuwo = search.kuwo.cn。这三个都免登录；meting = api.qijieya.cn/meting 也能用，但公共实例会限流。',
           h('br'),
-          '要换成自己搭的：点「添加源」→ 选站 → 在地址栏填完整 http(s) 地址（music-dl 可填本机 go-music-dl）→ 在下面弹出的提示里点「保存音乐源」。'),
+          'music-dl = music.zkkp.nyc.mn（结果页带 EdgeOne 人机验证，自动搜会被拦，不绕过）；要自动用就本机跑一个 go-music-dl，把地址填到 endpoint 再勾启用。'),
         h('div', { className: 'ab-note', style: { marginTop: 10 } },
           h('div', { className: 'ab-small' }, '测试搜索：拿一个歌名真的去上面这些站搜一次。搜得出结果，就说明 AI 点歌和翻唱走的是同一条路、同样搜得到。'),
           h('div', { className: 'ab-flex', style: { marginTop: 8, gap: 8, flexWrap: 'wrap' } },
@@ -6159,7 +6194,7 @@ code{overflow-wrap:anywhere;word-break:break-word}
             h(Select, {
               value: testSite, width: 170, ariaLabel: '测试哪个音乐源',
               onChange: (v) => { setTestSite(v); setTestResult(null) },
-              options: [{ value: '', label: '按主源顺序（全部）' }, ...rows.filter((x) => x.enabled !== false).map((x) => ({ value: x.site || '', label: '只测 ' + (x.name || x.site || '?') }))],
+              options: [{ value: '', label: '按主源顺序（全部）' }, ...rows.filter((x) => x.enabled !== false).map((x) => ({ value: x.name || x.site || '', label: '只测 ' + (x.name || x.site || '?') }))],
             }),
             h(Btn, { small: true, kind: 'primary', disabled: testing || !testQ.trim(), onClick: test },
               testing ? h(Fragment, null, h('i', { className: 'ab-spin' }), ' 搜索中…') : '测试搜索')),
@@ -6315,7 +6350,7 @@ code{overflow-wrap:anywhere;word-break:break-word}
         ),
         h(SongAudio, { toast }),
         h(SongStrategy, { toast }),
-        s.service ? h(MusicSources, { toast }) : h(Card, { title: '音乐源', desc: '搜歌和翻唱都要走音频服务：先去「概览 → 音频服务」打开开关并保存。音乐源只有 txqq 和 music-dl 两个聚合站，不再用会员平台。' },
+        s.service ? h(MusicSources, { toast }) : h(Card, { title: '音乐源', desc: '搜歌和翻唱都要走音频服务：先去「概览 → 音频服务」打开开关并保存。内置 txqq（网易云 / QQ）、meting、kuwo 几个免认证源，gdstudio / music-dl 需要时再加。' },
           h('div', { className: 'ab-note warn' }, '服务没开：打开 service 后，这一页才会出现音乐源列表和试唱搜索。')),
         h(Card, { title: '试唱', desc: '搜一首歌让ta唱，做好会发到你的 QQ 私聊；下面的进度条和日志能看每一步。' },
           h('div', { className: 'ab-flex', style: { gap: 10, flexWrap: 'wrap' } },

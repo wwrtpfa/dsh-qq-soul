@@ -1,22 +1,24 @@
 # -*- coding: utf-8 -*-
-"""「找原曲、下原曲」——只认主人给的两个聚合站，不再按网易云 / QQ 分源。
+"""「找原曲、下原曲」——按顺序问几个免认证的公开源。
 
-两个站：
+默认源（2026-11 实测可用）：
 
 1. ``txqq``：``https://music.txqq.pro/``。页面是 JS 渲染的，但接口很朴素：
-   往页面本身 POST 一个表单就回 JSON。它的 ``type`` 只是站内检索参数（默认
-   ``netease``），**不是**「用网易云当源」——面板上只显示 ``txqq``。
-2. ``music-dl``：``https://music.zkkp.nyc.mn``（guohuiyuan/go-music-dl 的部署）。
-   ``GET /music/search`` 返回服务端渲染的 HTML，结果在 ``li.song-card`` 的
-   ``data-*`` 里；下载链接是同站 ``/music/download?...``。
+   往页面本身 POST 一个表单就回 JSON。``type=netease`` 搜网易云，
+   ``type=qq`` 搜 QQ 音乐；后者的直链是 ``aqqmusic.tc.qq.com`` 的 m4a。
+2. ``meting``：``https://api.qijieya.cn/meting/``。搜索直接回每首歌的
+   ``type=url`` 地址，下载时由它 302 到网易云 CDN；一次请求拿全，默认用它。
+3. ``kuwo``：``https://search.kuwo.cn/r.s`` 搜歌，
+   ``https://antiserver.kuwo.cn/anti.s`` 换 mp3 直链；两步都免登录。
+4. ``gdstudio``：``https://music-api.gdstudio.xyz/api.php``。先搜网易云，
+   再按 ``url_id`` 换 ``music.126.net`` 的直链；不需要 key，但逐条换链较慢，
+   默认不启用，需要时在面板里加。
+5. ``music-dl``：``https://music.zkkp.nyc.mn``（guohuiyuan/go-music-dl 的部署）。
+   结果页带 **EdgeOne 人机验证**，脚本自动搜不了，所以默认关闭；主人自己跑一个
+   go-music-dl 后把 ``endpoint`` 指过去再打开。
 
-**zkkp 有 EdgeOne 人机验证**：本机脚本（没有浏览器 cookie）请求搜索页和下载页
-都只会拿到一段 200 的验证脚本。这里识别出来就明确告诉用户「需要浏览器验证」，
-绝不绕过。主人自己在本机跑一个 go-music-dl（没有 EdgeOne）时，把源的
-``endpoint`` 指过去就能自动用。
-
-口径：``DEFAULT_SOURCES`` 是**有序**的（txqq → music-dl）；每个源取前 10 条，
-从第一条开始试下载；两个站都没有就说「这首歌不存在」，不假装在找。
+口径：``DEFAULT_SOURCES`` 是**有序**的；每个源取前 10 条，从第一条开始试下载；
+一个源没有能下的就换下一个，全都没有才说「这首歌不存在」，不假装在找。
 
 **不做二次排序**——观众点《晴天》时第一条是「晴天(深情版)」，宁可唱观众点得到
 的那个版本。缓存目录 ``<data>/music/originals`` 会保存下过的原曲。
@@ -27,6 +29,7 @@
 
 from __future__ import annotations
 
+import ast
 import html as html_mod
 import json
 import logging
@@ -35,6 +38,7 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -43,11 +47,14 @@ log = logging.getLogger("qqsoul")
 
 SITE_TXQQ = "txqq"
 SITE_MUSIC_DL = "music-dl"
-SITE_KINDS = (SITE_TXQQ, SITE_MUSIC_DL)
+SITE_METING = "meting"
+SITE_GDSTUDIO = "gdstudio"
+SITE_KUWO = "kuwo"
+SITE_KINDS = (SITE_TXQQ, SITE_MUSIC_DL, SITE_METING, SITE_GDSTUDIO, SITE_KUWO)
 
 #: txqq 的搜索入口（也是页面本身；接口就是把表单 POST 回这个地址）
 TXQQ_SEARCH_URL = "https://music.txqq.pro/"
-#: txqq 站内检索参数；只是接口字段，不代表「拿网易云当源」。
+#: txqq 站内检索参数；netease / qq 是两个能直接拿到直链的平台。
 TXQQ_DEFAULT_TYPE = "netease"
 #: 网易云免登录外链（txqq 返回的 ``url`` 就是它；music-dl 的结果不会用它）
 OUTER_URL = "https://music.163.com/song/media/outer/url?id={id}.mp3"
@@ -57,12 +64,31 @@ MUSIC_DL_SEARCH_PATH = "/music/search"
 #: music-dl 一次可以同时问的平台；站点自己聚合，面板不暴露这些名字。
 MUSIC_DL_SOURCES = ("netease", "qq", "kugou", "kuwo", "migu", "qianqian", "soda", "apple")
 
-#: 默认两个站，按顺序搜。面板「翻唱 → 音乐源」改的就是这份列表。
+#: Meting 公共实例：搜索回的是每首歌自己的 ``type=url`` 代理地址。
+METING_SEARCH_URL = "https://api.qijieya.cn/meting/"
+#: GD Studio 音乐台：先搜网易云，再按 url_id 换直链；两条接口都免 key。
+GDSTUDIO_SEARCH_URL = "https://music-api.gdstudio.xyz/api.php"
+#: 每首歌要多问一次 url 接口；只解析前几条，别把检索拖到超时。
+GDSTUDIO_RESOLVE_LIMIT = 4
+#: 酷我：先搜歌拿 MUSICRID，再用 anti.s 换成 mp3 直链。
+KUWO_SEARCH_URL = "https://search.kuwo.cn/r.s"
+KUWO_PLAY_URL = "https://antiserver.kuwo.cn/anti.s"
+#: 酷我每首歌都要多问一次 anti.s；只解析前几条，别把检索拖到超时。
+KUWO_RESOLVE_LIMIT = 4
+
+#: 默认源，按顺序搜。面板「翻唱 → 音乐源」改的就是这份列表。
+#: 前四个都是免认证、2026-11 实测能搜到并下到音频的；music-dl 要自建才可用。
 DEFAULT_SOURCES: tuple[dict, ...] = (
     {"name": "txqq", "site": SITE_TXQQ, "type": TXQQ_DEFAULT_TYPE,
      "endpoint": "", "enabled": True},
-    {"name": "music-dl", "site": SITE_MUSIC_DL, "type": "all",
+    {"name": "txqq-qq", "site": SITE_TXQQ, "type": "qq",
      "endpoint": "", "enabled": True},
+    {"name": "meting", "site": SITE_METING, "type": "netease",
+     "endpoint": "", "enabled": True},
+    {"name": "kuwo", "site": SITE_KUWO, "type": "all",
+     "endpoint": "", "enabled": True},
+    {"name": "music-dl", "site": SITE_MUSIC_DL, "type": "all",
+     "endpoint": "", "enabled": False},
 )
 
 #: 旧配置里的显示名：迁移时一律换成站名，避免面板又冒出「网易云 / QQ音乐」。
@@ -158,24 +184,33 @@ def is_challenge_page(text: str) -> bool:
     )
 
 
+def _plain_text(value) -> str:
+    """搜索结果里的 ``&nbsp;`` / 全角空格统一成普通空格，方便歌名比对。"""
+    text = html_mod.unescape(str(value or ""))
+    return " ".join(text.replace("\xa0", " ").split())
+
+
 def _site_of(row: dict) -> str:
     raw = str(row.get("site") or row.get("kind") or row.get("type") or "").strip().lower()
     if raw in SITE_KINDS:
         return raw
     if raw in ("zkkp", "musicdl", "music_dl", "go-music-dl"):
         return SITE_MUSIC_DL
+    if raw in ("gd-studio", "gd_studio", "gd"):
+        return SITE_GDSTUDIO
     if raw in ("netease", "qq", "txqq"):
         return SITE_TXQQ
     return ""
 
 
 def normalize_sources(raw) -> list[dict]:
-    """把面板 / config.json 里的源列表收拾成**两个站**的形状。
+    """把面板 / config.json 里的源列表收拾成**可用源**的形状。
 
-    - 旧配置没有 ``site`` 字段（以前是「网易云 / QQ」那套）→ 整体迁到默认两站；
-    - 新配置认 ``site``，只允许 ``txqq`` / ``music-dl``；
+    - 旧配置没有 ``site`` 字段（以前是「网易云 / QQ」那套）→ 整体迁到默认源；
+    - 新配置认 ``site``，只允许 ``txqq`` / ``meting`` / ``kuwo`` / ``music-dl``；
+    - 同一个 site 可以有多条（txqq 的 netease 和 qq 是两条），按 type 去重；
     - ``endpoint`` 可留给自建实例（例如本机跑一个 go-music-dl）；
-    - 空 / 全无效 → 回到默认两站。
+    - 空 / 全无效 → 回到默认源。
     """
     rows = raw if isinstance(raw, list) else []
     if not rows:
@@ -183,12 +218,12 @@ def normalize_sources(raw) -> list[dict]:
     dicts = [row for row in rows if isinstance(row, dict)]
     if not dicts and not any(isinstance(row, str) for row in rows):
         return [dict(item) for item in DEFAULT_SOURCES]
-    # 老 schema 一条 site 都没有：直接换成主人要的两个聚合站。
+    # 老 schema 一条 site 都没有：直接换成主人要的默认源。
     if dicts and all(not str(row.get("site") or "").strip() for row in dicts):
         return [dict(item) for item in DEFAULT_SOURCES]
 
     out: list[dict] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     for row in rows:
         if isinstance(row, str):
             row = {"site": row}
@@ -200,16 +235,18 @@ def normalize_sources(raw) -> list[dict]:
         endpoint = str(row.get("endpoint") or "").strip()
         if endpoint and not endpoint.startswith(("http://", "https://")):
             endpoint = ""
-        key = (site, endpoint)
-        if key in seen:
-            continue
-        seen.add(key)
         if site == SITE_TXQQ:
             source_type = str(row.get("type") or "").strip().lower()
             if not _TXQQ_TYPE.fullmatch(source_type) or source_type in SITE_KINDS:
                 source_type = TXQQ_DEFAULT_TYPE
+        elif site in (SITE_METING, SITE_GDSTUDIO):
+            source_type = "netease"
         else:
             source_type = "all"
+        key = (site, endpoint, source_type)
+        if key in seen:
+            continue
+        seen.add(key)
         name = str(row.get("name") or "").strip()
         if not name or name.lower() in LEGACY_NAMES:
             name = site
@@ -281,6 +318,12 @@ def search_source(
     site = _site_of(source) or SITE_TXQQ
     if site == SITE_MUSIC_DL:
         return _search_music_dl(name, source, timeout=timeout, opener=opener, limit=limit)
+    if site == SITE_METING:
+        return _search_meting(name, source, timeout=timeout, opener=opener, limit=limit)
+    if site == SITE_GDSTUDIO:
+        return _search_gdstudio(name, source, timeout=timeout, opener=opener, limit=limit)
+    if site == SITE_KUWO:
+        return _search_kuwo(name, source, timeout=timeout, opener=opener, limit=limit)
     return _search_txqq(name, source, timeout=timeout, opener=opener, limit=limit)
 
 
@@ -481,6 +524,297 @@ def _parse_music_dl(
     return out
 
 
+def _gdstudio_url(url_id: str, *, endpoint: str, timeout: float, opener) -> str:
+    """按 GD Studio 的 ``url_id`` 换一次直链；320 拿不到就退回 128。"""
+    for br in ("320", "128"):
+        query = urllib.parse.urlencode({
+            "types": "url", "source": "netease", "id": url_id, "br": br,
+        })
+        req = urllib.request.Request(
+            f"{endpoint}?{query}",
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json,*/*;q=0.8"},
+        )
+        try:
+            with _opener(opener).open(req, timeout=timeout) as response:
+                payload = response.read(2 * 1024 * 1024)
+        except (urllib.error.HTTPError, urllib.error.URLError, socket.timeout, OSError):
+            continue
+        try:
+            data = json.loads(payload.decode("utf-8", "replace"))
+        except ValueError:
+            continue
+        play = str((data or {}).get("url") or "").strip()
+        if play.startswith(("http://", "https://")):
+            return play
+    return ""
+
+
+def _search_gdstudio(
+    name: str,
+    source: dict,
+    *,
+    timeout: float,
+    opener,
+    limit: int,
+) -> list[CoverCandidate]:
+    """GD Studio：搜网易云，再逐条把 ``url_id`` 换成 CDN 直链。"""
+    endpoint = str(source.get("endpoint") or "").strip() or GDSTUDIO_SEARCH_URL
+    label = str(source.get("name") or SITE_GDSTUDIO).strip() or SITE_GDSTUDIO
+    query = urllib.parse.urlencode({
+        "types": "search", "source": "netease", "name": name,
+        "count": max(1, int(limit)), "pages": 1,
+    })
+    sep = "&" if "?" in endpoint else "?"
+    request = urllib.request.Request(
+        f"{endpoint}{sep}{query}",
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json,*/*;q=0.8"},
+    )
+    try:
+        with _opener(opener).open(request, timeout=timeout) as response:
+            status = int(getattr(response, "status", 200) or 200)
+            payload = response.read(8 * 1024 * 1024)
+    except urllib.error.HTTPError as exc:
+        log.info("检索失败《%s》[%s]：HTTP %s", name, label, exc.code)
+        return []
+    except (urllib.error.URLError, socket.timeout, OSError) as exc:
+        log.info("检索失败《%s》[%s]：%s", name, label, type(exc).__name__)
+        return []
+    if status != 200:
+        return []
+    text = payload.decode("utf-8", "replace")
+    if is_challenge_page(text):
+        raise SourceBlocked(f"{label} 弹了人机验证，自动搜不了")
+    try:
+        data = json.loads(text)
+    except ValueError:
+        log.info("检索结果不是 JSON《%s》[%s]", name, label)
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[CoverCandidate] = []
+    pending: list[tuple[str, str, str]] = []
+    for raw in data:
+        if not isinstance(raw, dict):
+            continue
+        title = _plain_text(raw.get("name"))
+        url_id = str(raw.get("url_id") or raw.get("id") or "").strip()
+        if not title or not url_id:
+            continue
+        if len(pending) >= GDSTUDIO_RESOLVE_LIMIT:
+            break
+        artist = raw.get("artist") or ""
+        if isinstance(artist, list):
+            artist = "/".join(str(x).strip() for x in artist if str(x).strip())
+        pending.append((title, url_id, _plain_text(artist)[:60]))
+    if not pending:
+        return out
+    with ThreadPoolExecutor(max_workers=min(4, len(pending))) as pool:
+        urls = list(pool.map(
+            lambda item: _gdstudio_url(item[1], endpoint=endpoint, timeout=timeout, opener=opener),
+            pending,
+        ))
+    for (title, url_id, artist), play in zip(pending, urls):
+        if not play:
+            log.info("GD Studio 拿不到直链《%s》[%s]：%s", title, label, url_id)
+            continue
+        out.append(CoverCandidate(
+            title=title,
+            artist=artist,
+            source_id=url_id,
+            url=play,
+            link=f"https://music.163.com/song?id={url_id}",
+            source=label,
+            site=SITE_GDSTUDIO,
+            origin="netease",
+        ))
+    return out
+
+
+def _search_meting(
+    name: str,
+    source: dict,
+    *,
+    timeout: float,
+    opener,
+    limit: int,
+) -> list[CoverCandidate]:
+    """Meting 公共实例：一次搜索就把每首歌的 ``type=url`` 地址带回来。"""
+    endpoint = str(source.get("endpoint") or "").strip() or METING_SEARCH_URL
+    label = str(source.get("name") or SITE_METING).strip() or SITE_METING
+    sep = "&" if "?" in endpoint else "?"
+    url = f"{endpoint}{sep}{urllib.parse.urlencode({'type': 'search', 'id': name})}"
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json,*/*;q=0.8"},
+    )
+    try:
+        with _opener(opener).open(request, timeout=timeout) as response:
+            status = int(getattr(response, "status", 200) or 200)
+            payload = response.read(8 * 1024 * 1024)
+    except urllib.error.HTTPError as exc:
+        log.info("检索失败《%s》[%s]：HTTP %s", name, label, exc.code)
+        return []
+    except (urllib.error.URLError, socket.timeout, OSError) as exc:
+        log.info("检索失败《%s》[%s]：%s", name, label, type(exc).__name__)
+        return []
+    if status != 200:
+        return []
+    text = payload.decode("utf-8", "replace")
+    if is_challenge_page(text):
+        raise SourceBlocked(f"{label} 弹了人机验证，自动搜不了")
+    try:
+        data = json.loads(text)
+    except ValueError:
+        log.info("检索结果不是 JSON《%s》[%s]", name, label)
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[CoverCandidate] = []
+    for raw in data:
+        if not isinstance(raw, dict):
+            continue
+        title = str(raw.get("name") or "").strip()
+        artist = raw.get("artist") or ""
+        if isinstance(artist, list):
+            artist = "/".join(str(x).strip() for x in artist if str(x).strip())
+        play = str(raw.get("url") or "").strip()
+        if not title or not play:
+            continue
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(play).query)
+        source_id = str((query.get("id") or [""])[0] or play)
+        out.append(CoverCandidate(
+            title=title,
+            artist=str(artist).strip()[:60],
+            source_id=source_id,
+            url=play,
+            lrc=str(raw.get("lrc") or ""),
+            source=label,
+            site=SITE_METING,
+            origin=str((query.get("server") or ["netease"])[0] or "netease"),
+        ))
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
+def _kuwo_play_url(rid: str, *, timeout: float, opener) -> str:
+    """把酷我的 ``MUSICRID`` 换成一次性的 mp3 直链。"""
+    rid = str(rid or "").strip()
+    if not rid:
+        return ""
+    if not rid.upper().startswith("MUSIC_"):
+        rid = f"MUSIC_{rid}"
+    query = urllib.parse.urlencode({
+        "type": "convert_url", "format": "mp3", "response": "url", "rid": rid,
+    })
+    request = urllib.request.Request(
+        f"{KUWO_PLAY_URL}?{query}",
+        headers={"User-Agent": USER_AGENT, "Referer": "https://www.kuwo.cn/",
+                 "Accept": "text/plain,*/*;q=0.8"},
+    )
+    try:
+        with _opener(opener).open(request, timeout=timeout) as response:
+            payload = response.read(8 * 1024)
+    except (urllib.error.HTTPError, urllib.error.URLError, socket.timeout, OSError):
+        return ""
+    text = payload.decode("utf-8", "replace").strip()
+    if text.startswith("{"):
+        try:
+            text = str((json.loads(text) or {}).get("url") or "").strip()
+        except ValueError:
+            return ""
+    return text if text.startswith(("http://", "https://")) else ""
+
+
+def _search_kuwo(
+    name: str,
+    source: dict,
+    *,
+    timeout: float,
+    opener,
+    limit: int,
+) -> list[CoverCandidate]:
+    """酷我：老搜索接口免登录；每条结果再问一次 anti.s 换直链。"""
+    endpoint = str(source.get("endpoint") or "").strip() or KUWO_SEARCH_URL
+    label = str(source.get("name") or SITE_KUWO).strip() or SITE_KUWO
+    query = urllib.parse.urlencode({
+        "all": name, "ft": "music", "itemset": "web_2013", "client": "kt",
+        "pn": "0", "rn": str(max(1, int(limit))), "rformat": "json", "encoding": "utf8",
+    })
+    sep = "&" if "?" in endpoint else "?"
+    request = urllib.request.Request(
+        f"{endpoint}{sep}{query}",
+        headers={"User-Agent": USER_AGENT, "Referer": "https://www.kuwo.cn/",
+                 "Accept": "application/json,text/plain,*/*;q=0.8"},
+    )
+    try:
+        with _opener(opener).open(request, timeout=timeout) as response:
+            status = int(getattr(response, "status", 200) or 200)
+            payload = response.read(8 * 1024 * 1024)
+    except urllib.error.HTTPError as exc:
+        log.info("检索失败《%s》[%s]：HTTP %s", name, label, exc.code)
+        return []
+    except (urllib.error.URLError, socket.timeout, OSError) as exc:
+        log.info("检索失败《%s》[%s]：%s", name, label, type(exc).__name__)
+        return []
+    if status != 200:
+        return []
+    text = payload.decode("utf-8", "replace").strip()
+    if is_challenge_page(text):
+        raise SourceBlocked(f"{label} 弹了人机验证，自动搜不了")
+    try:
+        data = json.loads(text)
+    except ValueError:
+        try:
+            data = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            log.info("检索结果不是 JSON《%s》[%s]", name, label)
+            return []
+    rows = data.get("abslist") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return []
+    out: list[CoverCandidate] = []
+    pending: list[tuple[str, str, str, float]] = []
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        title = _plain_text(raw.get("SONGNAME"))
+        rid = str(raw.get("MUSICRID") or "").strip()
+        if not title or not rid:
+            continue
+        if len(pending) >= KUWO_RESOLVE_LIMIT:
+            break
+        try:
+            duration = float(str(raw.get("DURATION") or 0).strip() or 0)
+        except ValueError:
+            duration = 0.0
+        pending.append((title, rid, _plain_text(raw.get("ARTIST"))[:60], max(0.0, duration)))
+    if not pending:
+        return out
+    with ThreadPoolExecutor(max_workers=min(4, len(pending))) as pool:
+        urls = list(pool.map(
+            lambda item: _kuwo_play_url(item[1], timeout=timeout, opener=opener),
+            pending,
+        ))
+    for (title, rid, artist, duration), play in zip(pending, urls):
+        if not play:
+            log.info("酷我拿不到直链《%s》[%s]：%s", title, label, rid)
+            continue
+        numeric_id = rid.upper().removeprefix("MUSIC_")
+        out.append(CoverCandidate(
+            title=title,
+            artist=artist,
+            source_id=numeric_id,
+            url=play,
+            link=f"https://www.kuwo.cn/play_detail/{numeric_id}",
+            source=label,
+            site=SITE_KUWO,
+            origin="kuwo",
+            duration=duration,
+        ))
+    return out
+
+
 def search_all_sources(
     title: str,
     *,
@@ -490,32 +824,42 @@ def search_all_sources(
     limit_per_source: int = 10,
     diagnostics: list | None = None,
 ) -> list[CoverCandidate]:
-    """按源顺序检索：每个站最多 ``limit_per_source`` 条，结果按站序拼起来。
+    """并发问所有源，但按源顺序拼结果：每个站最多 ``limit_per_source`` 条。
 
-    第一个站的结果排在最前，所以「取第一条能下的」天然就是「先 txqq，再 music-dl」。
+    第一个站的结果排在最前，所以「取第一条能下的」天然就是「先 txqq，再 meting」。
     某个站验证页 / 网络抖动只影响它自己那一段；``diagnostics`` 会把每个站的结果
     带回去，面板能直接说清楚「是没搜到，还是被验证拦了」。
     """
     out: list[CoverCandidate] = []
-    for item in source_list(sources):
+    items = source_list(sources)
+    if not items:
+        return out
+
+    def run(item: dict):
         label = str(item.get("name") or item.get("site") or "")
-        site = str(item.get("site") or "")
         try:
             hits = search_source(
                 title, item, timeout=timeout, opener=opener, limit=limit_per_source
             )
+            return item, hits, None, False
         except SourceBlocked as exc:
             log.info("检索被验证拦住《%s》[%s]：%s", str(title or "").strip(), label, exc)
-            if diagnostics is not None:
-                diagnostics.append({"site": site, "name": label, "ok": False,
-                                    "blocked": True, "count": 0, "message": str(exc)})
-            continue
+            return item, [], str(exc), True
         except Exception as exc:  # noqa: BLE001 —— 一个站坏掉不该拖垮整次检索
             log.warning("检索异常《%s》[%s]", str(title or "").strip(), label, exc_info=True)
+            return item, [], type(exc).__name__, False
+
+    # 四个站并发问，但按源顺序收结果：第一个站的结果仍然排最前。
+    with ThreadPoolExecutor(max_workers=min(4, len(items))) as pool:
+        results = list(pool.map(run, items))
+    for item, hits, error, blocked in results:
+        label = str(item.get("name") or item.get("site") or "")
+        site = str(item.get("site") or "")
+        if error is not None:
             if diagnostics is not None:
                 diagnostics.append({"site": site, "name": label, "ok": False,
-                                    "blocked": False, "count": 0,
-                                    "message": type(exc).__name__})
+                                    "blocked": blocked, "count": 0,
+                                    "message": error})
             continue
         if hits:
             log.info("检索《%s》[%s]：%d 条", str(title or "").strip(), label, len(hits))
@@ -675,22 +1019,31 @@ def _discard(path: Path) -> None:
 
 __all__ = [
     "CHUNK",
-    "CoverCandidate",
-    "CoverDownloadError",
-    "CoverNotFound",
     "DEFAULT_SOURCES",
+    "GDSTUDIO_RESOLVE_LIMIT",
+    "GDSTUDIO_SEARCH_URL",
+    "KUWO_PLAY_URL",
+    "KUWO_RESOLVE_LIMIT",
+    "KUWO_SEARCH_URL",
     "LEGACY_NAMES",
+    "METING_SEARCH_URL",
     "MUSIC_DL_BASE",
     "MUSIC_DL_SEARCH_PATH",
     "MUSIC_DL_SOURCES",
     "OUTER_URL",
     "SEARCH_TIMEOUT_S",
     "SITE_KINDS",
+    "SITE_KUWO",
+    "SITE_GDSTUDIO",
+    "SITE_METING",
     "SITE_MUSIC_DL",
     "SITE_TXQQ",
-    "SourceBlocked",
     "TXQQ_DEFAULT_TYPE",
     "TXQQ_SEARCH_URL",
+    "CoverCandidate",
+    "CoverDownloadError",
+    "CoverNotFound",
+    "SourceBlocked",
     "download_audio",
     "first_candidate",
     "is_challenge_page",
